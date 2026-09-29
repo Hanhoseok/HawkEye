@@ -234,10 +234,14 @@ def main() -> int:
     risk = None
     if config.risk.enabled and interactions is not None:
         payments = PaymentFeed.load(config.risk.payments) if config.risk.payments else PaymentFeed.empty()
-        risk = RiskEngine(config.risk, zone_map, payments)
+        risk = RiskEngine(
+            config.risk, zone_map, payments,
+            consistency=registry.recent_consistency if registry is not None else None,
+        )
         types = {z.type.value for z in zone_map.zones}
         print(
-            f"risk     : 미결제 물건을 가진 채 출구 구역에 {config.risk.exit_min_seconds:g}초 이상 -> HIGH_RISK "
+            f"risk     : 미결제 상태로 출구에 다가서면 WARNING, 출구에서 사라져 "
+            f"{config.risk.exit_confirm_seconds:g}초 안 돌아오면 HIGH_RISK "
             f"(결제 기록 {len(payments)}건)"
         )
         if "EXIT" not in types:

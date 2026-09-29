@@ -44,6 +44,7 @@ ByteTrack 이든 BoT-SORT 든 그대로 동작한다.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -76,6 +77,8 @@ class _Person:
 
     embedding_sum: np.ndarray | None = None
     embedding_count: int = 0
+    recent: deque = field(default_factory=lambda: deque(maxlen=3))
+    """최근 사진 몇 장. 판정 직전 신원 확인(recent_consistency)에 쓴다."""
 
     def similarity(self, embedding: np.ndarray) -> float:
         """보관 중인 템플릿 중 가장 닮은 것과의 코사인 유사도 (새 track 즉시 판정용)."""
@@ -107,6 +110,7 @@ class _Person:
         else:
             self.embedding_sum = self.embedding_sum + embedding
         self.embedding_count += 1
+        self.recent.append(embedding)
 
     @property
     def mean(self) -> np.ndarray | None:
@@ -148,6 +152,24 @@ class IdentityRegistry:
         while person_id in self._alias:
             person_id = self._alias[person_id]
         return person_id
+
+    def recent_consistency(self, person_id: int) -> float | None:
+        """최근 사진 몇 장의 평균과 그 이전 평균의 유사도.
+
+        추적 번호가 다른 사람에게 옮겨 붙었으면 최근 모습이 이전 모습과 달라져 낮아진다
+        (UCF-Crime Shoplifting047: 집기 기록을 가진 번호가 문가의 다른 사람으로 옮겨 붙어 오경보).
+        기록이 모자라면 None — 확인할 수 없다는 뜻이지, 괜찮다는 뜻이 아니다.
+        """
+        person = self._people.get(self.resolve(person_id))
+        cfg = self.config
+        if person is None or person.embedding_sum is None:
+            return None
+        k = len(person.recent)
+        if k < cfg.swap_check_samples or person.embedding_count - k < cfg.swap_check_min_older:
+            return None
+        recent = np.sum(np.stack(list(person.recent)), axis=0)
+        older = person.embedding_sum - recent
+        return float(_unit(older) @ _unit(recent))
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
@@ -277,6 +299,7 @@ class IdentityRegistry:
                 person_id = self._next_person_id
                 self._next_person_id += 1
                 self._people[person_id] = _Person(
+                    recent=deque(maxlen=cfg.swap_check_samples),
                     person_id=person_id,
                     first_seen=frame.index,
                     last_seen=frame.index,
@@ -368,6 +391,7 @@ class IdentityRegistry:
         into.last_seen_ms = person.last_seen_ms
         into.last_bbox = person.last_bbox
         into.last_template_ms = person.last_template_ms
+        into.recent = person.recent  # 지금 보이는 쪽(합쳐진 신원)의 최근 모습
         for track_id, pid in self._track_to_person.items():
             if pid == person.person_id:
                 self._track_to_person[track_id] = into_id
