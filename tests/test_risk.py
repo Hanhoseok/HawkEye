@@ -198,3 +198,58 @@ def test_late_take_under_old_id_reaches_merged_customer():
     eng.update(at(6.0), [person(1, AISLE)], takes=[take(2)], merges=merges)
     events = walk(eng, 1, EXIT, 7.0, 1.0, merges=merges)
     assert events[0].level == RiskLevel.HIGH_RISK
+
+
+# ---------------------------------------------------------------- 화면 가장자리 출구
+
+def test_vanishing_inside_exit_zone_is_judged():
+    """출구가 화면 가장자리면 0.5초를 머물지 않고 곧장 사라진다. 사라진 뒤 1초가 지나면 판정한다."""
+    eng = engine()
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    events = walk(eng, 1, EXIT, 2.0, 0.3)            # 출구에 0.3초만 보이고
+    for i in range(25):                              # 사라진다 (2.5초간 아무도 안 보임)
+        ev, _ = eng.update(at(2.3 + i * 0.1), [])
+        events += ev
+    assert [e.level for e in events] == [RiskLevel.HIGH_RISK]
+    assert "사라짐" in events[0].reason
+
+
+def test_vanishing_outside_exit_zone_is_not_judged():
+    """통로에서 사라진 것(가려짐, 탐지 실패)은 나간 것이 아니다."""
+    eng = engine()
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    events = walk(eng, 1, AISLE, 2.0, 0.3)
+    for i in range(30):
+        ev, _ = eng.update(at(2.3 + i * 0.1), [])
+        events += ev
+    assert events == []
+
+
+def test_take_closed_just_after_vanishing_is_counted():
+    """사라지기 직전의 TAKE 후보는 사람이 안 보인 뒤에 끝난다. 판정은 그것까지 반영해야 한다."""
+    eng = engine()
+    walk(eng, 1, EXIT, 2.0, 0.3)
+    eng.update(at(2.8), [], takes=[take(1)])         # 사라지고 0.5초 뒤 후보가 도착
+    events = []
+    for i in range(20):
+        ev, _ = eng.update(at(2.9 + i * 0.1), [])
+        events += ev
+    assert [e.level for e in events] == [RiskLevel.HIGH_RISK]
+
+
+def test_reappearing_after_vanish_judgment_is_retracted_and_rejudged():
+    """출구 구역에서 탐지가 끊겨 '나갔다'고 판정했는데 다시 보이면, 그 판정을 되돌리고 다음에 다시 판정한다.
+
+    UCF-Crime Shoplifting031 실측: 탐지가 2~4초씩 끊겨 이른 판정(CLEAR)이 나갔고,
+    그 뒤 물건을 집고 실제로 나갔을 때는 이미 판정했다는 이유로 판정이 없었다.
+    """
+    eng = engine()
+    first = walk(eng, 1, EXIT, 1.0, 0.3)
+    for i in range(25):                               # 탐지 끊김 2.5초 -> 이른 판정 (아직 안 집음)
+        ev, _ = eng.update(at(1.3 + i * 0.1), [])
+        first += ev
+    assert [e.level for e in first] == [RiskLevel.CLEAR]
+    eng.update(at(4.0), [person(1, AISLE)], takes=[take(1)])   # 다시 나타나 물건을 집음
+    assert eng.retracted and eng.retracted[0][0] == 1
+    second = walk(eng, 1, EXIT, 5.0, 1.0)
+    assert [e.level for e in second] == [RiskLevel.HIGH_RISK]

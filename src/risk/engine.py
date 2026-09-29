@@ -6,7 +6,8 @@
     2. TAKE 후보 반영       계층 3 이 끝낸 후보를 해당 손님의 '집은 것'에 더한다
     3. 위치·구역 갱신       누가 계산대에, 누가 출구에 서 있는가
     4. 결제 반영           지금까지 도착한 결제를 계산대의 손님에게 연결한다
-    5. 출구 판정           출구에 0.5초 이상 들어선 손님을 판정한다 (아래 표)
+    5. 출구 판정           출구에 0.5초 이상 들어선 손님을 판정한다 (아래 표).
+                           출구 구역 안에서 보이다 1초 이상 사라진 손님도 판정한다(화면 가장자리 출구).
 
 | 집기 행동 | 결제 | 판정 |
 |---|---|---|
@@ -46,6 +47,8 @@ class RiskEngine:
         self.book.reset()
         self.payments.reset()
         self.events: list[RiskEvent] = []
+        self.retracted: list[tuple[int, int]] = []
+        """(손님, 프레임): '출구에서 사라짐'으로 판정했는데 다시 나타난 경우. 이른 판정이 있었다는 기록."""
         self._merges_seen = 0
 
     def update(
@@ -69,6 +72,7 @@ class RiskEngine:
             self.book.add_take(c, now)
 
         visible = self.book.observe(now, identities)
+        self.retracted += [(pid, frame.index) for pid in self.book.reappeared]
 
         records = [self.book.pay(e, now) for e in self.payments.due(now)]
 
@@ -81,6 +85,18 @@ class RiskEngine:
                 continue
             customer.exit_judged = True
             events.append(self._judge(customer, frame))
+
+        # 출구 구역 안에서 보이다가 사라진 손님 — 화면 가장자리 출구로 곧장 나간 경우
+        vanish_ms = self.config.exit_vanish_seconds * 1000.0
+        seen = {c.person_id for c in visible}
+        for customer in self.book.customers.values():
+            if customer.person_id in seen or customer.exit_since_ms is None or customer.exit_judged:
+                continue
+            if now - customer.last_seen_ms < vanish_ms:
+                continue
+            customer.exit_judged = True
+            customer.judged_by_vanishing = True
+            events.append(self._judge(customer, frame, vanished=True))
         self.events.extend(events)
         return events, records
 
@@ -90,7 +106,7 @@ class RiskEngine:
             self.book.add_take(c, now_ms)
 
     @staticmethod
-    def _judge(customer: Customer, frame: Frame) -> RiskEvent:
+    def _judge(customer: Customer, frame: Frame, vanished: bool = False) -> RiskEvent:
         unpaid = customer.unpaid
         if unpaid > 0 and customer.paid_items == 0:
             level = RiskLevel.HIGH_RISK
@@ -104,6 +120,8 @@ class RiskEngine:
                 "집은 물건 없음" if customer.taken == 0
                 else f"모두 결제함 (집음 {customer.taken} / 결제 {customer.paid_items})"
             )
+        if vanished:
+            reason += " — 출구 구역에서 화면 밖으로 사라짐"
         return RiskEvent(
             person_id=customer.person_id,
             level=level,
@@ -127,6 +145,8 @@ class RiskEngine:
             f"위험 판정       : HIGH_RISK {count[RiskLevel.HIGH_RISK]}건 / "
             f"REVIEW {count[RiskLevel.REVIEW]}건 / CLEAR {count[RiskLevel.CLEAR]}건"
         )
+        if self.retracted:
+            lines.append(f"  └ '출구에서 사라짐' 판정 뒤 다시 나타남: {len(self.retracted)}건 (이른 판정, 되돌림)")
         unmatched = sum(1 for p in self.book.payments if p.person_id is None)
         if self.book.payments:
             lines.append(f"결제            : {len(self.book.payments)}건 (손님 연결 실패 {unmatched}건)")

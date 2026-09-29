@@ -34,5 +34,9 @@ data/videos/*
 data/merl/
 labels/merl_*.csv
 
+# --- UCF-Crime ---
+# 연구용 공개 데이터. 원본은 인터넷에 올라온 실제 CCTV 영상이라 사람이 찍혀 있다. 재배포하지 않는다.
+data/ucf_crime/
+
 # --- 기타 ---
 *.zip

@@ -47,6 +47,8 @@ class Customer:
     """출구를 벗어난 시각."""
     exit_judged: bool = False
     """이번 출구 방문에 대해 이미 판정했는가."""
+    judged_by_vanishing: bool = False
+    """그 판정이 '출구에서 사라짐'으로 내린 것인가. 다시 나타나면 되돌린다."""
 
     last_bbox: BBox | None = None
 
@@ -77,6 +79,7 @@ class CustomerBook:
         self.reset()
 
     def reset(self) -> None:
+        self.reappeared: list[int] = []
         self.customers: dict[int, Customer] = {}
         self._alias: dict[int, int] = {}
         self.payments: list[PaymentRecord] = []
@@ -132,10 +135,19 @@ class CustomerBook:
     def observe(self, now_ms: float, identities: list[IdentityObservation]) -> list[Customer]:
         """이번 프레임에 보인 손님들의 위치·구역 상태를 갱신한다. 보인 손님 목록을 돌려준다."""
         seen: dict[int, Customer] = {}
+        self.reappeared: list[int] = []
         for obs in identities:
             if obs.person_id <= 0:
                 continue
             customer = self._get(obs.person_id, now_ms)
+            if customer.judged_by_vanishing:
+                # 사라져서 '나갔다'고 판정했는데 다시 보인다 — 나간 게 아니라 탐지가 끊겼던 것이다.
+                # 판정을 되돌려 다음 출구 방문 때 다시 판정한다.
+                customer.judged_by_vanishing = False
+                customer.exit_judged = False
+                customer.exit_since_ms = None
+                customer.exit_left_ms = None
+                self.reappeared.append(customer.person_id)
             customer.last_seen_ms = now_ms
             customer.last_bbox = obs.bbox
 
