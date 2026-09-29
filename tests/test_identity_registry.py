@@ -50,7 +50,7 @@ def frame(i: int) -> Frame:
 def obs(track_id: int, x: float, frame_index: int, height: float = 200.0) -> TrackObservation:
     return TrackObservation(
         track_id=track_id,
-        bbox=(x, 0.0, x + 50.0, height),
+        bbox=(x, 50.0, x + 50.0, 50.0 + height),  # 화면 가장자리에 닿지 않게 (edge_margin)
         frame=frame_index,
         timestamp="2026-01-01T00:00:00",
         score=0.9,

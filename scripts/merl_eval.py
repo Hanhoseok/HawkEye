@@ -5,6 +5,9 @@ MERL 은 subject 단위로 train(1-20) / val(21-26) / test(27-41) 가 나뉘어 
 그 문제 없이 잴 수 있다.
 
     python scripts/merl_eval.py --train 1_1 2_1 3_1 --test 27_1 28_1 29_1
+
+    # 신원 레지스트리만 바꿔 다시 돌린 결과(scripts/replay_identity.py)로 test 를 평가
+    python scripts/merl_eval.py --train 1_1 ... --test 27_1 ... --test-runs outputs/merl_late
 """
 
 from __future__ import annotations
@@ -31,9 +34,9 @@ LABEL_DIR = Path("data/merl/Labels_MERL_Shopping_Dataset")
 FPS = 30.0
 
 
-def load_clip(name: str, take_span: str):
+def load_clip(name: str, take_span: str, runs: str = "outputs/merl"):
     """한 영상의 (관측, 라벨) 을 읽는다. person_id 는 관측이 가장 많은 사람으로 맞춘다."""
-    identities = Path("outputs/merl") / name / "identities.jsonl"
+    identities = Path(runs) / name / "identities.jsonl"
     observations = [o for o in read_identities(identities) if o.person_id > 0]
     if not observations:
         return [], []
@@ -107,13 +110,15 @@ def main() -> None:
     parser.add_argument("--test", nargs="+", required=True)
     parser.add_argument("--zones", default="zones_merl.yaml")
     parser.add_argument("--take-span", choices=["reach", "interaction"], default="reach")
+    parser.add_argument("--runs", default="outputs/merl", help="train 의 identities.jsonl 상위 폴더")
+    parser.add_argument("--test-runs", default=None, help="test 쪽 폴더 (기본: --runs 와 같음)")
     args = parser.parse_args()
 
     zone_map = ZoneMap.load(args.zones)
     zone_map.resolve(920, 680)
 
-    train = [load_clip(n, args.take_span) for n in args.train]
-    test = [load_clip(n, args.take_span) for n in args.test]
+    train = [load_clip(n, args.take_span, args.runs) for n in args.train]
+    test = [load_clip(n, args.take_span, args.test_runs or args.runs) for n in args.test]
     for tag, clips, names in (("train", train, args.train), ("test", test, args.test)):
         takes = sum(1 for _, ls in clips for l in ls if l.action == "TAKE")
         browses = sum(1 for _, ls in clips for l in ls if l.action == "BROWSE")

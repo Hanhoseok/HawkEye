@@ -13,9 +13,9 @@
 | 영상 입력 | ✅ | |
 | 사람 탐지 (YOLO / YOLO-pose) | ✅ | `docs/scale-limits.md` |
 | 추적 (ByteTrack / BoT-SORT + ReID) | ✅ | `docs/tracker-comparison.md` |
-| 매장 단위 신원 (계층 2) | ✅ tracker 버퍼의 3.3배(10초) 공백 복원 검증 | `docs/identity-registry.md` |
+| 매장 단위 신원 (계층 2) | ✅ tracker 버퍼의 3.3배(10초) 공백 복원 · 천장 시점 분열을 "나중에 합치기"로 해결 | `docs/identity-registry.md` |
 | 구역 (SHELF / EXIT) | ✅ | `docs/zones.md` |
-| TAKE 후보 (계층 3) | 🔶 MERL test 정밀도 0.75 / 재현율 0.62 / 국소화 37% | `docs/merl-evaluation.md` |
+| TAKE 후보 (계층 3) | 🔶 MERL test 정밀도 0.75 / 재현율 0.71 / F1 0.73 / 국소화 37% | `docs/merl-evaluation.md` |
 | RETURN · 상태 관리 · POS · 위험 판정 | ⬜ 미착수 | |
 
 **처음 보는 사람은 `docs/진행경과-정리.md` 부터 읽는다.** 왜 이런 구조가 됐는지가 수치와 함께 정리되어 있다.

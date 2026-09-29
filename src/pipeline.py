@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -222,6 +223,13 @@ class TrackingPipeline:
                         takes_log.write_many(remaining)
             if identity_log is not None:
                 identity_log.close()
+                if self.registry.merges:
+                    # 이미 내보낸 관측의 person_id 는 바뀌지 않는다. 뒤 계층이 이 기록으로 이력을 합친다.
+                    merges_path = identity_log.path.with_name("identity_merges.jsonl")
+                    merges_path.write_text(
+                        "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in self.registry.merges),
+                        encoding="utf-8",
+                    )
             if takes_log is not None:
                 takes_log.close()
             if cfg.output.show_window:

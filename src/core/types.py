@@ -102,6 +102,10 @@ class IdentityObservation:
 
     keypoints: Keypoints | None = None
 
+    stitched: bool = False
+    """생김새만으로는 기준에 못 미쳤지만, 위치·시간이 맞아서 이어붙였는지.
+    디버깅과 오병합 추적용. 신규 등록이거나 생김새만으로 이어붙였으면 False."""
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
