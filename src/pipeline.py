@@ -16,11 +16,11 @@ import cv2
 
 from .core.config import AppConfig
 from .core.protocols import Detector, Tracker
-from .core.types import IdentityObservation, TakeCandidate, TrackObservation
+from .core.types import IdentityObservation, RiskLevel, TakeCandidate, TrackObservation
 from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
 from .sinks.video_writer import VideoWriter
-from .viz.overlay import TrackOverlay, draw_zones
+from .viz.overlay import TrackOverlay, draw_alerts, draw_zones
 from .zones.zone_map import ZoneMap
 
 
@@ -40,6 +40,9 @@ class RunStats:
     log_path: Path | None = None
     identity_path: Path | None = None
     takes_path: Path | None = None
+    risk_events: list = field(default_factory=list)
+    risk_summary: str = ""
+    risk_path: Path | None = None
 
     @property
     def fps(self) -> float:
@@ -66,6 +69,10 @@ class RunStats:
             total = sum(c.duration_sec for c in self.take_candidates)
             lines.append(f"TAKE 후보       : {len(self.take_candidates)}건 / {len(people)}명")
             lines.append(f"  └ 총 체류 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
+        if self.risk_summary:
+            lines.append(self.risk_summary)
+        if self.risk_path:
+            lines.append(f"위험 판정 로그   : {self.risk_path}")
         if self.video_path:
             lines.append(f"결과 영상        : {self.video_path}")
         if self.log_path:
@@ -85,6 +92,7 @@ class TrackingPipeline:
         registry=None,
         zone_map: ZoneMap | None = None,
         interactions=None,
+        risk=None,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -92,6 +100,10 @@ class TrackingPipeline:
         self.registry = registry
         self.zone_map = zone_map or ZoneMap.empty()
         self.interactions = interactions
+        self.risk = risk
+
+    ALERT_SHOW_SECONDS = 3.0
+    """HIGH_RISK 판정 뒤 결과 영상에 빨간 박스를 몇 초간 띄울지."""
 
     def run(self, on_frame=None) -> RunStats:
         cfg = self.config
@@ -105,11 +117,17 @@ class TrackingPipeline:
             self.registry.reset()
         if self.interactions is not None:
             self.interactions.reset()
+        if self.risk is not None:
+            self.risk.reset()
+        alert_until: dict[int, tuple[float, str]] = {}  # 손님 -> (표시 종료 시각, 문구)
+        last_pts_ms = 0.0
 
         writer: VideoWriter | None = None
         log: ObservationLog | None = None
         identity_log: ObservationLog | None = None
         takes_log: ObservationLog | None = None
+        risk_log: ObservationLog | None = None
+        payments_log: ObservationLog | None = None
         started = time.perf_counter()
 
         try:
@@ -137,6 +155,10 @@ class TrackingPipeline:
                 if self.interactions is not None and cfg.output.write_takes:
                     takes_log = ObservationLog(out_dir / cfg.output.takes_name)
                     stats.takes_path = takes_log.path
+                if self.risk is not None and cfg.output.write_risk:
+                    risk_log = ObservationLog(out_dir / cfg.output.risk_name)
+                    payments_log = ObservationLog(out_dir / cfg.output.payments_name)
+                    stats.risk_path = risk_log.path
 
                 if self.zone_map:
                     self.zone_map.resolve(source.width, source.height)
@@ -175,14 +197,25 @@ class TrackingPipeline:
                         drawable = identities
 
                         # 계층 3: 선반 앞 '멈춤' 구간 -> TAKE 후보
+                        done: list[TakeCandidate] = []
                         if self.interactions is not None:
-                            done: list[TakeCandidate] = self.interactions.update(
-                                frame, identities
-                            )
+                            done = self.interactions.update(frame, identities)
                             if done:
                                 stats.take_candidates.extend(done)
                                 if takes_log is not None:
                                     takes_log.write_many(done)
+
+                        # 손님 상태 · 결제 · 출구 판정
+                        if self.risk is not None:
+                            events, records = self.risk.update(
+                                frame, identities, done, self.registry.merges
+                            )
+                            if risk_log is not None:
+                                risk_log.write_many(events)
+                                payments_log.write_many(records)
+                            for event in events:
+                                self._report(event, frame, out_dir, alert_until)
+                        last_pts_ms = frame.pts_ms
 
                     if writer is not None or cfg.output.show_window or on_frame is not None:
                         header = (
@@ -198,6 +231,8 @@ class TrackingPipeline:
                         if self.zone_map and cfg.output.draw_zones:
                             base = draw_zones(base, self.zone_map)
                         canvas = overlay.draw(base, drawable, header)
+                        if alert_until and self.risk is not None:
+                            canvas = draw_alerts(canvas, self._live_alerts(drawable, frame, alert_until))
                         if writer is not None:
                             writer.write(canvas)
                         if cfg.output.show_window:
@@ -221,6 +256,14 @@ class TrackingPipeline:
                     stats.take_candidates.extend(remaining)
                     if takes_log is not None:
                         takes_log.write_many(remaining)
+                    if self.risk is not None:
+                        self.risk.add_late_takes(remaining, last_pts_ms)
+            if self.risk is not None:
+                stats.risk_events = list(self.risk.events)
+                stats.risk_summary = self.risk.summary()
+            if risk_log is not None:
+                risk_log.close()
+                payments_log.close()
             if identity_log is not None:
                 identity_log.close()
                 if self.registry.merges:
@@ -237,3 +280,31 @@ class TrackingPipeline:
             stats.elapsed_sec = time.perf_counter() - started
 
         return stats
+
+    def _report(self, event, frame, out_dir: Path, alert_until: dict) -> None:
+        """위험 판정 한 건을 알린다. HIGH_RISK 면 그 순간의 장면을 이미지로 남긴다."""
+        mark = {RiskLevel.HIGH_RISK: "!!", RiskLevel.REVIEW: "??"}.get(event.level, "ok")
+        print(f"  [{mark}] {event.time_sec:7.2f}s  손님 {event.person_id}  {event.level.value}  {event.reason}")
+        if event.level != RiskLevel.HIGH_RISK:
+            return
+        text = f"HIGH RISK P{event.person_id} unpaid {event.unpaid}"
+        alert_until[event.person_id] = (frame.pts_ms + self.ALERT_SHOW_SECONDS * 1000.0, text)
+        if frame.image is None or not self.config.output.alerts_dir:
+            return
+        base = draw_zones(frame.image, self.zone_map) if self.zone_map else frame.image.copy()
+        image = draw_alerts(base, [(event.bbox, text)])
+        path = out_dir / self.config.output.alerts_dir / f"{frame.index:06d}_p{event.person_id}.jpg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(path), image)
+
+    def _live_alerts(self, identities, frame, alert_until: dict) -> list:
+        """판정 뒤 몇 초간, 지금 위치의 그 손님에게 빨간 박스를 띄운다."""
+        alerts = []
+        for obs in identities:
+            if getattr(obs, "person_id", 0) <= 0:
+                continue
+            pid = self.risk.book.resolve(obs.person_id)
+            until = alert_until.get(pid)
+            if until and frame.pts_ms <= until[0]:
+                alerts.append((obs.bbox, until[1]))
+        return alerts

@@ -180,3 +180,41 @@ class TakeCandidate:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+class RiskLevel(str, Enum):
+    """출구에 도착한 손님에 대한 판정."""
+
+    HIGH_RISK = "HIGH_RISK"  # 집은 행동이 있는데 결제가 전혀 없이 출구에 들어섰다
+    REVIEW = "REVIEW"        # 결제는 했지만 탐지된 집기 행동보다 적다 — 관리자 확인 필요
+    CLEAR = "CLEAR"          # 집은 행동이 없거나, 그만큼 결제했다
+
+
+@dataclass(frozen=True, slots=True)
+class RiskEvent:
+    """손님이 출구 구역에 들어선 순간의 판정. 위험 판정 계층의 출력.
+
+    CLEAR 도 내보내는 이유: 경보가 '맞게 안 울린 것'도 평가해야 하기 때문이다.
+    HIGH_RISK 만 남기면 계산하고 나간 손님을 제대로 통과시켰는지 확인할 수 없다.
+    """
+
+    person_id: int
+    level: RiskLevel
+    zone: str
+    frame: int
+    timestamp: str
+    time_sec: float
+    bbox: BBox
+    taken: int
+    """이 손님의 집기 행동 수. 시간이 겹치는 TAKE 후보는 한 번으로 센다."""
+    paid: int
+    """이 손님에게 연결된 결제 품목 수."""
+    unpaid: int
+    take_frames: tuple[tuple[int, int], ...]
+    """근거가 된 TAKE 후보들의 (시작, 끝) 프레임. 영상에서 바로 찾아볼 수 있게."""
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        d = asdict(self)
+        d["level"] = self.level.value
+        return d

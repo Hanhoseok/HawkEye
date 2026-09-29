@@ -121,6 +121,18 @@ interaction:
   gap_tolerance_seconds: 0.5
   speed_window_seconds: 0.4
 
+# 손님 상태 · 결제 · 출구 판정 (docs/risk-pipeline.md)
+# 집기 행동이 있는데 결제가 전혀 없이 출구에 들어서면 HIGH_RISK,
+# 결제가 집기 행동보다 적으면 REVIEW(관리자 확인), 그 외 CLEAR.
+risk:
+  enabled: true
+  payments: null             # 결제 기록 CSV. 명령행 --payments 로도 지정
+  exit_min_seconds: 0.5      # 출구 구역에 이만큼 연속으로 있어야 '들어섰다'고 본다 (스쳐 지나가기 제외)
+  exit_vanish_seconds: 2.0   # 출구 구역 안에서 보이다 사라지면 이 시간 뒤 판정 (화면 가장자리 출구 대응).
+                             # 다시 나타나면 나간 게 아니었으므로 판정을 되돌린다
+  exit_rearm_seconds: 2.0    # 출구를 이만큼 벗어나야 다음 방문으로 본다 (경계에서 들락날락 방지)
+  checkout_grace_seconds: 3.0  # 결제 순간 계산대를 막 떠난 손님도 결제자로 본다
+
 output:
   dir: outputs
   write_video: true
