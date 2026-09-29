@@ -1,0 +1,21 @@
+# tracking 폴더 전용 규칙 (경로는 이 폴더 기준)
+
+# --- 실행 결과 (재생성 가능) ---
+outputs/*
+!outputs/.gitkeep
+
+# --- 영상 데이터 ---
+# 테스트 영상은 각자 출처에서 받는다 (README "테스트 데이터" 참조).
+# 출처마다 라이선스가 달라 저장소에 재배포하지 않는다.
+data/videos/*
+!data/videos/.gitkeep
+
+# --- MERL Shopping Dataset ---
+# 비상업 연구용 라이선스. 복제·재배포 제한이 있으므로 원본과 파생 라벨 모두 올리지 않는다.
+# 파생 라벨은 scripts/merl_to_labels.py 로 언제든 재생성된다.
+data/merl/
+labels/merl_*.csv
+
+# --- UCF-Crime ---
+# 연구용 공개 데이터. 원본은 인터넷에 올라온 실제 CCTV 영상이라 사람이 찍혀 있다. 재배포하지 않는다.
+data/ucf_crime/
