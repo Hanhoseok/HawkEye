@@ -1,0 +1,38 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- 편집기 ---
+.vscode/
+.idea/
+
+# --- 모델 가중치 (실행 시 자동 다운로드) ---
+*.pt
+*.pth
+*.onnx
+
+# --- 실행 결과 (재생성 가능) ---
+outputs/*
+!outputs/.gitkeep
+
+# --- 영상 데이터 ---
+# 테스트 영상은 각자 출처에서 받는다 (README "테스트 데이터" 참조).
+# 출처마다 라이선스가 달라 저장소에 재배포하지 않는다.
+data/videos/*
+!data/videos/.gitkeep
+*.mp4
+*.avi
+*.mpg
+*.mov
+
+# --- MERL Shopping Dataset ---
+# 비상업 연구용 라이선스. 복제·재배포 제한이 있으므로 원본과 파생 라벨 모두 올리지 않는다.
+# 파생 라벨은 scripts/merl_to_labels.py 로 언제든 재생성된다.
+data/merl/
+labels/merl_*.csv
+
+# --- 기타 ---
+*.zip
