@@ -16,7 +16,8 @@
 | 매장 단위 신원 (계층 2) | ✅ tracker 버퍼의 3.3배(10초) 공백 복원 · 천장 시점 분열을 "나중에 합치기"로 해결 | `docs/identity-registry.md` |
 | 구역 (SHELF / EXIT) | ✅ | `docs/zones.md` |
 | TAKE 후보 (계층 3) | 🔶 MERL test 정밀도 0.75 / 재현율 0.71 / F1 0.73 / 국소화 37% | `docs/merl-evaluation.md` |
-| RETURN · 상태 관리 · POS · 위험 판정 | ⬜ 미착수 | |
+| 손님 상태 · 결제 연결 · 출구 판정 | 🔶 로직 완성, 실제 영상 검증 전 (출구·계산대 있는 영상 필요) | `docs/risk-pipeline.md` |
+| RETURN (되돌려놓기) | ⬜ 미착수 | |
 
 **처음 보는 사람은 `docs/진행경과-정리.md` 부터 읽는다.** 왜 이런 구조가 됐는지가 수치와 함께 정리되어 있다.
 
@@ -180,6 +181,9 @@ src/
   zones/zone_map.py        구역 로드 + 사람과의 관계 판정
   interaction/detector.py  계층 3 — TAKE 후보 (signal: dwell / hand / raise)
   interaction/pose_features.py  손 높이·팔 뻗음 등 자세 특징
+  risk/customers.py        손님 장부 — 집기 행동 · 결제 · 신원 합침 반영
+  risk/payments.py         결제(POS) 입력 — 지금은 CSV
+  risk/engine.py           출구 판정 — HIGH_RISK / REVIEW / CLEAR
   detectors/yolo_pose_detector.py  bbox + 17 keypoint 를 한 번에
   sinks/video_writer.py    결과 영상 저장
   sinks/observation_log.py TrackObservation JSONL 저장/읽기
@@ -208,6 +212,8 @@ outputs/                   결과물 (git 제외)
 | **`docs/labeling.md`** | **행동 라벨링 — 무엇을 왜 어떻게 찍는가** |
 | **`docs/pose-signals.md`** | **Pose 신호 — 손 높이는 되고 팔 뻗음·손 위치는 안 된다** |
 | **`docs/merl-evaluation.md`** | **MERL 공개 데이터로 train/test 분리 평가. 특징이 화각에 종속적임을 확인** |
+| **`docs/risk-pipeline.md`** | **손님 상태 · 결제 연결 · 출구 판정 — 입장부터 경보까지** |
+| **`docs/filming-guide.md`** | **검증용 시나리오 영상 촬영 가이드 — 무엇을 찍고 무엇을 기록하나** |
 
 ## 5. Phase 진행 체크리스트
 

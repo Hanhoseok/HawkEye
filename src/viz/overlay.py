@@ -35,6 +35,17 @@ _ZONE_COLORS = {
 }
 
 
+def draw_alerts(image: Any, alerts: Iterable[tuple[tuple, str]]) -> Any:
+    """위험 판정을 받은 손님을 굵은 빨간 박스와 문구로 표시한다. alerts: (bbox, 문구) 목록."""
+    for bbox, text in alerts:
+        x1, y1, x2, y2 = (int(v) for v in bbox)
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 4)
+        org = (x1, max(20, y1 - 10))
+        cv2.putText(image, text, org, _FONT, 0.7, (0, 0, 0), 5, cv2.LINE_AA)
+        cv2.putText(image, text, org, _FONT, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+    return image
+
+
 def draw_zones(image: Any, zone_map, alpha: float = 0.25) -> Any:
     """구역을 반투명하게 채우고 이름을 적는다. 좌표가 맞는지 눈으로 확인하는 용도."""
     if not zone_map:

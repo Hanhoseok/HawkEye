@@ -37,6 +37,15 @@ def test_core_layer_has_no_external_vision_deps():
             assert f"import {name}" not in source, f"{path.name} 이 {name} 에 의존합니다"
 
 
+def test_risk_layer_has_no_external_vision_deps():
+    """손님 상태·결제·출구 판정은 앞 계층의 출력만 받는다. 영상·모델 라이브러리를 몰라야 한다."""
+    forbidden = ("cv2", "ultralytics", "supervision", "torch", "boxmot")
+    for path in (Path(__file__).resolve().parents[1] / "src" / "risk").glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for name in forbidden:
+            assert f"import {name}" not in source, f"{path.name} 이 {name} 에 의존합니다"
+
+
 def test_detection_and_frame_are_plain_data():
     frame = Frame(index=0, timestamp="2026-09-20T14:00:00+09:00", pts_ms=0.0, image=None)
     det = Detection(bbox=(0.0, 0.0, 1.0, 1.0), score=0.9, class_id=0, class_name="person")

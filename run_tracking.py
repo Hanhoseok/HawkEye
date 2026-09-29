@@ -18,6 +18,8 @@ from src.detectors.yolo_detector import build_detector
 from src.pipeline import TrackingPipeline
 from src.identity.embedder import build_embedder
 from src.interaction.detector import InteractionDetector
+from src.risk.engine import RiskEngine
+from src.risk.payments import PaymentFeed
 from src.identity.registry import IdentityRegistry
 from src.trackers import build_tracker
 from src.zones.zone_map import ZoneMap
@@ -82,6 +84,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-video", action="store_true", help="결과 영상 저장 안 함")
     parser.add_argument("--zones", help="구역 정의 파일 경로 (기본 zones.yaml)")
     parser.add_argument("--no-takes", action="store_true", help="TAKE 후보 판정(계층 3)을 끈다")
+    parser.add_argument("--payments", help="결제 기록 CSV (src/risk/payments.py 형식)")
+    parser.add_argument("--no-risk", action="store_true", help="손님 상태·결제·출구 판정을 끈다")
     parser.add_argument("--dwell", type=float, help="선반 앞 체류 시간 기준(초)")
     parser.add_argument("--max-speed", type=float, help="'멈춤' 기준 속도 (체구 높이/초)")
     parser.add_argument("--no-zones", action="store_true", help="구역을 쓰지 않는다")
@@ -156,6 +160,10 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.output.write_video = False
     if args.zones:
         config.zones.path = args.zones
+    if args.payments:
+        config.risk.payments = args.payments
+    if args.no_risk:
+        config.risk.enabled = False
     if args.no_takes:
         config.interaction.enabled = False
     if args.dwell is not None:
@@ -223,8 +231,22 @@ def main() -> int:
             f"겹침 {config.interaction.min_overlap:g} 이상"
         )
 
+    risk = None
+    if config.risk.enabled and interactions is not None:
+        payments = PaymentFeed.load(config.risk.payments) if config.risk.payments else PaymentFeed.empty()
+        risk = RiskEngine(config.risk, zone_map, payments)
+        types = {z.type.value for z in zone_map.zones}
+        print(
+            f"risk     : 미결제 물건을 가진 채 출구 구역에 {config.risk.exit_min_seconds:g}초 이상 -> HIGH_RISK "
+            f"(결제 기록 {len(payments)}건)"
+        )
+        if "EXIT" not in types:
+            print("[warn] 구역 파일에 EXIT 가 없어 출구 판정이 일어나지 않습니다.")
+        if len(payments) and "CHECKOUT" not in types:
+            print("[warn] 구역 파일에 CHECKOUT 이 없어, person_id 가 적히지 않은 결제는 손님에게 연결되지 않습니다.")
+
     stats = TrackingPipeline(
-        config, detector, tracker, registry, zone_map, interactions
+        config, detector, tracker, registry, zone_map, interactions, risk
     ).run()
     print(stats.summary())
 

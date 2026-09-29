@@ -238,6 +238,38 @@ class InteractionConfig:
 
 
 @dataclass
+class RiskConfig:
+    """손님 상태 · 결제 · 위험 판정 설정 (docs/risk-pipeline.md).
+
+    판정 규칙: 계산하지 않은 물건(TAKE 후보 수 - 결제 품목 수)이 1개 이상인 손님이
+    출구(EXIT) 구역에 들어서면 HIGH_RISK. 없으면 CLEAR.
+    """
+
+    enabled: bool = True
+
+    payments: str | None = None
+    """결제 기록 CSV 경로 (src/risk/payments.py). 없으면 아무도 결제하지 않은 것으로 본다."""
+
+    exit_min_seconds: float = 0.5
+    """발이 출구 구역 안에 이만큼 연속으로 있어야 '출구에 들어섰다'고 본다.
+
+    출구 옆을 스쳐 지나가는 것까지 판정하지 않기 위해서다.
+    """
+
+    exit_rearm_seconds: float = 2.0
+    """출구 구역을 벗어난 지 이만큼 지나야 다음 방문으로 본다.
+
+    구역 경계에서 발 위치가 들락날락하면 같은 방문에 판정이 여러 번 나가는 것을 막는다.
+    """
+
+    checkout_grace_seconds: float = 3.0
+    """결제 순간 계산대 구역에 없더라도, 이 시간 안에 있었던 손님이면 결제자로 본다.
+
+    POS 기록 시각과 영상 시각이 조금 어긋나거나, 결제 직후 한 걸음 물러나는 경우를 위한 여유.
+    """
+
+
+@dataclass
 class OutputConfig:
     dir: str = "outputs"
     write_video: bool = True
@@ -248,6 +280,11 @@ class OutputConfig:
     identities_name: str = "identities.jsonl"
     write_takes: bool = True
     takes_name: str = "take_candidates.jsonl"
+    write_risk: bool = True
+    risk_name: str = "risk_events.jsonl"
+    payments_name: str = "payments.jsonl"
+    alerts_dir: str = "alerts"
+    """HIGH_RISK 순간의 장면을 이미지로 저장할 폴더 (결과 폴더 아래)."""
     show_window: bool = False
     draw_zones: bool = True
     draw_trail: bool = True
@@ -262,6 +299,7 @@ class AppConfig:
     zones: ZonesConfig = field(default_factory=ZonesConfig)
     identity: IdentityConfig = field(default_factory=IdentityConfig)
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
+    risk: RiskConfig = field(default_factory=RiskConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
     @classmethod
@@ -274,6 +312,7 @@ class AppConfig:
             zones=ZonesConfig(**(raw.get("zones") or {})),
             identity=IdentityConfig(**(raw.get("identity") or {})),
             interaction=InteractionConfig(**(raw.get("interaction") or {})),
+            risk=RiskConfig(**(raw.get("risk") or {})),
             output=OutputConfig(**(raw.get("output") or {})),
         )
 
