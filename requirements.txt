@@ -1,0 +1,12 @@
+# 1차 구현 의존성 (Python 3.11)
+# torch 는 Intel Arc 환경이므로 CPU 휠을 사용한다.
+opencv-python==4.10.0.84
+numpy==1.26.4
+PyYAML==6.0.2
+ultralytics==8.3.40      # YOLO person detection
+supervision==0.25.1      # ByteTrack 구현체 (detector 와 분리된 tracker 계층)
+pytest==8.3.4         # 계약/스모크 테스트
+
+# BoT-SORT(ReID) tracker 실험용. bytetrack 만 쓸 거면 없어도 된다.
+# 25.x 는 numpy>=2.2 를 강제해 위 numpy 핀과 충돌하므로 19.0.0 을 쓴다.
+boxmot==19.0.0

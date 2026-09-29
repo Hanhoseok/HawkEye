@@ -1,0 +1,113 @@
+# 절도 위험 탐지 시스템 · 1차 구현 설정
+# 임계값과 모델 경로는 코드에 하드코딩하지 않고 여기서만 관리한다. (05 아키텍처 §4)
+
+video:
+  source: data/videos/sample.mp4
+  start_time: null      # ISO8601 (예: "2026-09-20T14:00:00+09:00"). null 이면 실행 시각 기준
+  start_frame: 0        # 이 프레임부터 처리. 특정 구간만 실험할 때 사용
+  max_frames: null      # 디버깅용 조기 종료. null 이면 끝까지
+  stride: 1             # N 프레임마다 1장 처리
+  scale: 1.0            # 축소 배율. 1.0 미만이면 카메라가 멀어진 상황을 흉내낸다(실험용)
+  scale_mode: shrink    # shrink=화면 크기 유지하고 내용만 축소 / resize=프레임 자체 축소
+
+detector:
+  name: yolo
+  model_path: yolov8n.pt   # 사전학습 가중치. 1차 구현에서는 재학습하지 않는다
+  device: cpu              # Intel Arc 환경이므로 CUDA 대신 cpu
+  # 작은 사람이 많으면 키운다. 텐서 속 사람 키 90px 이상이 목표. (docs/scale-limits.md)
+  # 실측(사람 51px): 640 -> 재현율 42%, 960 -> 88%, 1280 -> 95%. 속도는 12.7 -> 7.3 -> 5.4 FPS.
+  imgsz: 640
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  classes: [person]        # 1차 구현 범위: 사람만
+  half: false
+
+tracker:
+  # bytetrack: 움직임(칼만)+IoU 만 사용. 빠르지만 '분열'과 '뒤바뀜' 모두 해결 못 함.
+  #            개발 중 빠른 반복이 필요할 때 --tracker bytetrack 으로 쓴다.
+  # botsort  : 외형(ReID) 추가. 두 실패 모두 해결. 약 30% 느리다. (기본값)
+  #            동일 조건 실측 2회: bytetrack 8.3 FPS vs botsort 5.9 FPS
+  # 근거: docs/tracker-comparison.md, docs/phase3-failure-notes.md
+  name: botsort
+  track_activation_threshold: 0.25   # 이 점수 이상이면 새 track 후보
+  # 사라진 track 을 몇 프레임 동안 기억할지. 재등장 공백보다 커야 재식별이 가능하다.
+  # 실측: 공백 50 처리프레임을 넘기려면 90 이 필요했다(기본 30 으로는 실패).
+  lost_track_buffer: 90
+  # 주의: IoU 값이 아니라 'IoU 거리(1-IoU)'의 상한이다. 값이 클수록 관대하다.
+  # 실측(store-aisle): 0.8/0.9/0.95 -> track 5개, 0.5 -> 11개, 0.3 -> 31개
+  minimum_matching_threshold: 0.8
+  frame_rate: 30
+  minimum_consecutive_frames: 1      # 몇 프레임 연속 매칭돼야 track 확정인지
+
+  # 아래는 name: botsort 일 때만 사용된다 (ByteTrack 은 무시)
+  reid:
+    weights: osnet_x0_25_msmt17.pt   # 경량 ReID 백본. 없으면 자동 다운로드
+    device: cpu
+    half: false
+    # 주의: 외형 비교는 IoU 게이트를 통과한 쌍에만 적용된다.
+    #   proximity_threshold 보다 IoU 거리가 크면 외형 정보가 버려진다(boxmot botsort.py:289-296).
+    #   가림 후 재식별을 노린다면 1.0 으로 게이트를 열어야 한다.
+    #   boxmot 기본값은 0.5 / 0.25 이며, 이 값은 '교차'만 해결하고 '재등장'은 해결하지 못한다.
+    #   아래는 두 실험(store-aisle 재등장 + people-detection 교차)에서 모두 통과한 값이다.
+    proximity_threshold: 1.0         # 1.0 = IoU 게이트 없음
+    appearance_threshold: 0.5        # 외형 거리 상한. 클수록 관대
+    # 주의: 재등장 재식별에는 lost_track_buffer 도 함께 키워야 한다(공백 길이 이상).
+    #   위 실험에서는 lost_track_buffer: 90 이 필요했다. 셋 중 하나만 빠져도 실패한다.
+    # 미검증 위험: 혼잡하고 옷차림이 비슷한 장면에서의 오병합(false merge).
+
+# 구역 정의 — 좌표는 카메라 설치 위치에 종속이므로 별도 파일에 둔다
+# 새로 정할 때: python scripts/export_frame.py <영상> --frame <번호>
+zones:
+  enabled: true
+  path: zones.yaml
+
+# 계층 2 · 매장 단위 신원 레지스트리
+# tracker 는 초 단위 짧은 공백만 메운다. 고객이 매장을 나갈 때까지 추적하려면 이 계층이 필요하다.
+# 근거: docs/tracker-comparison.md (버퍼를 30->150 으로 키워도 재식별은 복구되지 않았다)
+identity:
+  enabled: true
+  match_threshold: 0.65      # 코사인 유사도. 높일수록 보수적(오병합 감소, 미복구 증가)
+  max_templates: 5           # 한 사람당 외형 템플릿 수. 크기·자세 변화를 견디려면 여러 개가 필요
+  template_refresh_seconds: 1.0
+  # 이 시간 동안 '연속으로' 안 보이면 매장을 나간 것으로 본다. 체류 시간 상한이 아니다.
+  # 보일 때마다 시계가 초기화되므로 계속 보이는 고객은 몇 분이든 유지된다.
+  # 단위가 초인 이유: 프레임 번호는 원본 fps 와 stride 에 따라 뜻하는 시간이 달라진다.
+  # 실제로 900프레임을 30초로 알고 썼으나 59.9fps 영상에서는 15초였다.
+  # 실제 운영에서는 EXIT 존 이벤트로 대체해야 한다.
+  retire_after_seconds: 30.0
+  min_tensor_height: 65      # 이보다 작은 관측은 신원 판단에 쓰지 않는다 (docs/scale-limits.md)
+
+# 계층 3 · TAKE 후보 판정
+# '선반에 가까움'만으로는 못 거른다 — 전체 영상에서 모두가 선반에 30~90% 접촉했다(docs/zones.md).
+# 통로를 걷는 것 자체가 선반 옆에 있는 것이므로, 근접에 '멈춤'을 더한다.
+interaction:
+  enabled: true
+  # 라벨 기준 스윕 결과 0.15 -> 0.05 로 낮추는 것이 F1 0.57 -> 0.70 으로 가장 큰 개선이었다.
+  # (낮추면 구간이 덜 끊겨 실제 집는 순간을 포함할 확률이 올라간다)
+  min_overlap: 0.05
+  # 단위는 픽셀이 아니라 '체구 높이 / 초'. 사람 크기가 한 화면에서 4~10배 변하므로
+  # 픽셀 기준이면 멀리 있는 사람의 정상 보행이 전부 '멈춤'으로 오인된다.
+  # 정답 라벨(TAKE 19 / BROWSE 14)로 스윕해 정한 값. F1 0.57 지점.
+  # 주의: 속도 조건의 기여는 크지 않다. 완전히 끄면 F1 0.54 로 0.03 밖에 안 떨어진다.
+  #       대부분의 판별력은 dwell_seconds 에서 나온다.
+  # 정정 기록: 라벨 없이 속도 분포만 보고 0.05 로 잡았었는데, 라벨로 재보니 더 나빴다
+  #          (F1 0.52). 집는 동작에는 실제로 움직임이 있어 과하게 조이면 재현율이 떨어진다.
+  max_speed: 0.30
+  dwell_seconds: 3.0         # 접촉+저속이 이 시간 이상 이어져야 후보
+  gap_tolerance_seconds: 0.5
+  speed_window_seconds: 0.4
+
+output:
+  dir: outputs
+  write_video: true
+  video_name: tracked.mp4
+  write_observations: true
+  observations_name: observations.jsonl
+  write_identities: true
+  identities_name: identities.jsonl
+  write_takes: true
+  takes_name: take_candidates.jsonl
+  show_window: false
+  draw_zones: true
+  draw_trail: true
+  trail_length: 30
