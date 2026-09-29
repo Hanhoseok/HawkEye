@@ -117,6 +117,7 @@ class ZoneType(str, Enum):
     EXIT = "EXIT"          # 출구. 발 위치가 안에 들어왔는지로 본다
     CHECKOUT = "CHECKOUT"  # 계산대
     ENTRANCE = "ENTRANCE"  # 입구
+    OUTSIDE = "OUTSIDE"    # 문 밖이 보이는 곳 (유리문 너머). 매장 안에 있던 사람이 여기 보이면 나간 것
     OTHER = "OTHER"
 
 
@@ -183,10 +184,11 @@ class TakeCandidate:
 
 
 class RiskLevel(str, Enum):
-    """출구에 도착한 손님에 대한 판정."""
+    """출구에 도착한(WARNING) 또는 나간(나머지) 손님에 대한 판정."""
 
-    HIGH_RISK = "HIGH_RISK"  # 집은 행동이 있는데 결제가 전혀 없이 출구에 들어섰다
-    REVIEW = "REVIEW"        # 결제는 했지만 탐지된 집기 행동보다 적다 — 관리자 확인 필요
+    WARNING = "WARNING"      # 집기 행동이 있는데 결제 없이 출구에 다가섰다 — 아직 나가지 않았다
+    HIGH_RISK = "HIGH_RISK"  # 집기 행동이 있는데 결제가 전혀 없이 나갔다 (확정)
+    REVIEW = "REVIEW"        # 결제가 집기 행동보다 적거나, 신원 뒤바뀜이 의심된다 — 관리자 확인 필요
     CLEAR = "CLEAR"          # 집은 행동이 없거나, 그만큼 결제했다
 
 
@@ -213,6 +215,9 @@ class RiskEvent:
     take_frames: tuple[tuple[int, int], ...]
     """근거가 된 TAKE 후보들의 (시작, 끝) 프레임. 영상에서 바로 찾아볼 수 있게."""
     reason: str
+    identity_check: float | None = None
+    """판정 직전 신원 확인 값: 최근 모습과 그 이전 모습의 유사도. 낮으면 추적 번호가 다른 사람에게
+    옮겨 붙었을 수 있다. 확인할 수 없으면 None (임베더 없음, 기록 부족)."""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

@@ -283,7 +283,7 @@ class TrackingPipeline:
 
     def _report(self, event, frame, out_dir: Path, alert_until: dict) -> None:
         """위험 판정 한 건을 알린다. HIGH_RISK 면 그 순간의 장면을 이미지로 남긴다."""
-        mark = {RiskLevel.HIGH_RISK: "!!", RiskLevel.REVIEW: "??"}.get(event.level, "ok")
+        mark = {RiskLevel.HIGH_RISK: "!!", RiskLevel.REVIEW: "??", RiskLevel.WARNING: "!?"}.get(event.level, "ok")
         print(f"  [{mark}] {event.time_sec:7.2f}s  손님 {event.person_id}  {event.level.value}  {event.reason}")
         if event.level != RiskLevel.HIGH_RISK:
             return

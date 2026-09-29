@@ -165,3 +165,25 @@ def test_cut_off_at_frame_edge_is_not_matched_immediately():
     first = feed(reg, [(1, HERE)], 0.0, 1)[-1][0]
     entering = feed(reg, [(2, at_edge)], 20.0, 1)[-1][0]
     assert entering.person_id == first.person_id, "비교용 — 끄면 즉시 합쳐져야 한다"
+
+
+def test_recent_consistency_drops_when_track_switches_person():
+    """판정 직전 신원 확인 — 같은 번호가 도중에 다른 사람을 따라가기 시작하면 '최근 vs 이전' 유사도가 떨어진다."""
+    same = noisy_photos(0, 12, seed=1)
+    swapped = noisy_photos(0, 9, seed=1) + noisy_photos(1, 3, seed=2)   # 마지막 3장은 다른 사람
+    reg_same = registry(StreamEmbedder({HERE: same}), late_merge_enabled=False)
+    reg_swap = registry(StreamEmbedder({HERE: swapped}), late_merge_enabled=False)
+    pid_same = feed(reg_same, [(1, HERE)], 0.0, 12)[-1][0].person_id
+    pid_swap = feed(reg_swap, [(1, HERE)], 0.0, 12)[-1][0].person_id
+    ok, bad = reg_same.recent_consistency(pid_same), reg_swap.recent_consistency(pid_swap)
+    assert ok is not None and bad is not None
+    # 이 합성 사진은 실제 ReID 특징보다 잡음이 커서 절대값(실측 기준 0.78)은 맞지 않는다.
+    # 확인하는 것은 '뒤바뀌면 같은 사람일 때보다 뚜렷이 낮아진다'는 성질이다.
+    assert ok - bad > 0.1, f"같은 사람 {ok:.2f} / 뒤바뀜 {bad:.2f}"
+
+
+def test_recent_consistency_needs_enough_history():
+    """이전 기록이 모자라면 확인하지 않는다(None) — '괜찮다'가 아니라 '모른다'."""
+    reg = registry(StreamEmbedder({HERE: noisy_photos(0, 5, seed=1)}), late_merge_enabled=False)
+    pid = feed(reg, [(1, HERE)], 0.0, 5)[-1][0].person_id
+    assert reg.recent_consistency(pid) is None
