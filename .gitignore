@@ -1,42 +1,54 @@
+# ============================================================
+# 공통 규칙 (저장소 전체 적용)
+# Public 저장소다. 데이터·영상·가중치는 절대 커밋하지 않는다.
+# 폴더별 세부 규칙은 각 폴더의 .gitignore 에 둔다.
+# ============================================================
+
 # --- Python ---
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 .pytest_cache/
+.ipynb_checkpoints/
 
-# --- 편집기 ---
+# --- 편집기 / OS ---
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
 
-# --- 모델 가중치 (실행 시 자동 다운로드) ---
+# --- 비밀 정보 (API 키, RTSP 주소·계정 등) ---
+.env
+*.env
+
+# --- 모델 가중치 (용량 큼, 드라이브로 공유) ---
 *.pt
 *.pth
 *.onnx
+*.ckpt
+*.safetensors
 
-# --- 실행 결과 (재생성 가능) ---
-outputs/*
-!outputs/.gitkeep
+# --- 학습 결과 ---
+**/runs/
+**/wandb/
 
-# --- 영상 데이터 ---
-# 테스트 영상은 각자 출처에서 받는다 (README "테스트 데이터" 참조).
-# 출처마다 라이선스가 달라 저장소에 재배포하지 않는다.
-data/videos/*
-!data/videos/.gitkeep
+# --- 영상 데이터 (라이선스·개인정보) ---
 *.mp4
 *.avi
 *.mpg
 *.mov
+*.mkv
 
-# --- MERL Shopping Dataset ---
-# 비상업 연구용 라이선스. 복제·재배포 제한이 있으므로 원본과 파생 라벨 모두 올리지 않는다.
-# 파생 라벨은 scripts/merl_to_labels.py 로 언제든 재생성된다.
-data/merl/
-labels/merl_*.csv
+# --- 데이터셋 ---
+# AI-Hub 데이터는 약관상 재배포가 제한된다. 원본·가공본 모두 올리지 않는다.
+**/aihub/
+**/AI-Hub/
 
-# --- UCF-Crime ---
-# 연구용 공개 데이터. 원본은 인터넷에 올라온 실제 CCTV 영상이라 사람이 찍혀 있다. 재배포하지 않는다.
-data/ucf_crime/
+# --- 앱 빌드 산출물 ---
+node_modules/
+**/build/
+**/dist/
 
 # --- 기타 ---
 *.zip

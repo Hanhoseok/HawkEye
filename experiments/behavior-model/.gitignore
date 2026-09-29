@@ -1,0 +1,10 @@
+# behavior-model 폴더 전용 규칙 (경로는 이 폴더 기준)
+
+# 데이터 (AI-Hub 약관상 재배포 금지)
+data/*
+!data/.gitkeep
+
+# 학습 결과·가중치
+runs/
+weights/
+checkpoints/
