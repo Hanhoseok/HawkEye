@@ -46,9 +46,22 @@ class Customer:
     exit_left_ms: float | None = None
     """출구를 벗어난 시각."""
     exit_judged: bool = False
-    """이번 출구 방문에 대해 이미 판정했는가."""
-    judged_by_vanishing: bool = False
-    """그 판정이 '출구에서 사라짐'으로 내린 것인가. 다시 나타나면 되돌린다."""
+    """이번 출구 방문에서 '다가섬'을 이미 처리했는가 (WARNING 을 냈거나, 낼 필요가 없었거나)."""
+    departed: bool = False
+    """'나갔다'고 확정하고 최종 판정했는가. 매장 안에서 다시 보이면 되돌린다."""
+    last_exit_ms: float | None = None
+    """마지막으로 출구 또는 문 밖 구역에 있었던 시각. 출구를 막 지나 사라진 경우를 잡는다."""
+    outside_since_ms: float | None = None
+    """지금 문 밖 구역에 보인다면 그 시작 시각."""
+    inside_checks: list[tuple[float, float]] = field(default_factory=list)
+    """(시각, 신원 확인 값) — 매장 안에 있을 때만 잰다. 판정에는 마지막 몇 초 중 가장 높은 값을 쓴다.
+
+    나가기 직전 값을 쓰지 않는 이유 (Shoplifting039 실측): 밝은 유리문 쪽으로 걸어가면 역광 때문에
+    같은 사람인데도 값이 0.87 -> 0.68 로 꾸준히 떨어졌다. 조명 변화는 문에 다가가는 몇 초 동안의
+    일시적 하락이고, 번호 뒤바뀜은 그 뒤로 계속 낮다. 그래서 최근 몇 초 중 최고값으로 판단한다.
+    """
+    seen_inside: bool = False
+    """매장 안(문 밖 구역이 아닌 곳)에서 보인 적이 있는가. 문 밖 행인은 판정하지 않는다."""
 
     last_bbox: BBox | None = None
 
@@ -121,6 +134,9 @@ class CustomerBook:
             dst.checkout_since_ms = src.checkout_since_ms
             dst.exit_zone, dst.exit_since_ms = src.exit_zone, src.exit_since_ms
             dst.exit_left_ms, dst.exit_judged = src.exit_left_ms, src.exit_judged
+            dst.departed = src.departed
+            dst.last_exit_ms, dst.outside_since_ms = src.last_exit_ms, src.outside_since_ms
+        dst.seen_inside = dst.seen_inside or src.seen_inside
         for t in (src.last_checkout_ms, dst.last_checkout_ms):
             if t is not None and (dst.last_checkout_ms is None or t > dst.last_checkout_ms):
                 dst.last_checkout_ms = t
@@ -140,10 +156,12 @@ class CustomerBook:
             if obs.person_id <= 0:
                 continue
             customer = self._get(obs.person_id, now_ms)
-            if customer.judged_by_vanishing:
-                # 사라져서 '나갔다'고 판정했는데 다시 보인다 — 나간 게 아니라 탐지가 끊겼던 것이다.
+            hits = self.zone_map.evaluate(obs.bbox) if self.zone_map else []
+            outside = any(h.zone_type == ZoneType.OUTSIDE and h.contains_foot for h in hits)
+            if customer.departed and not outside:
+                # '나갔다'고 확정했는데 다시 보인다 — 나간 게 아니라 탐지가 끊겼던 것이다.
                 # 판정을 되돌려 다음 출구 방문 때 다시 판정한다.
-                customer.judged_by_vanishing = False
+                customer.departed = False
                 customer.exit_judged = False
                 customer.exit_since_ms = None
                 customer.exit_left_ms = None
@@ -151,7 +169,13 @@ class CustomerBook:
             customer.last_seen_ms = now_ms
             customer.last_bbox = obs.bbox
 
-            hits = self.zone_map.evaluate(obs.bbox) if self.zone_map else []
+            if outside:
+                if customer.outside_since_ms is None:
+                    customer.outside_since_ms = now_ms
+                customer.last_exit_ms = now_ms
+            else:
+                customer.outside_since_ms = None
+                customer.seen_inside = True
             in_checkout = any(h.zone_type == ZoneType.CHECKOUT and h.contains_foot for h in hits)
             exit_hit = next((h for h in hits if h.zone_type == ZoneType.EXIT and h.contains_foot), None)
 
@@ -163,6 +187,7 @@ class CustomerBook:
                 customer.checkout_since_ms = None
 
             if exit_hit is not None:
+                customer.last_exit_ms = now_ms
                 if customer.exit_since_ms is None:
                     customer.exit_since_ms = now_ms
                     customer.exit_zone = exit_hit.zone

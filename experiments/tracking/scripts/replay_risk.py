@@ -7,6 +7,7 @@
         --video data/videos/store.mp4 --zones zones.yaml --payments payments.csv
 
 --video 는 fps 와 해상도를 알아내는 데만 쓴다(프레임을 읽지 않는다).
+영상을 읽지 않으므로 판정 직전 신원 확인(외형 비교)은 하지 않는다. 그 확인까지 보려면 run_tracking.py 로 돌린다.
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def main() -> None:
             who = f"손님 {r.person_id}" if r.person_id is not None else "연결 실패"
             print(f"  [pay ] {r.time_sec:7.2f}s  {r.items}개 -> {who} ({r.method}, 후보 {r.candidates}명)")
         for e in events:
-            mark = {RiskLevel.HIGH_RISK: "!!", RiskLevel.REVIEW: "??"}.get(e.level, "ok")
+            mark = {RiskLevel.HIGH_RISK: "!!", RiskLevel.REVIEW: "??", RiskLevel.WARNING: "!?"}.get(e.level, "ok")
             print(f"  [{mark}  ] {e.time_sec:7.2f}s  손님 {e.person_id}  {e.level.value}  {e.reason}")
         events_all += events
         records_all += records

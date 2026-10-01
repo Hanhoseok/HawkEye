@@ -31,6 +31,7 @@ _ZONE_COLORS = {
     ZoneType.EXIT: (60, 60, 255),
     ZoneType.CHECKOUT: (60, 255, 170),
     ZoneType.ENTRANCE: (255, 200, 60),
+    ZoneType.OUTSIDE: (120, 120, 120),
     ZoneType.OTHER: (180, 180, 180),
 }
 
