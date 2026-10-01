@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 시연은 같은 와이파이의 경보 서버(http)·중계기(rtsp)와 통신한다. 서버를 인터넷에 올릴 때는 https 로 바꾼다. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

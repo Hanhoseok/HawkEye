@@ -1,0 +1,8 @@
+{
+ "streams": [
+  {
+   "camera_id": "cam1",
+   "url": "rtsp://10.0.2.2:8554/cam1"
+  }
+ ]
+}

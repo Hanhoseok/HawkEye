@@ -1,0 +1,10 @@
+{
+ "states": {
+  "active": 1,
+  "pass": 1,
+  "resolved": 1
+ },
+ "resolutions": {
+  "false_alarm": 1
+ }
+}

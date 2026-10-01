@@ -1,0 +1,4 @@
+# 저장소 전체는 LF 로 통일하지만, Windows 배치 파일은 CRLF 여야 goto 라벨이 깨지지 않는다.
+*.bat   text eol=crlf
+gradlew text eol=lf
+*.jar   binary
