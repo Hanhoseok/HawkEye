@@ -1,0 +1,5 @@
+# 경보 서버 (Python 3.11)
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1        # 테스트용 TestClient
+pytest==8.3.4

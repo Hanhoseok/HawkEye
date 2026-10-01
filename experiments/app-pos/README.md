@@ -21,6 +21,32 @@ app-pos/
 └─ test-log/      # 팀 테스트 결과 기록
 ```
 
+## 설계
+
+`docs/design.md` — 구성, 사건(case) 규칙, API, 오류 처리.
+
+## 경보 서버 실행
+
+```bash
+cd experiments/app-pos/server
+python -m venv .venv
+.venv\Scriptsctivate                 # Windows
+pip install -r requirements.txt
+python -m pytest -q                     # 테스트
+python -m hawkeye_server --host 0.0.0.0 --port 8000
+```
+
+설정은 환경변수로 준다 (`hawkeye_server/__main__.py` 참고).
+
+| 변수 | 뜻 | 기본값 |
+|---|---|---|
+| `HAWKEYE_DB` | SQLite 파일 | `data/hawkeye.db` |
+| `HAWKEYE_SNAPSHOTS` | 장면 사진 폴더 | `data/snapshots` |
+| `HAWKEYE_API_KEY` | 설정하면 `X-API-Key` 헤더 필요 | 없음 |
+| `HAWKEYE_STREAMS` | 앱에 내려줄 RTSP 주소 `cam1=rtsp://...,cam2=...` | 없음 |
+
+`server/data/`(DB·장면 사진)는 사람이 찍힌 사진이 있어 커밋되지 않는다.
+
 ## 주의
 
 RTSP 주소, 카메라 계정, API 키는 코드에 넣지 않고 `.env`에 둔다 (커밋되지 않음).

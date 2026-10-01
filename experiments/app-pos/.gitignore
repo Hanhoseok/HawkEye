@@ -1,0 +1,14 @@
+# app-pos 폴더 전용 규칙 (경로는 이 폴더 기준)
+
+# 경보 서버 데이터: 장면 사진에 사람이 찍혀 있다. 절대 커밋하지 않는다.
+server/data/
+*.db
+*.db-journal
+
+# 안드로이드 빌드 산출물·로컬 설정
+app/.gradle/
+app/local.properties
+app/**/build/
+app/.idea/
+*.apk
+*.keystore
