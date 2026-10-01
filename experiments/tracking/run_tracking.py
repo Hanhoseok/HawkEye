@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from src.identity.embedder import build_embedder
 from src.interaction.detector import InteractionDetector
 from src.risk.engine import RiskEngine
 from src.risk.payments import PaymentFeed
+from src.sinks.alert_publisher import AlertPublisher
 from src.identity.registry import IdentityRegistry
 from src.trackers import build_tracker
 from src.zones.zone_map import ZoneMap
@@ -86,6 +88,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-takes", action="store_true", help="TAKE 후보 판정(계층 3)을 끈다")
     parser.add_argument("--payments", help="결제 기록 CSV (src/risk/payments.py 형식)")
     parser.add_argument("--no-risk", action="store_true", help="손님 상태·결제·출구 판정을 끈다")
+    parser.add_argument(
+        "--alert-server",
+        help="위험 판정을 보낼 관리자 앱 경보 서버 (예: http://127.0.0.1:8000). "
+        "API 키는 환경변수 HAWKEYE_API_KEY 로 준다",
+    )
+    parser.add_argument("--camera-id", default="cam1", help="경보에 붙일 카메라 이름 (경보 서버용)")
     parser.add_argument("--dwell", type=float, help="선반 앞 체류 시간 기준(초)")
     parser.add_argument("--max-speed", type=float, help="'멈춤' 기준 속도 (체구 높이/초)")
     parser.add_argument("--no-zones", action="store_true", help="구역을 쓰지 않는다")
@@ -249,10 +257,18 @@ def main() -> int:
         if len(payments) and "CHECKOUT" not in types:
             print("[warn] 구역 파일에 CHECKOUT 이 없어, person_id 가 적히지 않은 결제는 손님에게 연결되지 않습니다.")
 
+    alerts = AlertPublisher.from_options(args.alert_server, args.camera_id, os.environ)
+    if alerts is not None:
+        print(f"alerts   : {alerts.url} 로 경보 전송 (카메라 {alerts.camera_id}, 실행 {alerts.run_id})")
+        if risk is None:
+            print("[warn] 위험 판정이 꺼져 있어 보낼 경보가 없습니다.")
+
     stats = TrackingPipeline(
-        config, detector, tracker, registry, zone_map, interactions, risk
+        config, detector, tracker, registry, zone_map, interactions, risk, alerts=alerts
     ).run()
     print(stats.summary())
+    if alerts is not None:
+        print(f"경보 전송        : 성공 {alerts.sent} / 실패 {alerts.failed} / 대기열 초과로 버림 {alerts.dropped}")
 
     if stats.frames == 0:
         print("[error] 처리된 프레임이 없습니다. 입력 영상을 확인하세요.")

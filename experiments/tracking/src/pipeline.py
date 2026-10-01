@@ -93,6 +93,7 @@ class TrackingPipeline:
         zone_map: ZoneMap | None = None,
         interactions=None,
         risk=None,
+        alerts=None,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -101,6 +102,8 @@ class TrackingPipeline:
         self.zone_map = zone_map or ZoneMap.empty()
         self.interactions = interactions
         self.risk = risk
+        self.alerts = alerts
+        """경보 전송기(sinks/alert_publisher.py). 위험 판정을 관리자 앱 서버로 보낸다. 없으면 보내지 않는다."""
 
     ALERT_SHOW_SECONDS = 3.0
     """HIGH_RISK 판정 뒤 결과 영상에 빨간 박스를 몇 초간 띄울지."""
@@ -215,6 +218,8 @@ class TrackingPipeline:
                                 payments_log.write_many(records)
                             for event in events:
                                 self._report(event, frame, out_dir, alert_until)
+                                if self.alerts is not None:
+                                    self.alerts.publish(event, frame.image)
                         last_pts_ms = frame.pts_ms
 
                     if writer is not None or cfg.output.show_window or on_frame is not None:
@@ -258,6 +263,8 @@ class TrackingPipeline:
                         takes_log.write_many(remaining)
                     if self.risk is not None:
                         self.risk.add_late_takes(remaining, last_pts_ms)
+            if self.alerts is not None:
+                self.alerts.close()
             if self.risk is not None:
                 stats.risk_events = list(self.risk.events)
                 stats.risk_summary = self.risk.summary()
