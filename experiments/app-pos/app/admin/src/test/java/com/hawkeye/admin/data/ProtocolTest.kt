@@ -42,6 +42,16 @@ class ProtocolTest {
         assertEquals(listOf(Stream("cam1", "rtsp://10.0.2.2:8554/cam1")), c.streams)
     }
 
+    @Test fun configToleratesBrowserOnlyCameraAndKeepsWebUrl() {
+        val c = Protocol.parseConfig(
+            """{"streams":[{"camera_id":"cam1","url":"rtsp://h:9554/cam1","web_url":"http://127.0.0.1:8889/cam1"},""" +
+                """{"camera_id":"cam2","web_url":"http://127.0.0.1:8889/cam2"}]}""",
+        )
+        assertEquals("http://127.0.0.1:8889/cam1", c.streams[0].webUrl)
+        assertEquals("", c.streams[1].url)
+        assertEquals(listOf("cam1"), c.rtspStreams().map { it.cameraId })
+    }
+
     @Test fun unknownMessageTypeIsIgnored() {
         assertEquals(ServerMessage.Unknown, Protocol.parseMessage("""{"type":"hello","x":1}"""))
     }

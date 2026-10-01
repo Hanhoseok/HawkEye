@@ -17,7 +17,16 @@ rtspTransports: [tcp]
 # 쓰지 않는 기능은 끈다
 rtmp: no
 hls: no
-webrtc: no
+
+# PC 웹 대시보드(브라우저)용 WebRTC. 이 PC 안(127.0.0.1)에서만 연다.
+# 대시보드: http://127.0.0.1:8000  ←  WHEP: http://127.0.0.1:8889/cam1/whep
+webrtc: yes
+webrtcAddress: 127.0.0.1:8889
+webrtcAllowOrigins: ["http://127.0.0.1:8000", "http://localhost:8000"]
+webrtcLocalUDPAddress: 127.0.0.1:8189
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: no
+webrtcAdditionalHosts: ["127.0.0.1"]
 srt: no
 # v1.21 부터 기본으로 켜지는 MoQ 는 실행 폴더에 인증서·개인 키(auto.crt/auto.key)를 만든다. 쓰지 않으므로 끈다.
 moq: no

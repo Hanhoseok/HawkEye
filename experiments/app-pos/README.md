@@ -88,7 +88,38 @@ adb install -r admin/build/outputs/apk/debug/admin-debug.apk
 - 라이브 화면 주소는 서버의 `HAWKEYE_STREAMS` 에서 받는다.
 - 개발 PC 확인 환경: JDK 21, Android SDK 34, AGP 8.5.2, Kotlin 2.0.20
 
-## 한 번에 시험하기 (개발 PC 한 대)
+## PC 웹 대시보드
+
+경보 서버를 띄우면 브라우저에서 `http://127.0.0.1:8000` 으로 연다. 왼쪽에 카메라 라이브(크게·전체화면), 오른쪽에 경보 목록·상세·처리.
+경보가 오면 화면 위에 알림 띠가 뜨고 소리가 난다. 앱과 같은 서버를 쓰므로 PC·폰 어느 쪽에서 처리해도 서로 반영된다.
+
+라이브를 보려면 서버에 브라우저용 주소를 알려 준다: `HAWKEYE_WEB_STREAMS=cam1=http://127.0.0.1:8889/cam1`
+
+화면 로직 테스트: `cd server && node --test "tests/js/*.test.mjs"`
+
+## PC 한 대로 시험하기 (폰·에뮬레이터 없이)
+
+모든 구성 요소가 이 PC 안(127.0.0.1)에서만 통신한다. 방화벽 설정이 필요 없다.
+
+```powershell
+# 1) 중계기 — 카메라 (또는 카메라가 없으면 .un-replay.ps1 로 시험 화면)
+cd experimentspp-poselay
+$env:MTX_RTSPADDRESS = "127.0.0.1:9554"
+$env:HAWKEYE_CAMERA_URL = "rtsp://계정:비밀번호@카메라IP:554/stream1"
+.un-camera.ps1
+
+# 2) 경보 서버 + 대시보드 (다른 터미널)
+cd experimentspp-pos\server
+$env:HAWKEYE_WEB_STREAMS = "cam1=http://127.0.0.1:8889/cam1"
+python -m hawkeye_server --port 8000
+#   → 브라우저에서 http://127.0.0.1:8000
+
+# 3) 경보 보내기 (다른 터미널, 시뮬레이터)
+cd experimentspp-pos\client
+python -m hawkeye_client.simulate --scenario all
+```
+
+## 한 번에 시험하기 (개발 PC + 안드로이드 에뮬레이터)
 
 ```bash
 # 1) 중계기 (녹화 모드, 시험 화면)

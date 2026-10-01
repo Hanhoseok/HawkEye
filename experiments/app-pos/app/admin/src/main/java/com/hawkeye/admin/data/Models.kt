@@ -60,10 +60,19 @@ data class CaseDetail(
 )
 
 @Serializable
-data class Stream(@SerialName("camera_id") val cameraId: String, val url: String)
+data class Stream(
+    @SerialName("camera_id") val cameraId: String,
+    /** RTSP 주소 (앱 라이브). 브라우저 전용 카메라면 비어 있다. */
+    val url: String = "",
+    /** WebRTC 주소 (PC 대시보드). 앱은 쓰지 않는다. */
+    @SerialName("web_url") val webUrl: String? = null,
+)
 
 @Serializable
-data class AppConfig(val streams: List<Stream> = emptyList())
+data class AppConfig(val streams: List<Stream> = emptyList()) {
+    /** 앱이 재생할 수 있는(RTSP 주소가 있는) 카메라. */
+    fun rtspStreams(): List<Stream> = streams.filter { it.url.isNotBlank() }
+}
 
 enum class Resolution(val wire: String) {
     PAID_CONFIRMED("paid_confirmed"),
