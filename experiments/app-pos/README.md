@@ -47,6 +47,37 @@ python -m hawkeye_server --host 0.0.0.0 --port 8000
 
 `server/data/`(DB·장면 사진)는 사람이 찍힌 사진이 있어 커밋되지 않는다.
 
+## RTSP 중계기
+
+`relay/README.md` — 카메라(또는 녹화 영상) → `rtsp://<PC>:9554/cam1` 로 파이프라인·앱에 나눠 준다.
+
+## 관리자 앱 (안드로이드)
+
+```bash
+cd experiments/app-pos/app
+echo sdk.dir=C:/Users/<사용자>/AppData/Local/Android/Sdk > local.properties   # 처음 한 번
+gradlew.bat :admin:testDebugUnitTest      # 단위 테스트
+gradlew.bat :admin:assembleDebug          # APK: admin/build/outputs/apk/debug/admin-debug.apk
+adb install -r admin/build/outputs/apk/debug/admin-debug.apk
+```
+
+- 앱 설정 화면에서 경보 서버 주소를 넣는다. 에뮬레이터는 `http://10.0.2.2:8000`, 실제 폰은 노트북 IP (같은 와이파이).
+- 라이브 화면 주소는 서버의 `HAWKEYE_STREAMS` 에서 받는다.
+- 개발 PC 확인 환경: JDK 21, Android SDK 34, AGP 8.5.2, Kotlin 2.0.20
+
+## 한 번에 시험하기 (개발 PC 한 대)
+
+```bash
+# 1) 중계기 (녹화 모드, 시험 화면)
+relayun-replay.ps1
+# 2) 경보 서버 (에뮬레이터용 라이브 주소)
+set HAWKEYE_STREAMS=cam1=rtsp://10.0.2.2:9554/cam1
+python -m hawkeye_server --port 8000
+# 3) 파이프라인 (tracking 폴더, PR #8 의 전송기)
+python run_tracking.py --source rtsp://127.0.0.1:9554/cam1 --alert-server http://127.0.0.1:8000
+# 4) 에뮬레이터에 앱 설치·실행
+```
+
 ## 주의
 
 RTSP 주소, 카메라 계정, API 키는 코드에 넣지 않고 `.env`에 둔다 (커밋되지 않음).

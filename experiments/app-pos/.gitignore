@@ -12,3 +12,6 @@ app/**/build/
 app/.idea/
 *.apk
 *.keystore
+
+# RTSP 중계기 실행 파일 (relay/README.md 대로 내려받는다)
+relay/bin/

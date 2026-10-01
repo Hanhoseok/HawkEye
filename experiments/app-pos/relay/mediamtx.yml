@@ -1,0 +1,30 @@
+# HawkEye RTSP 중계기 설정 (MediaMTX v1.21)
+#
+# 카메라 한 대 영상을 파이프라인과 관리자 앱에 함께 나눠 준다.
+#   rtsp://<이 PC>:9554/cam1
+#
+# 포트 9554: RTSP 기본값 8554 는 안드로이드 에뮬레이터(gRPC)가 쓰고 있어 겹친다.
+#
+# 카메라 주소·계정은 여기에 쓰지 않는다 (Public 저장소). run-camera.ps1 이 환경변수로 넘긴다.
+
+logLevel: info
+
+rtsp: yes
+rtspAddress: :9554
+rtspTransports: [tcp, udp]
+
+# 쓰지 않는 기능은 끈다
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+api: no
+metrics: no
+playback: no
+
+paths:
+  # 녹화 모드: run-replay.ps1 의 ffmpeg 가 여기로 영상을 보낸다.
+  # 카메라 모드: 환경변수 MTX_PATHS_CAM1_SOURCE=rtsp://... 로 카메라를 끌어온다.
+  cam1:
+    source: publisher
+    sourceOnDemand: no
