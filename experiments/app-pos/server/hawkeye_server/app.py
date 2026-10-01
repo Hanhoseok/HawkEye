@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from .store import Store
@@ -28,7 +29,8 @@ class Settings:
     api_key: str | None = None
     """설정하면 모든 요청에 X-API-Key 헤더(WebSocket 은 ?key=)가 필요하다."""
     streams: list[dict[str, str]] = field(default_factory=list)
-    """앱에 내려줄 라이브 RTSP 주소. [{"camera_id": "cam1", "url": "rtsp://..."}]"""
+    """카메라별 라이브 주소. url = RTSP(앱), web_url = WebRTC(PC 대시보드).
+    [{"camera_id": "cam1", "url": "rtsp://...", "web_url": "http://..."}]"""
 
 
 class Item(BaseModel):
@@ -97,6 +99,14 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=401, detail="API 키가 필요합니다")
 
     auth = [Depends(require_key)]
+
+    # PC 웹 대시보드: 페이지 자체는 공개, 데이터(API)는 키로 보호한다.
+    dashboard = Path(__file__).parent / "dashboard"
+    app.mount("/dashboard", StaticFiles(directory=dashboard), name="dashboard")
+
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(dashboard / "index.html", media_type="text/html")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

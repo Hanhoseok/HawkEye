@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HawkEye 관제</title>
+  <link rel="stylesheet" href="/dashboard/style.css">
+</head>
+<body>
+  <header>
+    <h1>HawkEye <span>관제</span></h1>
+    <div id="connection" class="pill pill-wait">연결 중…</div>
+    <button id="keyButton" class="ghost" title="API 키 설정">API 키</button>
+  </header>
+
+  <div id="banner" class="banner" hidden>
+    <strong id="bannerTitle"></strong><span id="bannerText"></span>
+    <button id="bannerOpen">열기</button>
+    <button id="bannerClose" class="ghost" aria-label="닫기">✕</button>
+  </div>
+
+  <main>
+    <section class="live">
+      <div class="live-head">
+        <span id="liveName">라이브</span>
+        <button id="fullscreen" class="ghost">전체화면</button>
+      </div>
+      <div class="video-box">
+        <video id="video" autoplay muted playsinline></video>
+        <div id="videoStatus" class="video-status">영상 연결 중…</div>
+      </div>
+    </section>
+
+    <section class="side">
+      <nav class="tabs">
+        <button data-filter="active" class="tab on">확인 필요 <b id="activeCount">0</b></button>
+        <button data-filter="all" class="tab">전체</button>
+      </nav>
+      <ul id="list" class="list"></ul>
+      <div id="empty" class="empty">확인할 경보가 없습니다</div>
+      <article id="detail" class="detail" hidden></article>
+    </section>
+  </main>
+
+  <script type="module" src="/dashboard/app.js"></script>
+</body>
+</html>

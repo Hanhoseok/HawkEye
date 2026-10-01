@@ -52,7 +52,8 @@ fun LiveScreen(cameraId: String, onBack: () -> Unit) {
     LaunchedEffect(cameraId) {
         runCatching { AppGraph.alerts.config() }
             .onSuccess { cfg ->
-                stream = cfg.streams.firstOrNull { it.cameraId == cameraId } ?: cfg.streams.firstOrNull()
+                val playable = cfg.rtspStreams()
+                stream = playable.firstOrNull { it.cameraId == cameraId } ?: playable.firstOrNull()
                 if (stream == null) status = "서버에 등록된 카메라가 없습니다 (HAWKEYE_STREAMS)"
             }
             .onFailure { status = "서버에 연결하지 못했습니다: ${it.message}" }
