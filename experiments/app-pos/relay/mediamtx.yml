@@ -11,13 +11,16 @@ logLevel: info
 
 rtsp: yes
 rtspAddress: :9554
-rtspTransports: [tcp, udp]
+# 앱·파이프라인·카메라 모두 TCP 로 주고받는다. UDP 를 끄면 모든 네트워크에 여는 UDP 포트(8000·8001)가 없어진다.
+rtspTransports: [tcp]
 
 # 쓰지 않는 기능은 끈다
 rtmp: no
 hls: no
 webrtc: no
 srt: no
+# v1.21 부터 기본으로 켜지는 MoQ 는 실행 폴더에 인증서·개인 키(auto.crt/auto.key)를 만든다. 쓰지 않으므로 끈다.
+moq: no
 api: no
 metrics: no
 playback: no

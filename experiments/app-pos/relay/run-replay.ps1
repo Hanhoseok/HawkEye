@@ -15,7 +15,7 @@ if (-not (Test-Path $mtx)) { throw "mediamtx.exe 가 없습니다. relay\README.
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { throw "ffmpeg 가 PATH 에 없습니다." }
 
 # 경로에 공백이 있어도 한 덩어리로 넘어가게 따옴표로 감싼다.
-$relay = Start-Process -FilePath $mtx -ArgumentList "`"$conf`"" -PassThru -NoNewWindow
+$relay = Start-Process -FilePath $mtx -ArgumentList "`"$conf`"" -WorkingDirectory $here -PassThru -NoNewWindow
 Start-Sleep -Seconds 1
 try {
     # H.264 baseline, B-프레임 없음, 1초마다 키프레임: 앱이 중간에 붙어도 바로 화면이 나온다.

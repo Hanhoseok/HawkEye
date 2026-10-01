@@ -15,4 +15,5 @@ if (-not $env:HAWKEYE_CAMERA_URL) { throw "환경변수 HAWKEYE_CAMERA_URL 에 �
 
 $env:MTX_PATHS_CAM1_SOURCE = $env:HAWKEYE_CAMERA_URL
 $env:MTX_PATHS_CAM1_RTSPTRANSPORT = "tcp"
-& $mtx (Join-Path $here "mediamtx.yml")
+Push-Location $here   # 혹시 생기는 파일이 저장소 루트에 흩어지지 않게
+try { & $mtx (Join-Path $here "mediamtx.yml") } finally { Pop-Location }
