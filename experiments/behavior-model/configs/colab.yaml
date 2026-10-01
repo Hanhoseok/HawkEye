@@ -1,0 +1,28 @@
+# Google Colab 용 설정.
+# configs/default.yaml 을 그대로 물려받고 **달라지는 값만** 적는다.
+# (설정이 두 벌로 갈라져 서로 어긋나는 것을 막기 위해서다.)
+_base: default.yaml
+
+paths:
+  raw: /content/storeguard/data/raw
+  index: /content/storeguard/data/index
+  cache: /content/storeguard/data/cache
+  runs: /content/storeguard/runs
+  reports: /content/storeguard/reports
+  events: /content/storeguard/data/events
+
+train:
+  # Colab 표준 런타임은 vCPU 가 2개뿐이다. 로컬(i7-7700, 4C/8T)보다 적다.
+  # 프레임 캐시 덕분에 영상 디코딩이 없어 2개로도 대체로 버틴다.
+  # GPU 를 못 먹이고 있으면(학습 로그의 clips/s 가 vram_probe 값보다 한참 낮으면) 3~4 로 올린다.
+  num_workers: 2
+
+  # 아래 batch_size 는 **반드시 vram_probe 로 실측한 뒤 고쳐 쓴다.** 추측값을 넣지 말 것.
+  #   python -m storeguard.tools.vram_probe --config configs/colab.yaml --batches 8,16,32,64
+  # 참고: T4/L4/A100 은 VRAM 이 16~40GB 라 로컬(4GB)보다 훨씬 큰 배치가 들어간다.
+  # 배치를 키우면 lr 도 같이 올려야 한다. 아래 lr 은 batch_size 32 기준이다.
+  batch_size: 32
+  lr: 0.0004
+
+  # 배치가 커지면 에폭당 스텝 수가 줄어 학습이 덜 진행된다. 에폭을 늘려 보정한다.
+  epochs: 10

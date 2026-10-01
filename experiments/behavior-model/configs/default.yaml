@@ -1,0 +1,197 @@
+# storeguard 기본 설정
+# 이 파일의 숫자에는 모두 근거가 있다. docs/architecture.md 의 "설정 근거" 절을 함께 볼 것.
+
+project:
+  name: storeguard
+  seed: 1337
+  deterministic: false        # cudnn.deterministic=true 로 하면 3D conv 가 크게 느려진다
+
+paths:
+  raw: D:\computervision\data\raw
+  index: D:\computervision\data\index
+  # 프레임 캐시. ingest 가 .jpz(JPEG 포장) 로 직접 굽는다.
+  # .npy 와 .jpz 를 모두 읽을 수 있으므로(framestore) 형식이 섞여도 문제없다.
+  cache: D:\computervision\data\cache_jpz
+  runs: D:\computervision\runs
+  reports: D:\computervision\reports
+  events: D:\computervision\data\events
+
+classes:
+  # 내부 순서 = 모델 출력 인덱스. 0번은 반드시 배경.
+  # 이상행동(238-2)과 구매행동(238-1)을 한 모델로 덮는다.
+  names:
+    - background_unlabeled
+    # --- 이상행동 (알림 대상) ---
+    - fall
+    - broken
+    - theft
+    # --- 구매행동 (알림 없음, 상태 표시만) ---
+    - moving
+    - select
+    - test
+    - buying
+    - return
+    - compare
+  ko:
+    background_unlabeled: 라벨구간외
+    fall: 전도
+    broken: 파손
+    theft: 절도 의심
+    moving: 매장이동
+    select: 선택
+    test: 시험
+    buying: 구매
+    return: 반품
+    compare: 비교
+  # 알림을 낼 클래스. 구매행동은 정상 행동이므로 알림을 내지 않는다.
+  alerting: [fall, broken, theft]
+  # 사용자 노출 알림 문구 템플릿
+  alert_text:
+    fall: "{camera}에서 전도 의심 상황이 감지되었습니다."
+    broken: "{camera}에서 파손 의심 행동이 감지되었습니다."
+    theft: "{camera}에서 절도 의심 행동이 감지되었습니다."
+
+data:
+  # 원천 영상이 3fps(180프레임/60초)로 배포되어 있다. 학습과 추론의 시간 해상도를 여기에 맞춘다.
+  source_fps: 3.0
+  sample_fps: 3.0            # 실시간 입력(15~30fps)도 이 값으로 다운샘플링해서 모델에 넣는다
+  clip_len: 16               # 16프레임 @3fps = 5.33초
+  frame_stride: 1            # 캐시 프레임 기준 간격(3fps 캐시에서 1 = 연속)
+  clip_anchor: end           # 실시간과 동일하게 '클립의 마지막 프레임'이 현재 시각
+  # 캐시 프레임 크기 (torchvision Kinetics 프리셋과 동일: resize (H=128, W=171) 후 crop 112)
+  cache_height: 128
+  cache_width: 171
+  train_crop: 112
+  eval_crop: 112
+  mean: [0.43216, 0.394666, 0.37645]
+  std: [0.22803, 0.22145, 0.216989]
+
+clips:
+  # 클립 라벨링 규칙 (자세한 근거는 docs/architecture.md)
+  pos_overlap_clip: 0.5      # 클립 길이의 50% 이상이 이벤트 구간이면 양성
+  pos_overlap_event: 0.8     # 또는 이벤트 길이의 80% 이상이 클립 안에 들어오면 양성(짧은 전도 대응)
+  bg_margin_frames: 6        # 이벤트 경계에서 이만큼(2초) 떨어져야 background 로 인정
+  # 샘플링 간격 근거: GTX 1050 Ti 실측 학습 처리량 4.4 clips/s (r2plus1d_18, bs8, AMP).
+  # 이벤트 길이 중앙값이 52~72프레임이므로 stride_pos=10 이면 영상당 양성 5~7개가 나온다.
+  # 학습 영상 약 1,640개 × (양성 6 + 배경 3) ≈ 14,700 클립/에폭 ≈ 55분/에폭.
+  # 영상당 양성 클립 상한. **이벤트별로 고르게 솎아낸 뒤** 이 수까지만 남긴다.
+  # 고정 간격만 쓰면 이벤트 길이 차이 때문에 수량이 무너진다.
+  # (실측) 매장이동은 5분 전체가 이벤트라 영상당 74개, 선택은 2초라 2개가 나와 33배 차이가 났다.
+  max_pos_per_video: 10
+  stride_pos: 3              # 양성 클립 사이 **최소** 간격(거의 같은 클립 중복 방지)
+  stride_bg: 4               # 배경 클립 샘플링 간격(프레임)
+  # 배경 비중 근거: 실제 매장 영상은 대부분이 배경이다. 이 데이터는 이상행동 영상뿐이라
+  # 배경을 늘려도 33%가 한계였다. max_bg=5 로 올려 약 50% 로 맞춘다. 그래도 실제보다 한참 적다.
+  max_bg_per_video: 5
+
+split:
+  # 사건(take) 단위 → 매장 단위 그룹을 유지하며 분할
+  mode: take                 # take | store
+  # 배포된 Training/Validation 을 그대로 믿을 데이터셋.
+  # 238-2(이상행동)는 배포본이 완전하므로 Validation 을 그대로 test 로 쓴다.
+  # 238-1(구매행동)은 일부만 내려받아져 있어 클래스 대부분이 Validation 쪽에만 있다.
+  # 배포 분할을 그대로 쓰면 학습 데이터가 0이 되므로 take 단위로 직접 3분할한다.
+  honor_deployed_test_datasets: ["238-2"]
+  test_ratio: 0.2            # 직접 3분할할 때 test 비율
+  # 배포된 Validation 세트는 매장 SMC/DYB 위주라 별도 매장 분포를 가진다.
+  # test 는 배포 Validation 을 그대로 쓰고, 배포 Training 을 train/val 로 나눈다.
+  val_ratio: 0.15
+  group_by: take_id
+  stratify_by: class_name
+  seed: 1337
+
+model:
+  arch: r2plus1d_18          # r2plus1d_18 | mc3_18 | r3d_18 | s3d
+  pretrained: true           # Kinetics-400 사전학습 가중치 전이학습
+  dropout: 0.5
+  freeze_stem_epochs: 0
+
+train:
+  epochs: 6
+  # 실측(reports/vram_probe_r2plus1d_18_16x112.json): bs8 → peak 2.46GB / 3.8~4.4 clips/s,
+  # bs12 → peak 3.40GB. 이 GPU 가 화면 출력도 담당하므로 여유를 두고 8 을 기본으로 한다.
+  batch_size: 8
+  num_workers: 4
+  amp: true                  # fp16 자동 혼합정밀. 4GB VRAM 에서 사실상 필수
+  optimizer: adamw
+  lr: 0.0002
+  backbone_lr_mult: 0.1      # 사전학습 백본은 낮은 lr
+  weight_decay: 0.01
+  scheduler: cosine
+  warmup_epochs: 1
+  grad_clip: 5.0
+  accum_steps: 1
+  # 'none' | 'sampler'(균형 샘플링) | 'weights'(전 클래스 역빈도) | 'both' | 'action_balanced'
+  # 실측 학습 클립 분포: 배경 8,170(49%) / 파손 3,398(20%) / 절도 3,173(19%) / 전도 1,859(11%).
+  # 전도는 이벤트가 짧아 클립이 적다. 그러나 배경까지 역빈도로 끌어올리면(weights/sampler)
+  # 실제 매장(대부분 배경)에서 오경보가 늘어난다.
+  # → 배경 가중은 1.0 으로 두고 행동 셋끼리만 균형을 맞추는 action_balanced 를 쓴다.
+  imbalance: action_balanced
+  label_smoothing: 0.05
+  early_stop_patience: 4
+  monitor: macro_f1          # 검증 지표 기준으로 best 체크포인트 선택
+  augment:
+    hflip: 0.5
+    color_jitter: 0.2
+    random_crop: true
+    temporal_jitter: 2       # 클립 시작점을 ±2프레임 흔든다
+
+eval:
+  batch_size: 8
+  # 사건 단위 매칭: 예측 알림 시각이 [start - tol, end + tol] 안이면 해당 정답 사건에 매칭
+  event_match_tolerance_sec: 3.0
+  # 정답 사건 1개에 알림이 여러 개 매칭되면 첫 번째만 TP, 나머지는 중복으로 별도 집계
+  count_duplicate_as_fp: false
+
+alert:
+  # 클래스별 알림 판정. 모두 실시간 튜닝 가능(서버 API 로 변경 가능).
+  defaults:
+    threshold: 0.60
+    min_hits: 3              # 최근 window 안에서 threshold 를 넘은 횟수
+    window: 5                # 최근 추론 결과 개수
+    cooldown_sec: 20.0       # 같은 클래스 사건 종료 후 재알림 금지 시간
+    end_below_threshold: 4   # 연속 이 횟수만큼 threshold 미만이면 사건 종료
+  per_class:
+    fall:
+      threshold: 0.55
+      min_hits: 2            # 전도는 짧다. 지속 조건을 낮춰 놓침을 줄인다.
+      window: 3
+      cooldown_sec: 15.0
+    broken:
+      threshold: 0.60
+      min_hits: 3
+      window: 5
+    theft:
+      threshold: 0.65        # 절도 의심은 오경보 비용이 크다. 더 보수적으로.
+      min_hits: 4
+      window: 6
+      cooldown_sec: 30.0
+
+runtime:
+  infer_every_frames: 3      # 3fps 샘플 기준 3프레임(=1초)마다 1회 추론
+  frame_buffer_size: 64      # 수신 스레드 ↔ 추론 스레드 사이 버퍼(프레임 수)
+  drop_oldest_when_full: true
+  reconnect_delay_sec: 3.0
+  reconnect_max_delay_sec: 30.0
+  # OpenCV 기본 RTSP 열기 타임아웃은 30초라 끊김 감지가 늦다. FFmpeg 옵션으로 줄인다.
+  rtsp_transport: tcp        # tcp | udp. udp 는 방화벽/NAT 에서 프레임 유실이 잦다
+  rtsp_timeout_sec: 8.0
+  stale_after_sec: 5.0       # 마지막 프레임 수신 후 이 시간이 지나면 LIVE 표시 해제
+  device: auto               # auto | cuda | cpu
+  jpeg_quality: 80
+  mjpeg_fps: 8               # 대시보드 미리보기 전송 FPS(원본 재생이 아니라 미리보기)
+  mjpeg_width: 640
+
+recording:
+  enabled: true
+  pre_seconds: 10.0          # 알림 이전 구간(순환 버퍼에서 확보)
+  post_seconds: 10.0
+  fps: 3.0                   # 저장 클립 FPS(샘플링 FPS 와 동일)
+  width: 960
+
+server:
+  host: 127.0.0.1
+  port: 8000
+  db_path: D:\computervision\data\events\events.sqlite3
+  # 대시보드 재생목록에 올릴 분할. test = 배포 Validation(학습에 쓰지 않은 영상)
+  playlist_split: test

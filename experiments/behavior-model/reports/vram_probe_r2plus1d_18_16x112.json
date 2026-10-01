@@ -1,0 +1,96 @@
+{
+  "env": {
+    "python": "3.11.9",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "Intel64 Family 6 Model 158 Stepping 9, GenuineIntel",
+    "cwd": "D:\\computervision",
+    "torch": "2.5.1+cu121",
+    "cuda_available": true,
+    "cuda_version": "12.1",
+    "gpu": "NVIDIA GeForce GTX 1050 Ti",
+    "gpu_total_mem_gb": 4.0,
+    "gpu_capability": "6.1",
+    "opencv": "5.0.0"
+  },
+  "arch": "r2plus1d_18",
+  "params_M": 31.3,
+  "input": "16x112x112",
+  "amp": true,
+  "train_steps": [
+    {
+      "ok": true,
+      "batch": 1,
+      "peak_gb": 1.764,
+      "step_ms": 311.4,
+      "clips_per_sec": 3.2
+    },
+    {
+      "ok": true,
+      "batch": 2,
+      "peak_gb": 2.01,
+      "step_ms": 536.7,
+      "clips_per_sec": 3.7
+    },
+    {
+      "ok": true,
+      "batch": 4,
+      "peak_gb": 2.506,
+      "step_ms": 973.6,
+      "clips_per_sec": 4.1
+    },
+    {
+      "ok": true,
+      "batch": 8,
+      "peak_gb": 3.066,
+      "step_ms": 1822.4,
+      "clips_per_sec": 4.4
+    },
+    {
+      "ok": true,
+      "batch": 12,
+      "peak_gb": 3.401,
+      "step_ms": 4452.6,
+      "clips_per_sec": 2.7
+    }
+  ],
+  "infer_steps": [
+    {
+      "ok": true,
+      "batch": 1,
+      "peak_gb": 0.196,
+      "step_ms": 76.3,
+      "clips_per_sec": 13.1
+    },
+    {
+      "ok": true,
+      "batch": 2,
+      "peak_gb": 0.229,
+      "step_ms": 142.6,
+      "clips_per_sec": 14.0
+    },
+    {
+      "ok": true,
+      "batch": 4,
+      "peak_gb": 0.324,
+      "step_ms": 275.7,
+      "clips_per_sec": 14.5
+    },
+    {
+      "ok": true,
+      "batch": 8,
+      "peak_gb": 0.512,
+      "step_ms": 539.0,
+      "clips_per_sec": 14.8
+    },
+    {
+      "ok": true,
+      "batch": 12,
+      "peak_gb": 0.701,
+      "step_ms": 806.4,
+      "clips_per_sec": 14.9
+    }
+  ],
+  "권장_train_batch": 12,
+  "최대_infer_batch": 12,
+  "실시간_추론_1클립_지연_ms": 76.3
+}

@@ -1,0 +1,22 @@
+# Google Colab A100 (40GB) 용 설정.
+# configs/colab.yaml 을 물려받고 A100 에서 달라지는 값만 적는다.
+#
+# 주의: 아래 batch_size 는 **출발점**일 뿐이다. 반드시 먼저 실측하고 고쳐 쓴다.
+#   python -m storeguard.tools.vram_probe --config configs/colab_a100.yaml --batches 32,64,96,128
+# 가장 큰 배치가 가장 빠르지는 않다. clips/s 가 가장 높은 배치를 고른다.
+_base: colab.yaml
+
+train:
+  # A100 40GB. 로컬 GTX 1050 Ti(4GB, batch 8)의 8배 크기로 시작한다.
+  batch_size: 64
+  # 배치를 8배 키웠으므로 학습률도 키운다(선형 스케일링 기준 0.0002*8=0.0016은 과하므로 절반).
+  lr: 0.0008
+  # 배치가 커지면 에폭당 스텝 수가 줄어 학습이 덜 진행된다. 에폭으로 보정한다.
+  epochs: 12
+  warmup_epochs: 1
+  # A100 은 Colab 표준 런타임보다 vCPU 가 많다(보통 12). GPU 를 굶기지 않으려면 늘려야 한다.
+  # 학습 로그의 clips/s 가 vram_probe 값보다 한참 낮으면 이 값을 더 올린다.
+  num_workers: 8
+
+eval:
+  batch_size: 64

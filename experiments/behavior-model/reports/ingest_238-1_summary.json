@@ -1,0 +1,23 @@
+{
+  "dataset": "238-1",
+  "format": "jpz",
+  "quality": 95,
+  "workers": 6,
+  "선택": 4925,
+  "이미있음": 1744,
+  "처리": 3181,
+  "성공": 3181,
+  "실패": 0,
+  "elapsed_sec": 7598.3,
+  "videos_per_sec": 0.419,
+  "frames_per_sec": 251.3,
+  "MB_per_sec": 64.5,
+  "영상당_구간_ms(워커 내부 합계)": {
+    "t_extract": 5504.1,
+    "t_decode": 8616.0,
+    "t_encode": 103.1,
+    "t_write": 22.8,
+    "t_total": 14313.1
+  },
+  "manifest": "D:\\computervision\\reports\\ingest_238-1.jsonl"
+}

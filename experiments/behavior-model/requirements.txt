@@ -1,0 +1,18 @@
+# storeguard 의존성
+# PyTorch 는 CUDA 빌드를 따로 받아야 한다(아래 README/설치 순서 참고).
+#   python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# 이 환경에서 실제 설치되어 동작 확인된 버전: torch 2.5.1+cu121, torchvision 0.20.1+cu121
+
+opencv-python>=4.9
+numpy>=1.26,<3
+pyyaml>=6.0
+tqdm>=4.66
+scikit-learn>=1.4
+pandas>=2.2
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-dotenv>=1.0
+olefile>=0.47          # 데이터 설명서(hwp) 텍스트 추출용
+lxml>=5.0
+matplotlib>=3.8
+pillow>=10.0

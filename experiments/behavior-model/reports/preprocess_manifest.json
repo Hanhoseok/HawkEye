@@ -1,0 +1,15 @@
+{
+  "cache_dir": "D:\\computervision\\data\\cache",
+  "height": 128,
+  "width": 171,
+  "sample_fps": 3.0,
+  "count": 3967,
+  "status": {
+    "cached": 3517,
+    "ok": 450
+  },
+  "resampled_videos": 450,
+  "elapsed_sec": 1047.2,
+  "failed": [],
+  "cache_meta": "D:\\computervision\\data\\index\\cache_meta.json"
+}
