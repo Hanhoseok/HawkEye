@@ -47,6 +47,29 @@ python -m hawkeye_server --host 0.0.0.0 --port 8000
 
 `server/data/`(DB·장면 사진)는 사람이 찍힌 사진이 있어 커밋되지 않는다.
 
+## 경보 전송 클라이언트 · 시뮬레이터
+
+`client/hawkeye_client` — 어떤 탐지 방식이든 경보 서버로 경보를 보낼 수 있는 작은 모듈 (표준 라이브러리만 사용).
+팀 방식이 정해지면 `final/` 에서 아래처럼 붙인다.
+
+```python
+from hawkeye_client import AlertPublisher, build_event
+
+alerts = AlertPublisher("http://127.0.0.1:8000", camera_id="cam1")   # 또는 AlertPublisher.from_env(os.environ)
+alerts.publish(build_event(person_id=3, level="HIGH_RISK", taken=2, paid=1,
+                           items=[{"name": "과자", "taken": 1, "paid": 0}]), jpeg=jpeg_bytes)
+alerts.close()   # 끝날 때 남은 경보를 모두 보낸다
+```
+
+파이프라인 없이 앱을 시험·시연할 때는 시뮬레이터를 쓴다.
+
+```bash
+cd experiments/app-pos/client
+python -m hawkeye_client.simulate --server http://127.0.0.1:8000 --scenario all
+# theft(결제 없이 퇴장) / partial(일부만 결제) / paid(결제 후 통과) / came_back(되돌아가 결제)
+python -m pytest -q    # 테스트 (서버 venv 로 실행: fastapi 가 필요)
+```
+
 ## RTSP 중계기
 
 `relay/README.md` — 카메라(또는 녹화 영상) → `rtsp://<PC>:9554/cam1` 로 파이프라인·앱에 나눠 준다.
@@ -69,12 +92,13 @@ adb install -r admin/build/outputs/apk/debug/admin-debug.apk
 
 ```bash
 # 1) 중계기 (녹화 모드, 시험 화면)
-relayun-replay.ps1
+relay
+un-replay.ps1
 # 2) 경보 서버 (에뮬레이터용 라이브 주소)
 set HAWKEYE_STREAMS=cam1=rtsp://10.0.2.2:9554/cam1
 python -m hawkeye_server --port 8000
-# 3) 파이프라인 (tracking 폴더, PR #8 의 전송기)
-python run_tracking.py --source rtsp://127.0.0.1:9554/cam1 --alert-server http://127.0.0.1:8000
+# 3) 경보 보내기 (시뮬레이터. 실제 탐지 방식은 final/ 통합 때 연결)
+python -m hawkeye_client.simulate --server http://127.0.0.1:8000 --scenario all
 # 4) 에뮬레이터에 앱 설치·실행
 ```
 
