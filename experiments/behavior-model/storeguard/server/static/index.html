@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>무인매장 행동 인식 대시보드</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#272c37; --fg:#e7eaf0; --dim:#98a1b3;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; --calm:#7c93b8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 "Malgun Gothic","Segoe UI",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:12px 20px;flex-wrap:wrap;
+         border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  .pill{padding:3px 10px;border-radius:999px;font-size:12px;border:1px solid var(--line);
+        white-space:nowrap}
+  .pill.ok{color:var(--ok);border-color:#1c3a24;background:#0e1f14}
+  .pill.bad{color:var(--bad);border-color:#4a1d1d;background:#200f0f}
+  .pill.warn{color:var(--warn);border-color:#4a3a11;background:#211a0a}
+  main{display:grid;grid-template-columns:1fr 380px;gap:16px;padding:16px;align-items:start}
+  @media (max-width:1000px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card h2{font-size:13px;margin:0 0 10px;color:var(--dim);font-weight:600;letter-spacing:.3px}
+  #cams{display:grid;gap:16px;grid-template-columns:1fr}
+  #cams.multi{grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+  .cam{min-width:0}
+  .camhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;
+           gap:6px;flex-wrap:wrap}
+  .ctrl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  button{background:#222733;color:var(--fg);border:1px solid var(--line);border-radius:6px;
+         padding:5px 11px;font:inherit;font-size:12px;cursor:pointer}
+  button:hover:not(:disabled){background:#2c3340;border-color:#3a4252}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:#1c3a5e;border-color:#2b5c94;color:#cfe4ff}
+  select,input[type=text]{background:#0d1017;color:var(--fg);border:1px solid var(--line);
+         border-radius:6px;padding:5px 8px;font:inherit;font-size:12px}
+  input[type=text]{flex:1;min-width:150px}
+  .now{font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .video{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9;
+         display:flex;align-items:center;justify-content:center}
+  .video img{width:100%;height:100%;object-fit:contain;display:block}
+  .video .offline{color:var(--bad);font-size:13px;text-align:center;padding:20px}
+  table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+  td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;
+        overflow-wrap:anywhere}
+  th{color:var(--dim);font-weight:500;width:42%}
+  .bars{display:grid;gap:5px;margin-top:8px}
+  .bar{display:grid;grid-template-columns:72px 1fr 48px;gap:8px;align-items:center;font-size:12px}
+  .track{height:8px;background:#20242e;border-radius:4px;overflow:hidden}
+  .fill{height:100%;background:var(--calm);width:0%;transition:width .25s}
+  .fill.alertable{background:var(--accent)}
+  .fill.hot{background:var(--bad)}
+  .grouplabel{font-size:11px;color:var(--dim);margin:12px 0 2px;padding-top:8px;
+              border-top:1px solid var(--line)}
+  .grouplabel:first-child{margin-top:0;padding-top:0;border-top:0}
+  #events{list-style:none;margin:0;padding:0;max-height:60vh;overflow:auto}
+  #events li{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;
+             display:grid;grid-template-columns:96px 1fr;gap:10px}
+  #events img{width:96px;border-radius:5px;background:#000}
+  #events .ttl{font-weight:600;margin-bottom:2px}
+  #events .meta{color:var(--dim);font-size:11px}
+  #events a{color:var(--accent);font-size:11px;text-decoration:none}
+  #toast{position:fixed;right:18px;bottom:18px;display:grid;gap:8px;z-index:50;max-width:380px}
+  .toast{background:#2b1416;border:1px solid var(--bad);border-left:4px solid var(--bad);
+         padding:10px 12px;border-radius:8px;animation:slide .25s ease-out}
+  .toast .t{font-weight:700;margin-bottom:2px}
+  .toast .s{color:var(--dim);font-size:11px}
+  @keyframes slide{from{transform:translateX(20px);opacity:0}to{transform:none;opacity:1}}
+  .note{color:var(--dim);font-size:11px;margin-top:10px;line-height:1.6}
+  code{background:#0b0d12;padding:1px 5px;border-radius:4px;font-size:11px}
+  .err{color:var(--bad);font-size:11px;min-height:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>무인매장 행동 인식</h1>
+  <span id="modelPill" class="pill warn">모델 상태 확인 중</span>
+  <span id="srvPill" class="pill">서버 연결 중</span>
+  <span style="flex:1"></span>
+  <span class="pill" id="evCount">이벤트 0건</span>
+</header>
+
+<main>
+  <section>
+    <div class="card">
+      <h2>카메라</h2>
+      <div id="cams"></div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card" style="margin-bottom:16px">
+      <h2>현재 탐지 점수</h2>
+      <div id="scores"></div>
+      <p class="note">
+        모델 점수는 <b>보정되지 않은 값</b>입니다. 실제 발생 확률이 아닙니다.
+        절도는 확정이 아니라 <b>의심 행동</b>으로만 표시합니다.
+        구매행동은 정상 행동이므로 알림을 내지 않습니다.
+      </p>
+    </div>
+    <div class="card">
+      <h2>최근 이벤트</h2>
+      <ul id="events"></ul>
+    </div>
+  </aside>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const $ = (s)=>document.querySelector(s);
+let KO = {}, ALERTING = [], NORMALS = [], NOT_COVERED = [], SOURCES = null;
+
+const STATE_TXT = {
+  "MODEL_NOT_LOADED":"모델 미로딩", "BUFFERING":"버퍼 채우는 중", "ANALYZING":"분석 중",
+  "DISCONNECTED":"연결 끊김", "IDLE":"대기", "INFER_ERROR":"추론 오류", "STOPPED":"정지"
+};
+
+function fmtTime(ts){
+  if(!ts) return "-";
+  return new Date(ts*1000).toLocaleString('ko-KR', {hour12:false});
+}
+
+async function post(url){
+  const r = await fetch(url, {method:'POST'});
+  if(!r.ok){
+    let msg = r.statusText;
+    try{ msg = (await r.json()).detail || msg; }catch(e){}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+// ---- 카메라 카드: 한 번만 만들고 값만 갱신한다 ----
+// (갱신마다 innerHTML 을 새로 쓰면 <img> 가 재생성되어 MJPEG 연결이 계속 쌓인다)
+const cards = new Map();
+
+function makeCard(id){
+  const el = document.createElement('div');
+  el.className = 'cam';
+  el.innerHTML = `
+    <div class="camhead">
+      <b data-f="name"></b>
+      <span class="pill" data-f="live"></span>
+      <span class="pill" data-f="state"></span>
+      <span class="pill" data-f="fps"></span>
+      <span class="pill" data-f="lat"></span>
+    </div>
+    <div class="ctrl">
+      <button data-f="prev" title="이전 영상">◀ 이전</button>
+      <button data-f="next" class="primary" title="다음 영상">다음 ▶</button>
+      <select data-f="filter" title="클래스 필터"></select>
+      <span class="now" data-f="now"></span>
+    </div>
+    <div class="ctrl">
+      <input type="text" data-f="rtsp" placeholder="rtsp://사용자:비밀번호@192.168.0.10:554/stream2" />
+      <button data-f="connect">RTSP 연결</button>
+    </div>
+    <div class="err" data-f="err"></div>
+    <div class="video">
+      <img data-f="img" alt="preview" hidden/>
+      <div class="offline" data-f="offline"></div>
+    </div>
+    <table>
+      <tr><th>소스</th><td data-f="src"></td></tr>
+      <tr><th>마지막 프레임 수신</th><td data-f="age"></td></tr>
+      <tr><th>버퍼 / 클립</th><td data-f="buf"></td></tr>
+      <tr><th>추론 횟수</th><td data-f="inf"></td></tr>
+      <tr><th>재접속</th><td data-f="rec"></td></tr>
+      <tr><th>대기 중 녹화</th><td data-f="pend"></td></tr>
+    </table>`;
+  const f = {};
+  el.querySelectorAll('[data-f]').forEach(n => f[n.dataset.f] = n);
+  const card = {el, f, streaming:false, busy:false};
+
+  const move = async (delta)=>{
+    if(card.busy) return;
+    card.busy = true; f.err.textContent = '';
+    f.prev.disabled = f.next.disabled = true;
+    try{
+      await post(`/api/cameras/${id}/next?delta=${delta}`);
+      await loadSources();
+    }catch(e){ f.err.textContent = '전환 실패: ' + e.message; }
+    finally{ card.busy = false; f.prev.disabled = f.next.disabled = false; }
+  };
+  f.next.onclick = ()=>move(1);
+  f.prev.onclick = ()=>move(-1);
+
+  f.filter.onchange = async ()=>{
+    f.err.textContent = '';
+    try{
+      await post(`/api/cameras/${id}/filter?class_name=${encodeURIComponent(f.filter.value)}`);
+      await loadSources();
+    }catch(e){ f.err.textContent = '필터 실패: ' + e.message; }
+  };
+
+  const connect = async ()=>{
+    const url = f.rtsp.value.trim();
+    if(!url){ f.err.textContent = 'RTSP 주소를 입력하세요.'; return; }
+    f.err.textContent = '연결 시도 중...';
+    f.connect.disabled = true;
+    try{
+      await post(`/api/cameras/${id}/source?url=${encodeURIComponent(url)}`);
+      f.err.textContent = '연결 요청됨. 상태는 위의 LIVE 표시로 확인하세요.';
+      f.rtsp.value = '';
+      await loadSources();
+    }catch(e){ f.err.textContent = '연결 실패: ' + e.message; }
+    finally{ f.connect.disabled = false; }
+  };
+  f.connect.onclick = connect;
+  f.rtsp.onkeydown = (e)=>{ if(e.key === 'Enter') connect(); };
+
+  cards.set(id, card);
+  $('#cams').appendChild(el);
+  return card;
+}
+
+function updateCard(id, st){
+  const card = cards.get(id) || makeCard(id);
+  const f = card.f;
+  const live = st.source.live;
+  f.name.textContent = st.name;
+  f.live.textContent = live ? "LIVE" : "연결 끊김";
+  f.live.className = 'pill ' + (live ? 'ok' : 'bad');
+  f.state.textContent = STATE_TXT[st.analysis_state] || st.analysis_state;
+  f.fps.textContent = `수신 ${st.source.measured_fps} fps`;
+  f.lat.textContent = '추론 ' + (st.infer_latency_ms.mean==null ? "-" : st.infer_latency_ms.mean+" ms");
+  f.src.textContent = st.source.url;
+  f.age.textContent = (st.source.last_frame_age_sec ?? "-") + "초 전";
+  f.buf.textContent = `${st.buffered_frames}프레임 / ${st.clip_fill}`;
+  f.inf.textContent = `${st.inferences} (초당 ${st.inferences_per_sec ?? "-"})`;
+  f.rec.textContent = `${st.source.reconnects}회, 폐기 프레임 ${st.source.frames_dropped}`;
+  f.pend.textContent = `${st.pending_recordings}건`;
+
+  const isFile = st.source.kind === 'file';
+  f.prev.disabled = f.next.disabled = !isFile && false;   // RTSP 중에도 파일로 돌아갈 수 있게 둔다
+
+  if(live && !card.streaming){
+    f.img.src = `/api/cameras/${id}/stream.mjpg?ts=${Date.now()}`;
+    f.img.hidden = false; f.offline.hidden = true; card.streaming = true;
+  }else if(!live && card.streaming){
+    f.img.removeAttribute('src'); f.img.hidden = true; card.streaming = false;
+  }
+  if(!live){
+    f.offline.hidden = false;
+    f.offline.innerHTML = `영상 없음 — 마지막 수신 ${st.source.last_frame_age_sec ?? "-"}초 전<br/>
+      <span style="color:var(--dim)">${st.source.last_error ?? "재접속 시도 중"}</span>`;
+  }
+}
+
+// ---- 재생목록 상태 반영 ----
+async function loadSources(){
+  try{
+    SOURCES = await (await fetch('/api/sources')).json();
+  }catch(e){ return; }
+  for(const [id, info] of Object.entries(SOURCES.cameras || {})){
+    const card = cards.get(id);
+    if(!card) continue;
+    const f = card.f;
+    if(f.filter.options.length !== (SOURCES.classes.length + 1)){
+      f.filter.innerHTML = `<option value="all">전체 (${SOURCES.count})</option>` +
+        SOURCES.classes.map(c=>`<option value="${c.name}">${c.ko} (${c.count})</option>`).join("");
+    }
+    f.filter.value = info.filter || 'all';
+    const cur = info.current;
+    if(info.kind === 'rtsp'){
+      f.now.textContent = `RTSP 입력 · ${info.source}`;
+    }else if(cur){
+      const pos = (cur.index+1) + '/' + SOURCES.count;
+      const ev = cur.first_event_sec==null ? '' : ` · 사건 ${cur.first_event_sec}초`;
+      f.now.textContent = `${pos} · ${cur.class_ko} · ${cur.store}/${cur.camera}${ev}`;
+      f.now.title = cur.stem;
+    }else{
+      f.now.textContent = info.label || '';
+    }
+  }
+}
+
+// ---- 점수 패널 ----
+function scoreBars(cams){
+  const first = Object.values(cams)[0];
+  if(!first) return "";
+  const s = first.last_scores || {};
+  const rules = first.alert_rules || {};
+  const row = (a, alertable)=>{
+    const v = s[a] ?? 0;
+    const th = alertable ? (rules[a]?.threshold ?? 0.6) : 2;
+    const cls = alertable ? (v>=th ? 'hot' : 'alertable') : '';
+    return `<div class="bar"><span>${KO[a]||a}</span>
+      <span class="track"><span class="fill ${cls}" style="width:${Math.round(v*100)}%"></span></span>
+      <span>${v.toFixed(3)}</span></div>`;
+  };
+  let html = '';
+  if(ALERTING.length){
+    html += `<div class="grouplabel">이상행동 — 알림 대상</div><div class="bars">`
+          + ALERTING.map(a=>row(a,true)).join("") + `</div>`;
+  }
+  if(NORMALS.length){
+    html += `<div class="grouplabel">구매행동 — 정상, 알림 없음</div><div class="bars">`
+          + NORMALS.map(a=>row(a,false)).join("") + `</div>`;
+  }
+  if(NOT_COVERED.length){
+    html += `<div class="grouplabel">이 모델이 다루지 않는 클래스</div>
+      <p class="note" style="margin-top:4px">
+        ${NOT_COVERED.map(c=>KO[c]||c).join(', ')} — 해당 데이터로 학습해야 탐지됩니다.
+        지금은 점수를 만들지 않습니다.
+      </p>`;
+  }
+  return html;
+}
+
+async function refresh(){
+  try{
+    const st = await (await fetch('/api/status')).json();
+    KO = st.classes.ko || {};
+    ALERTING = st.classes.actions || [];
+    NORMALS = st.classes.normals || [];
+    NOT_COVERED = st.classes.not_covered || [];
+    $('#srvPill').className = 'pill ok'; $('#srvPill').textContent = '서버 연결됨';
+    const m = st.model || {};
+    const pill = $('#modelPill');
+    if(m.state === 'READY'){
+      pill.className='pill ok';
+      pill.textContent = `모델 READY (${m.checkpoint?.arch||''} · ${m.checkpoint?.device||''})`;
+    }else{
+      pill.className='pill bad';
+      pill.textContent = '모델 미로딩 — 탐지 불가';
+      pill.title = m.error || '';
+    }
+    $('#evCount').textContent = `이벤트 ${st.events?.total ?? 0}건`;
+    const cams = st.cameras || {};
+    if(!Object.keys(cams).length){
+      if(!cards.size) $('#cams').innerHTML =
+        '<p class="note">등록된 카메라가 없습니다. <code>CAMERAS</code>, <code>CAM1_SOURCE</code> 환경변수를 설정하세요.</p>';
+    }else{
+      for(const [id,c] of Object.entries(cams)) updateCard(id, c);
+      $('#cams').classList.toggle('multi', Object.keys(cams).length > 1);
+    }
+    $('#scores').innerHTML = scoreBars(cams);
+  }catch(e){
+    $('#srvPill').className='pill bad'; $('#srvPill').textContent='서버 연결 끊김';
+  }
+}
+
+async function loadEvents(){
+  try{
+    const rows = await (await fetch('/api/events?limit=30')).json();
+    $('#events').innerHTML = rows.map(e=>`
+      <li>
+        ${e.has_snapshot? `<img src="/api/events/${e.event_id}/snapshot"/>`
+                        : `<div style="width:96px;height:54px;background:#000;border-radius:5px"></div>`}
+        <div>
+          <div class="ttl">${e.action_ko}</div>
+          <div class="meta">${e.camera_name||e.camera_id} · ${fmtTime(e.started_at)}</div>
+          <div class="meta">점수 ${Number(e.score).toFixed(3)} (보정 안 됨)</div>
+          ${e.has_video? `<a href="/api/events/${e.event_id}/clip" target="_blank">영상 보기</a>`:
+                         `<span class="meta">영상 저장 중</span>`}
+        </div>
+      </li>`).join("") || '<p class="note">아직 이벤트가 없습니다.</p>';
+  }catch(e){}
+}
+
+function toast(d){
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<div class="t">${d.message}</div>
+    <div class="s">점수 ${Number(d.score).toFixed(3)} (보정 안 된 값) · ${fmtTime(d.started_at)}</div>`;
+  $('#toast').appendChild(el);
+  setTimeout(()=>el.remove(), 12000);
+}
+
+function connectSSE(){
+  const es = new EventSource('/api/stream');
+  es.onmessage = (m)=>{
+    const d = JSON.parse(m.data);
+    if(d.type === 'alert'){ toast(d); loadEvents(); }
+    if(d.type === 'event_end'){ loadEvents(); }
+    if(d.type === 'source_changed'){ loadSources(); }
+  };
+  es.onerror = ()=>{ /* EventSource 가 자동 재접속한다 */ };
+}
+
+(async ()=>{ await refresh(); await loadSources(); loadEvents(); connectSSE(); })();
+setInterval(refresh, 2000);
+setInterval(loadSources, 5000);
+setInterval(loadEvents, 15000);
+</script>
+</body>
+</html>

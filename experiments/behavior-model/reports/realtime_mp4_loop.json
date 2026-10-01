@@ -1,0 +1,207 @@
+{
+  "camera_id": "cam1",
+  "name": "1번 카메라",
+  "source": {
+    "url": "D:\\computervision\\data\\raw\\val\\videos\\C_3_7_48_BU_DYB_10-17_10-23-53_CB_RGB_DF2_M2.mp4",
+    "kind": "file",
+    "connected": false,
+    "opening": false,
+    "live": false,
+    "last_frame_age_sec": 0.41,
+    "last_frame_at": 1789516870.5680993,
+    "frames_received": 480,
+    "frames_dropped": 0,
+    "reconnects": 0,
+    "last_error": null,
+    "measured_fps": 2.99,
+    "source_fps": 3.0,
+    "eof": false
+  },
+  "analysis_state": "STOPPED",
+  "model": {
+    "state": "READY",
+    "error": null,
+    "checkpoint": {
+      "path": "D:\\computervision\\runs\\baseline_r2p1d\\best.pt",
+      "epoch": 4,
+      "best_metric": 0.9799,
+      "arch": "r2plus1d_18",
+      "device": "cuda"
+    },
+    "classes": [
+      "background_unlabeled",
+      "fall",
+      "broken",
+      "theft"
+    ],
+    "last_infer_ms": 105.67,
+    "warmup_ms": 3846.6,
+    "infer_ms_mean": 109.15,
+    "infer_ms_p90": 112.46,
+    "throughput_clips_per_sec": 9.16
+  },
+  "buffered_frames": 1,
+  "clip_fill": "16/16",
+  "samples": 479,
+  "inferences": 144,
+  "inference_errors": 0,
+  "infer_latency_ms": {
+    "last": 105.7,
+    "mean": 109.2,
+    "p90": 112.5
+  },
+  "inferences_per_sec": 0.898,
+  "uptime_sec": 160.3,
+  "last_scores": {
+    "background_unlabeled": 0.9703,
+    "fall": 0.0141,
+    "broken": 0.0086,
+    "theft": 0.007
+  },
+  "last_score_age_sec": 1.03,
+  "alert_rules": {
+    "fall": {
+      "threshold": 0.55,
+      "min_hits": 2,
+      "window": 3,
+      "cooldown_sec": 15.0,
+      "end_below_threshold": 4,
+      "recent_hits": 0,
+      "active": null,
+      "cooldown_remaining": 0.0
+    },
+    "broken": {
+      "threshold": 0.6,
+      "min_hits": 3,
+      "window": 5,
+      "cooldown_sec": 20.0,
+      "end_below_threshold": 4,
+      "recent_hits": 0,
+      "active": null,
+      "cooldown_remaining": 0.0
+    },
+    "theft": {
+      "threshold": 0.65,
+      "min_hits": 4,
+      "window": 6,
+      "cooldown_sec": 30.0,
+      "end_below_threshold": 4,
+      "recent_hits": 0,
+      "active": null,
+      "cooldown_remaining": 0.0
+    }
+  },
+  "pending_recordings": 0,
+  "점수_주의": "보정되지 않은 모델 점수. 실제 발생 확률이 아니다.",
+  "events": [
+    {
+      "kind": "started",
+      "event_id": "b52234c76abe",
+      "camera_id": "cam1",
+      "action": "fall",
+      "started_at": 1789516756.839817,
+      "started_media_ts": 45.666666666666664,
+      "score": 0.9817,
+      "peak_score": 0.9817,
+      "ended_at": null,
+      "ended_media_ts": null,
+      "n_hits": 2,
+      "snapshot_path": "D:\\computervision\\data\\events\\cam1\\b52234c76abe.jpg",
+      "video_path": "D:\\computervision\\data\\events\\cam1\\b52234c76abe.mp4",
+      "extra": {
+        "camera_name": "1번 카메라",
+        "scores": {
+          "background_unlabeled": 0.0079,
+          "fall": 0.9817,
+          "broken": 0.0035,
+          "theft": 0.007
+        },
+        "alert_latency_ms": 0.0,
+        "source": "D:\\computervision\\data\\raw\\val\\videos\\C_3_7_48_BU_DYB_10-17_10-23-53_CB_RGB_DF2_M2.mp4",
+        "점수_주의": "보정되지 않은 모델 점수. 실제 발생 확률이 아니다."
+      }
+    },
+    {
+      "kind": "ended",
+      "event_id": "b52234c76abe",
+      "camera_id": "cam1",
+      "action": "fall",
+      "started_at": 1789516756.839817,
+      "started_media_ts": 45.666666666666664,
+      "score": 0.9817,
+      "peak_score": 0.988272488117218,
+      "ended_at": 1789516771.1006935,
+      "ended_media_ts": null,
+      "n_hits": 16,
+      "snapshot_path": "D:\\computervision\\data\\events\\cam1\\b52234c76abe.jpg",
+      "video_path": "D:\\computervision\\data\\events\\cam1\\b52234c76abe.mp4",
+      "extra": {
+        "camera_name": "1번 카메라",
+        "scores": {
+          "background_unlabeled": 0.0079,
+          "fall": 0.9817,
+          "broken": 0.0035,
+          "theft": 0.007
+        },
+        "alert_latency_ms": 0.0,
+        "source": "D:\\computervision\\data\\raw\\val\\videos\\C_3_7_48_BU_DYB_10-17_10-23-53_CB_RGB_DF2_M2.mp4",
+        "점수_주의": "보정되지 않은 모델 점수. 실제 발생 확률이 아니다."
+      }
+    },
+    {
+      "kind": "started",
+      "event_id": "cf8e15d28a4f",
+      "camera_id": "cam1",
+      "action": "fall",
+      "started_at": 1789516816.9382114,
+      "started_media_ts": 45.666666666666664,
+      "score": 0.9817,
+      "peak_score": 0.9817,
+      "ended_at": null,
+      "ended_media_ts": null,
+      "n_hits": 2,
+      "snapshot_path": "D:\\computervision\\data\\events\\cam1\\cf8e15d28a4f.jpg",
+      "video_path": "D:\\computervision\\data\\events\\cam1\\cf8e15d28a4f.mp4",
+      "extra": {
+        "camera_name": "1번 카메라",
+        "scores": {
+          "background_unlabeled": 0.0079,
+          "fall": 0.9817,
+          "broken": 0.0035,
+          "theft": 0.007
+        },
+        "alert_latency_ms": 165.9,
+        "source": "D:\\computervision\\data\\raw\\val\\videos\\C_3_7_48_BU_DYB_10-17_10-23-53_CB_RGB_DF2_M2.mp4",
+        "점수_주의": "보정되지 않은 모델 점수. 실제 발생 확률이 아니다."
+      }
+    },
+    {
+      "kind": "ended",
+      "event_id": "cf8e15d28a4f",
+      "camera_id": "cam1",
+      "action": "fall",
+      "started_at": 1789516816.9382114,
+      "started_media_ts": 45.666666666666664,
+      "score": 0.9817,
+      "peak_score": 0.988272488117218,
+      "ended_at": 1789516831.1764977,
+      "ended_media_ts": null,
+      "n_hits": 16,
+      "snapshot_path": "D:\\computervision\\data\\events\\cam1\\cf8e15d28a4f.jpg",
+      "video_path": "D:\\computervision\\data\\events\\cam1\\cf8e15d28a4f.mp4",
+      "extra": {
+        "camera_name": "1번 카메라",
+        "scores": {
+          "background_unlabeled": 0.0079,
+          "fall": 0.9817,
+          "broken": 0.0035,
+          "theft": 0.007
+        },
+        "alert_latency_ms": 165.9,
+        "source": "D:\\computervision\\data\\raw\\val\\videos\\C_3_7_48_BU_DYB_10-17_10-23-53_CB_RGB_DF2_M2.mp4",
+        "점수_주의": "보정되지 않은 모델 점수. 실제 발생 확률이 아니다."
+      }
+    }
+  ],
+  "n_events": 2
+}
