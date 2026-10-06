@@ -28,7 +28,10 @@ export async function playWhep(video, whepUrl, onLost) {
   });
   if (!r.ok) {
     pc.close();
-    throw new Error(r.status === 404 ? "카메라 영상이 아직 없습니다 (중계기에 cam1 송출 확인)" : `중계기 응답 ${r.status}`);
+    const err = new Error(`WHEP ${r.status}`);
+    err.status = r.status;
+    err.body = await r.text();
+    throw err;
   }
   await pc.setRemoteDescription({ type: "answer", sdp: await r.text() });
   return pc;
