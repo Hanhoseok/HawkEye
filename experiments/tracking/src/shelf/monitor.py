@@ -63,6 +63,13 @@ class ShelfChange:
     """새 지도를 확정한 시각."""
     people: list[int] = field(default_factory=list)
     """그 사이 선반을 가린 사람들."""
+    start_frame: int = -1
+    end_frame: int = -1
+    """start_ms / end_ms 에 해당하는 프레임 번호. 집기 동작(프레임 단위)과 시간을 맞출 때 쓴다."""
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.removed or self.added)
 
     @property
     def person_id(self) -> int | None:
@@ -78,7 +85,7 @@ class ShelfChange:
             parts.append("사라짐: " + ", ".join(s.name for s in self.removed))
         if self.added:
             parts.append("생김: " + ", ".join(s.name for s in self.added))
-        return f"[{self.shelf}] {' / '.join(parts)} -> {who}"
+        return f"[{self.shelf}] {' / '.join(parts) or '변화 없음'} -> {who}"
 
 
 def layout(items: list[ShelfItem], row_gap: float = 0.6) -> list[Slot]:
@@ -202,14 +209,19 @@ class ShelfMonitor:
         self.state: list[Slot] | None = None
         """확정된 선반 지도. 처음 확정되기 전에는 None."""
         self.state_ms = 0.0
+        self.state_frame = -1
         self._cons.clear()
         self._clear_since: float | None = None
         self._occluded_since: float | None = None
+        self._occluded_frame = -1
         self._people: list[int] = []
         self._pending: tuple | None = None
         """바뀐 것 같은 상태와 처음 본 시각. 손이 잠깐 가려 생긴 깜빡임을 거르려고, 바뀐 상태가
         stable_seconds 동안 그대로여야 확정한다."""
         self.changes: list[ShelfChange] = []
+        self.visits: list[ShelfChange] = []
+        """사람이 선반을 가렸다가 떠난 방문 기록. 변화가 확정된 방문과 **아무것도 안 바뀐 방문(구경)** 모두.
+        구경 기록은 그 시간의 집기 동작이 실제로는 아무것도 가져가지 않았다는 근거가 된다."""
 
     def _inside(self, item: ShelfItem) -> bool:
         x, y = item.center
@@ -222,8 +234,9 @@ class ShelfMonitor:
         return min(x2, a2) > max(x1, a1) and min(y2, b2) > max(y1, b1)
 
     def update(self, now_ms: float, items: list[ShelfItem],
-               people: list[tuple[int, tuple]], frames_per_window: int) -> list[ShelfChange]:
-        """한 장면을 넣는다. 확정된 변화가 있으면 돌려준다.
+               people: list[tuple[int, tuple]], frames_per_window: int,
+               frame_index: int = -1) -> list[ShelfChange]:
+        """한 장면을 넣는다. 확정된 변화가 있으면 돌려준다 (방문 기록은 self.visits 에 쌓인다).
 
         people: (사람 번호, 상자) 목록. frames_per_window: stable_seconds 동안 들어오는 장면 수.
         """
@@ -232,6 +245,7 @@ class ShelfMonitor:
             # 가려졌다 — 지금 장면으로는 셀 수 없다. 누가 가렸는지만 기록한다.
             if self._occluded_since is None:
                 self._occluded_since = now_ms
+                self._occluded_frame = frame_index
             for pid in blocking:
                 if pid not in self._people:
                     self._people.append(pid)
@@ -247,15 +261,20 @@ class ShelfMonitor:
 
         current = layout(self._cons.result())
         if self.state is None:
-            self.state, self.state_ms = current, now_ms
+            self.state, self.state_ms, self.state_frame = current, now_ms, frame_index
             return []
         removed, added = match(self.state, current, gate=self.match_gate)
         if not removed and not added:
             if self._occluded_since is not None:
-                # 가렸지만 아무것도 안 바뀌었다 (보기만 함). 다음 방문을 위해 기록을 비운다.
+                # 가렸지만 아무것도 안 바뀌었다 (보기만 함). 방문으로 남기고 다음 방문을 위해 비운다.
+                self.visits.append(ShelfChange(
+                    shelf=self.name, removed=[], added=[],
+                    start_ms=self._occluded_since, end_ms=now_ms, people=list(self._people),
+                    start_frame=self._occluded_frame, end_frame=frame_index,
+                ))
                 self._occluded_since, self._people = None, []
             self._pending = None
-            self.state, self.state_ms = current, now_ms
+            self.state, self.state_ms, self.state_frame = current, now_ms, frame_index
             return []
         signature = (tuple(sorted(s.name for s in removed)), tuple(sorted(s.name for s in added)))
         if self._pending is None or self._pending[0] != signature:
@@ -264,12 +283,15 @@ class ShelfMonitor:
         if now_ms - self._pending[1] < self.stable_ms:
             return []
         self._pending = None
+        occluded = self._occluded_since is not None
         change = ShelfChange(
             shelf=self.name, removed=removed, added=added,
-            start_ms=self._occluded_since if self._occluded_since is not None else self.state_ms,
+            start_ms=self._occluded_since if occluded else self.state_ms,
             end_ms=now_ms, people=list(self._people),
+            start_frame=self._occluded_frame if occluded else self.state_frame, end_frame=frame_index,
         )
         self.changes.append(change)
-        self.state, self.state_ms = current, now_ms
+        self.visits.append(change)
+        self.state, self.state_ms, self.state_frame = current, now_ms, frame_index
         self._occluded_since, self._people = None, []
         return [change]

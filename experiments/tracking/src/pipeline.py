@@ -45,6 +45,7 @@ class RunStats:
     risk_summary: str = ""
     alert_summary: str = ""
     risk_path: Path | None = None
+    shelf_visits: list = field(default_factory=list)
 
     @property
     def fps(self) -> float:
@@ -71,6 +72,9 @@ class RunStats:
             total = sum(c.duration_sec for c in self.take_candidates)
             lines.append(f"TAKE 후보       : {len(self.take_candidates)}건 / {len(people)}명")
             lines.append(f"  └ 총 체류 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
+        if self.shelf_visits and not self.risk_summary:
+            changed = sum(1 for v in self.shelf_visits if v.removed or v.added)
+            lines.append(f"선반 방문       : {len(self.shelf_visits)}건 (변화 {changed}건)")
         if self.risk_summary:
             lines.append(self.risk_summary)
         if self.alert_summary:
@@ -98,6 +102,7 @@ class TrackingPipeline:
         interactions=None,
         risk=None,
         alert_sink=None,
+        shelves=None,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -107,6 +112,8 @@ class TrackingPipeline:
         self.interactions = interactions
         self.risk = risk
         self.alert_sink = alert_sink
+        self.shelves = shelves
+        """선반 지켜보기 (src/shelf/watcher.py). 손님이 다녀간 선반에서 물건이 몇 개 줄었는지 센다."""
         self._recent: deque = deque()
         """(재생 시각 ms, 줄인 장면, 줄인 비율) — 경보 사진용 최근 장면."""
 
@@ -127,6 +134,8 @@ class TrackingPipeline:
             self.interactions.reset()
         if self.risk is not None:
             self.risk.reset()
+        if self.shelves is not None:
+            self.shelves.reset()
         alert_until: dict[int, tuple[float, str]] = {}  # 손님 -> (표시 종료 시각, 문구)
         last_pts_ms = 0.0
 
@@ -136,6 +145,7 @@ class TrackingPipeline:
         takes_log: ObservationLog | None = None
         risk_log: ObservationLog | None = None
         payments_log: ObservationLog | None = None
+        shelf_log: ObservationLog | None = None
         started = time.perf_counter()
 
         try:
@@ -167,6 +177,11 @@ class TrackingPipeline:
                     risk_log = ObservationLog(out_dir / cfg.output.risk_name)
                     payments_log = ObservationLog(out_dir / cfg.output.payments_name)
                     stats.risk_path = risk_log.path
+                if self.shelves is not None and self.registry is not None:
+                    self.shelves.resolve(source.width, source.height, effective_fps)
+                    shelf_log = ObservationLog(out_dir / cfg.output.shelf_name)
+                    print("선반: " + ", ".join(
+                        f"{name} {tuple(int(v) for v in box)}" for name, box in self.shelves.boxes))
 
                 if self.zone_map:
                     self.zone_map.resolve(source.width, source.height)
@@ -213,10 +228,22 @@ class TrackingPipeline:
                                 if takes_log is not None:
                                     takes_log.write_many(done)
 
+                        # 선반 지도: 손님이 다녀간 선반에서 몇 개가 비었/다시 찼는지
+                        visits = []
+                        if self.shelves is not None:
+                            visits, changes = self.shelves.update(frame, identities, self.registry.resolve)
+                            stats.shelf_visits.extend(visits)
+                            if shelf_log is not None:
+                                shelf_log.write_many(visits)
+                            for visit, change in zip(visits, changes):
+                                if visit.removed or visit.added:
+                                    print(f"  [선반] {change.start_ms / 1000:6.1f}s ~ {change.end_ms / 1000:6.1f}s  "
+                                          f"{visit.detail}")
+
                         # 손님 상태 · 결제 · 출구 판정
                         if self.risk is not None:
                             events, records = self.risk.update(
-                                frame, identities, done, self.registry.merges
+                                frame, identities, done, self.registry.merges, visits
                             )
                             if risk_log is not None:
                                 risk_log.write_many(events)
@@ -242,6 +269,11 @@ class TrackingPipeline:
                         base = frame.image
                         if self.zone_map and cfg.output.draw_zones:
                             base = draw_zones(base, self.zone_map)
+                        if self.shelves is not None and cfg.output.draw_zones:
+                            base = base.copy() if base is frame.image else base
+                            for name, (x1, y1, x2, y2) in self.shelves.boxes:
+                                cv2.rectangle(base, (int(x1), int(y1)), (int(x2), int(y2)), (255, 200, 0), 1)
+                                cv2.putText(base, name, (int(x1) + 4, int(y1) + 16), 0, 0.5, (255, 200, 0), 1)
                         canvas = overlay.draw(base, drawable, header)
                         if alert_until and self.risk is not None:
                             canvas = draw_alerts(canvas, self._live_alerts(drawable, frame, alert_until))
@@ -278,6 +310,8 @@ class TrackingPipeline:
                 payments_log.close()
             if self.alert_sink is not None:
                 stats.alert_summary = self.alert_sink.close()
+            if shelf_log is not None:
+                shelf_log.close()
             if identity_log is not None:
                 identity_log.close()
                 if self.registry.merges:

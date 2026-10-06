@@ -332,6 +332,39 @@ class AlertConfig:
 
 
 @dataclass
+class ShelfConfig:
+    """선반 지도 — 지켜보는 선반에서 물건이 몇 개 줄었는지 세어 손님 기록에 붙인다 (src/shelf, docs/shelf-map.md).
+
+    areas 가 비어 있으면 꺼진다. 영역은 카메라마다 다르므로 보통 명령줄 --shelf 로 준다.
+    """
+
+    areas: list[dict] = field(default_factory=list)
+    """[{name, box: [x1, y1, x2, y2] (화면 비율 0~1), zone: SHELF 구역 이름(선택)}].
+    zone 을 주면 그 구역의 집기 동작만 선반 기록으로 대신한다. 선반이 여럿이면 주는 것이 안전하다."""
+
+    model_path: str = "yolov8n.pt"
+    """물건 탐지 모델. 지금은 일반 YOLO(2단계에서 우리 상품 모델로 교체)."""
+
+    imgsz: int = 1280
+    """물건 탐지 해상도. 작은 물건용으로 크게 한다. 사람 탐지는 원래 설정(detector.imgsz)대로 따로 한다 —
+    1280 으로 사람까지 찾으면 가까운 사람이 조각 상자 여러 개로 잡혔다(Pexels 10566665)."""
+
+    conf: float = 0.15
+
+    stable_seconds: float = 0.6
+    """선반 지도를 확정하는 데 필요한 연속 관찰 시간. 1초로는 떠난 뒤 확정이 늦었다(Pexels 10566665)."""
+
+    ignore: list[str] = field(default_factory=lambda: [
+        "person", "dining table", "chair", "bench", "refrigerator", "tv", "couch", "bed",
+    ])
+    """물건으로 보지 않는 종류 (가구 등)."""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.areas)
+
+
+@dataclass
 class OutputConfig:
     dir: str = "outputs"
     write_video: bool = True
@@ -345,6 +378,7 @@ class OutputConfig:
     write_risk: bool = True
     risk_name: str = "risk_events.jsonl"
     payments_name: str = "payments.jsonl"
+    shelf_name: str = "shelf_visits.jsonl"
     alerts_dir: str = "alerts"
     """HIGH_RISK 순간의 장면을 이미지로 저장할 폴더 (결과 폴더 아래)."""
     show_window: bool = False
@@ -363,6 +397,7 @@ class AppConfig:
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
+    shelves: ShelfConfig = field(default_factory=ShelfConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
     @classmethod
@@ -377,6 +412,7 @@ class AppConfig:
             interaction=InteractionConfig(**(raw.get("interaction") or {})),
             risk=RiskConfig(**(raw.get("risk") or {})),
             alerts=AlertConfig(**(raw.get("alerts") or {})),
+            shelves=ShelfConfig(**(raw.get("shelves") or {})),
             output=OutputConfig(**(raw.get("output") or {})),
         )
 

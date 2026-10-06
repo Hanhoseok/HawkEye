@@ -147,6 +147,15 @@ alerts:
   snapshot_seconds: 6.0      # '출구 쪽에서 사라짐' 경보는 사라지고 3초 뒤 확정 -> 그 전 장면을 찾으려면 더 길게
   snapshot_max_side: 960
 
+# 선반 지도 — 지켜보는 선반에서 물건이 몇 개 줄었는지 세어 손님 기록에 붙인다 (docs/shelf-map.md)
+# areas 가 비어 있으면 꺼진다. 영역은 카메라마다 다르므로 보통 명령줄 --shelf 로 준다.
+shelves:
+  areas: []                  # 예: [{name: shelf1, box: [0.35, 0.62, 0.80, 0.95], zone: shelf_left}]
+  model_path: yolov8n.pt     # 물건 탐지 (지금은 일반 YOLO, 2단계에서 상품 모델)
+  imgsz: 1280                # 작은 물건용. 사람 탐지는 detector.imgsz 로 따로
+  conf: 0.15
+  stable_seconds: 0.6
+
 output:
   dir: outputs
   write_video: true

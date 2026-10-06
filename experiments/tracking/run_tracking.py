@@ -14,12 +14,13 @@ import sys
 from pathlib import Path
 
 from src.core.config import AppConfig
-from src.detectors.yolo_detector import build_detector
+from src.detectors.yolo_detector import build_detector, build_item_detector
 from src.pipeline import TrackingPipeline
 from src.identity.embedder import build_embedder
 from src.interaction.detector import InteractionDetector
 from src.risk.engine import RiskEngine
 from src.risk.payments import PaymentFeed
+from src.shelf.watcher import ShelfWatcher, parse_area
 from src.sinks.alert_sink import AlertSink
 from src.identity.registry import IdentityRegistry
 from src.trackers import build_tracker
@@ -89,6 +90,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-risk", action="store_true", help="손님 상태·결제·출구 판정을 끈다")
     parser.add_argument("--alert-server", help="경보 서버 주소 (예: http://127.0.0.1:8000). API 키는 환경변수 HAWKEYE_API_KEY")
     parser.add_argument("--camera-id", help="경보 서버에 보낼 카메라 이름 (기본 cam1)")
+    parser.add_argument(
+        "--shelf", action="append",
+        help="지켜볼 선반 영역 [이름=]x1,y1,x2,y2[@SHELF구역] (화면 비율 0~1, 여러 번 가능). "
+             "주면 선반에서 물건이 몇 개 줄었는지 세어 손님 기록에 붙인다",
+    )
     parser.add_argument("--dwell", type=float, help="선반 앞 체류 시간 기준(초)")
     parser.add_argument("--max-speed", type=float, help="'멈춤' 기준 속도 (체구 높이/초)")
     parser.add_argument("--no-zones", action="store_true", help="구역을 쓰지 않는다")
@@ -165,6 +171,8 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.zones.path = args.zones
     if args.payments:
         config.risk.payments = args.payments
+    if args.shelf:
+        config.shelves.areas = [parse_area(text, i) for i, text in enumerate(args.shelf)]
     if args.no_risk:
         config.risk.enabled = False
     if args.no_takes:
@@ -259,8 +267,21 @@ def main() -> int:
         if alert_sink is not None:
             print(f"alerts   : {alert_sink.server} 로 경보 전송 (카메라 {alert_sink.camera_id}, 실행 {alert_sink.run_id})")
 
+    shelves = None
+    if config.shelves.enabled:
+        if registry is None:
+            print("[warn] 선반 지도는 매장 단위 신원(identity)이 켜져 있어야 손님에게 붙일 수 있어 끕니다.")
+        else:
+            scfg = config.shelves
+            shelves = ShelfWatcher(scfg, build_item_detector(
+                scfg.model_path, scfg.imgsz, scfg.conf, config.detector.device, scfg.ignore))
+            print(
+                f"shelf    : 선반 {len(scfg.areas)}곳에서 물건 수 확인 "
+                f"({scfg.model_path}, 해상도 {scfg.imgsz}, 관찰 {scfg.stable_seconds:g}초)"
+            )
+
     stats = TrackingPipeline(
-        config, detector, tracker, registry, zone_map, interactions, risk, alert_sink
+        config, detector, tracker, registry, zone_map, interactions, risk, alert_sink, shelves
     ).run()
     print(stats.summary())
 
