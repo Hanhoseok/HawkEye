@@ -20,9 +20,12 @@
 | 구역 (SHELF / EXIT) | ✅ | `docs/zones.md` |
 | TAKE 후보 (계층 3) | 🔶 MERL test 정밀도 0.75 / 재현율 0.71 / F1 0.73 / 국소화 37% | `docs/merl-evaluation.md` |
 | 손님 상태 · 결제 연결 · 출구 판정 | 🔶 경보 두 단계(WARNING → HIGH_RISK) + 판정 직전 신원 확인. 실제 CCTV 2편에서 정답 일치, 계산하고 나가는 경우는 미검증 | `docs/risk-pipeline.md` |
-| RETURN (되돌려놓기) | ⬜ 미착수 | |
+| 경보 전송 (관리자 앱·대시보드) | ✅ app-pos 경보 서버로 판정 + 장면 사진 전송. UCF 039 로 끝까지 확인 | `docs/risk-pipeline.md` §6-B |
+| 선반 지도 (물건 수) | 🔶 선반에서 줄어든 개수를 손님 기록에 연결. 영상 2편으로 동작 확인, 정확도·속도 미해결 | `docs/shelf-map.md` |
+| RETURN (되돌려놓기) | ⬜ 미착수 → 🔶 2026-10-06: 지켜보는 선반에서는 '다시 참'으로 개수에서 뺌. 그 밖은 미착수 | `docs/shelf-map.md` |
 
 **처음 보는 사람은 `docs/진행경과-정리.md` 부터 읽는다.** 왜 이런 구조가 됐는지가 수치와 함께 정리되어 있다.
+**지금 무엇이 안 되는지는 `docs/limitations.md`** — 부딪힌 한계와 실패를 모두 모아 상태(미해결·우회·해결)로 관리한다.
 
 ---
 
@@ -205,6 +208,7 @@ outputs/                   결과물 (git 제외)
 | 문서 | 내용 |
 |---|---|
 | **`docs/진행경과-정리.md`** | **팀원 공유용 전체 정리.** 왜 ByteTrack에서 BoT-SORT로 갔는지, 수치 포함 |
+| **`docs/limitations.md`** | **한계 총정리 — 부딪힌 한계·실패와 현재 상태. 해결돼도 지우지 않는다** |
 | `docs/phase3-failure-notes.md` | tracker 실패 실험 원본 기록 |
 | `docs/tracker-comparison.md` | ByteTrack vs BoT-SORT 9회 실험 비교 |
 | `docs/phase5-take-return-survey.md` | TAKE/RETURN 후보 사전조사 |
@@ -261,6 +265,9 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 상품별 tracking / TAKE·RETURN 판정 / POS 매칭 / HIGH_RISK 판정 / YOLO 재학습.
 여러 문제를 동시에 섞으면 **어느 단계에서 실패했는지 판단할 수 없기 때문**이다. (문서 §5)
 
+> 2026-10-06 갱신: 그 뒤 단계별로 검증하며 **TAKE 판정(후보)·POS 매칭·HIGH_RISK 판정**을 구현했고, 되돌려놓기는 선반 지도로 일부 다룬다.
+> **상품별 tracking 과 YOLO 재학습은 여전히 하지 않았다** (상품 개별 추적은 측정 결과 실패 — `docs/limitations.md` '시도했지만 접은 방법').
+
 ---
 
 ## 8. 실험 기록
@@ -279,5 +286,6 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 | 2026-10-01 | 선반 지도 1단계: 선반 물건 배치를 기억했다가 사람이 다녀간 뒤 어느 자리가 비었는지 찾아 그 사람에게 붙임 (일반 YOLO) | 스톡 영상 2편에서 사라진 물건 자리 모두 정답. 1편은 손님까지 정답, 1편은 팔만 보여 주인 미정 | `docs/shelf-map.md` |
 | 2026-10-06 | 위험 판정을 app-pos 경보 서버·대시보드로 전송 (장면 사진 포함) | UCF-Crime 039 전체 파이프라인: 판정 6건 전송, 도둑만 HIGH_RISK 사건·나머지 통과로 대시보드에 표시 | `docs/risk-pipeline.md` §6-B |
 | 2026-10-06 | 선반 확인 개수를 손님 기록에 연결 — '몇 번 집었나' 대신 '몇 개 가져갔나' | Pexels 2편 전체 파이프라인: 가져간 병을 손님 1 에게 1개로 붙임, 들었다 놓은 통은 안 셈. CPU 13.8 → 4.8 FPS | `docs/shelf-map.md` 손님 기록 연결 |
+| 2026-10-06 | 한계 총정리 문서 — 문서 13개의 한계·실패 기록을 모아 상태로 관리 (해결돼도 지우지 않음) | 항목 69개, 시도했지만 접은 방법 10개 | `docs/limitations.md` |
 
 **다음에 확인할 것**: 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
