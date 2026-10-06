@@ -275,9 +275,9 @@ class TrackingPipeline:
                 stats.risk_summary = self.risk.summary()
             if risk_log is not None:
                 risk_log.close()
+                payments_log.close()
             if self.alert_sink is not None:
                 stats.alert_summary = self.alert_sink.close()
-                payments_log.close()
             if identity_log is not None:
                 identity_log.close()
                 if self.registry.merges:
