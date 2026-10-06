@@ -260,6 +260,38 @@ BoT-SORT 는 외형(ReID)을 함께 보므로 겹친 뒤에도 B 를 놓치지 �
 - TAKE 후보 자체가 30% 가량 놓치고 25% 가량 틀린다(MERL). 놓친 TAKE 는 경보 누락으로, 틀린 TAKE 는 오경보로 이어진다.
 - 매장 밖으로 나간 손님을 장부에서 지우지 않는다. 영상 한 편 단위에서는 문제없지만, 하루 종일 돌리려면 필요하다.
 
+## 6-B. 관리자 앱·대시보드로 경보 보내기
+
+경보 서버·PC 대시보드·안드로이드 앱·전송 모듈은 **app-pos(한호석)** 가 만들었다(`experiments/app-pos`, 설계 `docs/design.md`).
+서버가 받는 경보 형식은 이 문서의 `RiskEvent` 와 같아서, 변환 없이 그대로 보낸다.
+
+    위험 판정(RiskEvent) ──▶ AlertSink ──▶ hawkeye_client.AlertPublisher ──POST /api/events──▶ 경보 서버 ──▶ 대시보드·앱
+       (이 폴더)            (이 폴더)       (app-pos, 고치지 않고 가져다 씀)                       (app-pos)
+
+- **보내는 것**: 모든 판정(WARNING / HIGH_RISK / REVIEW / CLEAR). 서버가 손님별로 '사건' 하나로 묶고,
+  단계가 올라갈 때만 알림을 띄운다(WARNING → HIGH_RISK 는 알림, 처음부터 CLEAR 는 '통과'로 조용히 기록).
+- **장면 사진**: 경보마다 그 손님에게 단계 색 상자를 그린 JPEG 를 붙인다.
+  '출구 쪽에서 사라짐' 경보는 사라지고 3초 뒤에 확정되므로, 그 순간 장면에는 사람이 없다.
+  그래서 최근 6초 장면을 줄여(긴 변 960) 보관해 두고 **그 손님이 마지막으로 보인 장면**을 보낸다.
+- **멈추지 않음**: 전송은 app-pos 모듈이 별도 스레드에서 한다. 서버가 꺼져 있어도 영상 처리는 계속되고,
+  재시도 후 실패 수만 센다.
+- 서버 주소가 없으면 보내지 않는다(지금까지와 똑같이 동작). API 키는 환경변수 `HAWKEYE_API_KEY` 로만 받는다.
+
+**확인** (2026-10-06, PC 한 대): app-pos 서버를 띄우고 UCF-Crime 039 를 전체 파이프라인으로 돌림.
+판정 6건이 모두 전송됐고, 서버가 손님 4명의 사건으로 묶었다 — 도둑(손님 2)만 HIGH_RISK·처리 대기,
+나머지 3명은 '통과'. 대시보드에 "확인 필요 1 · 손님 2 · 감지 3 / 결제 0 / 미결제 3" 으로 떴고,
+HIGH_RISK 사진은 유리문 밖으로 나가는 마지막 장면에 빨간 상자가 그려진 것이었다.
+
+```bash
+# 1) 경보 서버 (app-pos/README.md 참고)
+cd experiments/app-pos/server && python -m hawkeye_server --port 8000     # 대시보드: http://127.0.0.1:8000
+# 2) 파이프라인에서 보내기
+cd experiments/tracking
+python run_tracking.py --source <영상> --zones <구역> --alert-server http://127.0.0.1:8000
+# 또는 이미 돌린 결과를 다시 보내기 (YOLO 없이)
+python scripts/replay_risk.py --identities <identities.jsonl> --video <영상> --zones <구역> --alert-server http://127.0.0.1:8000
+```
+
 ## 7. 사용법
 
 ```bash

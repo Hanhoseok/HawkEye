@@ -20,6 +20,7 @@ from src.identity.embedder import build_embedder
 from src.interaction.detector import InteractionDetector
 from src.risk.engine import RiskEngine
 from src.risk.payments import PaymentFeed
+from src.sinks.alert_sink import AlertSink
 from src.identity.registry import IdentityRegistry
 from src.trackers import build_tracker
 from src.zones.zone_map import ZoneMap
@@ -86,6 +87,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-takes", action="store_true", help="TAKE 후보 판정(계층 3)을 끈다")
     parser.add_argument("--payments", help="결제 기록 CSV (src/risk/payments.py 형식)")
     parser.add_argument("--no-risk", action="store_true", help="손님 상태·결제·출구 판정을 끈다")
+    parser.add_argument("--alert-server", help="경보 서버 주소 (예: http://127.0.0.1:8000). API 키는 환경변수 HAWKEYE_API_KEY")
+    parser.add_argument("--camera-id", help="경보 서버에 보낼 카메라 이름 (기본 cam1)")
     parser.add_argument("--dwell", type=float, help="선반 앞 체류 시간 기준(초)")
     parser.add_argument("--max-speed", type=float, help="'멈춤' 기준 속도 (체구 높이/초)")
     parser.add_argument("--no-zones", action="store_true", help="구역을 쓰지 않는다")
@@ -249,8 +252,15 @@ def main() -> int:
         if len(payments) and "CHECKOUT" not in types:
             print("[warn] 구역 파일에 CHECKOUT 이 없어, person_id 가 적히지 않은 결제는 손님에게 연결되지 않습니다.")
 
+    alert_sink = None
+    if risk is not None:
+        alert_sink = AlertSink.create(args.alert_server or config.alerts.server,
+                                      args.camera_id or config.alerts.camera_id, config.alerts.client_path)
+        if alert_sink is not None:
+            print(f"alerts   : {alert_sink.server} 로 경보 전송 (카메라 {alert_sink.camera_id}, 실행 {alert_sink.run_id})")
+
     stats = TrackingPipeline(
-        config, detector, tracker, registry, zone_map, interactions, risk
+        config, detector, tracker, registry, zone_map, interactions, risk, alert_sink
     ).run()
     print(stats.summary())
 

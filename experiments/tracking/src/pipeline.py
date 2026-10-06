@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,6 +43,7 @@ class RunStats:
     takes_path: Path | None = None
     risk_events: list = field(default_factory=list)
     risk_summary: str = ""
+    alert_summary: str = ""
     risk_path: Path | None = None
 
     @property
@@ -71,6 +73,8 @@ class RunStats:
             lines.append(f"  └ 총 체류 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
         if self.risk_summary:
             lines.append(self.risk_summary)
+        if self.alert_summary:
+            lines.append(self.alert_summary)
         if self.risk_path:
             lines.append(f"위험 판정 로그   : {self.risk_path}")
         if self.video_path:
@@ -93,6 +97,7 @@ class TrackingPipeline:
         zone_map: ZoneMap | None = None,
         interactions=None,
         risk=None,
+        alert_sink=None,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -101,6 +106,9 @@ class TrackingPipeline:
         self.zone_map = zone_map or ZoneMap.empty()
         self.interactions = interactions
         self.risk = risk
+        self.alert_sink = alert_sink
+        self._recent: deque = deque()
+        """(재생 시각 ms, 줄인 장면, 줄인 비율) — 경보 사진용 최근 장면."""
 
     ALERT_SHOW_SECONDS = 3.0
     """HIGH_RISK 판정 뒤 결과 영상에 빨간 박스를 몇 초간 띄울지."""
@@ -213,8 +221,12 @@ class TrackingPipeline:
                             if risk_log is not None:
                                 risk_log.write_many(events)
                                 payments_log.write_many(records)
+                            if self.alert_sink is not None:
+                                self._remember(frame)
                             for event in events:
                                 self._report(event, frame, out_dir, alert_until)
+                                if self.alert_sink is not None:
+                                    self._send_alert(event, frame)
                         last_pts_ms = frame.pts_ms
 
                     if writer is not None or cfg.output.show_window or on_frame is not None:
@@ -263,6 +275,8 @@ class TrackingPipeline:
                 stats.risk_summary = self.risk.summary()
             if risk_log is not None:
                 risk_log.close()
+            if self.alert_sink is not None:
+                stats.alert_summary = self.alert_sink.close()
                 payments_log.close()
             if identity_log is not None:
                 identity_log.close()
@@ -296,6 +310,32 @@ class TrackingPipeline:
         path = out_dir / self.config.output.alerts_dir / f"{frame.index:06d}_p{event.person_id}.jpg"
         path.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(path), image)
+
+    def _remember(self, frame) -> None:
+        """경보 사진용으로 최근 장면을 줄여 보관한다."""
+        if frame.image is None:
+            return
+        acfg = self.config.alerts
+        h, w = frame.image.shape[:2]
+        scale = min(1.0, acfg.snapshot_max_side / float(max(h, w)))
+        small = frame.image if scale >= 1.0 else cv2.resize(frame.image, (int(w * scale), int(h * scale)))
+        self._recent.append((frame.pts_ms, small.copy() if small is frame.image else small, scale))
+        limit = acfg.snapshot_seconds * 1000.0
+        while self._recent and frame.pts_ms - self._recent[0][0] > limit:
+            self._recent.popleft()
+
+    def _send_alert(self, event, frame) -> None:
+        """경보 서버로 보낸다. 사진은 그 손님이 마지막으로 보인 장면 (사라진 뒤 확정된 경보 대비)."""
+        customer = self.risk.book.customers.get(event.person_id) if self.risk is not None else None
+        target = customer.last_seen_ms if customer is not None else frame.pts_ms
+        best = None
+        for pts, image, scale in self._recent:
+            if pts <= target + 1e-6:
+                best = (image, scale)
+        if best is None and self._recent:
+            best = self._recent[0][1:]
+        image, scale = best if best is not None else (frame.image, 1.0)
+        self.alert_sink.send(event, image, scale)
 
     def _live_alerts(self, identities, frame, alert_until: dict) -> list:
         """판정 뒤 몇 초간, 지금 위치의 그 손님에게 빨간 박스를 띄운다."""

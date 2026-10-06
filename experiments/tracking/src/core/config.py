@@ -308,6 +308,30 @@ class RiskConfig:
 
 
 @dataclass
+class AlertConfig:
+    """관리자 앱·대시보드 경보 서버로 위험 판정을 보내는 설정 (src/sinks/alert_sink.py).
+
+    서버와 전송 모듈은 app-pos(한호석)가 만든 것을 쓴다. 서버 주소가 없으면 보내지 않는다.
+    API 키는 여기 두지 않는다 — 환경변수 HAWKEYE_API_KEY 로만 받는다(설정 파일·터미널 기록에 남지 않게).
+    """
+
+    server: str | None = None
+    """경보 서버 주소 (예: http://127.0.0.1:8000). 비우면 환경변수 HAWKEYE_SERVER, 그것도 없으면 보내지 않는다."""
+
+    camera_id: str = "cam1"
+
+    client_path: str = "../app-pos/client"
+    """app-pos 전송 모듈(hawkeye_client) 위치. 이 폴더(experiments/tracking) 기준."""
+
+    snapshot_seconds: float = 6.0
+    """경보 사진용으로 보관할 최근 장면 길이(초). '출구 쪽에서 사라짐' 경보는 사라지고 3초 뒤에 나오므로
+    그 손님이 마지막으로 보인 장면을 찾으려면 그보다 길어야 한다."""
+
+    snapshot_max_side: int = 960
+    """보관하는 장면의 긴 변 크기. 메모리를 아끼려고 줄여 둔다."""
+
+
+@dataclass
 class OutputConfig:
     dir: str = "outputs"
     write_video: bool = True
@@ -338,6 +362,7 @@ class AppConfig:
     identity: IdentityConfig = field(default_factory=IdentityConfig)
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    alerts: AlertConfig = field(default_factory=AlertConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
     @classmethod
@@ -351,6 +376,7 @@ class AppConfig:
             identity=IdentityConfig(**(raw.get("identity") or {})),
             interaction=InteractionConfig(**(raw.get("interaction") or {})),
             risk=RiskConfig(**(raw.get("risk") or {})),
+            alerts=AlertConfig(**(raw.get("alerts") or {})),
             output=OutputConfig(**(raw.get("output") or {})),
         )
 

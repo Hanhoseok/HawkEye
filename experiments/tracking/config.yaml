@@ -138,6 +138,15 @@ risk:
   exit_rearm_seconds: 2.0    # 출구를 이만큼 벗어나야 다음 방문으로 본다 (경계에서 들락날락 방지)
   checkout_grace_seconds: 3.0  # 결제 순간 계산대를 막 떠난 손님도 결제자로 본다
 
+# 관리자 앱·대시보드 경보 서버로 위험 판정 보내기 (서버·전송 모듈: experiments/app-pos, 담당 한호석)
+# server 를 비우면 환경변수 HAWKEYE_SERVER, 그것도 없으면 보내지 않는다. API 키는 환경변수 HAWKEYE_API_KEY 로만.
+alerts:
+  server: null
+  camera_id: cam1
+  client_path: ../app-pos/client
+  snapshot_seconds: 6.0      # '출구 쪽에서 사라짐' 경보는 사라지고 3초 뒤 확정 -> 그 전 장면을 찾으려면 더 길게
+  snapshot_max_side: 960
+
 output:
   dir: outputs
   write_video: true
