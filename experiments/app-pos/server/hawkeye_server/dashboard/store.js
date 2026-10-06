@@ -67,3 +67,20 @@ export function clockTime(iso) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
+
+/** 중계기(WHEP) 접속 실패를 관리자가 알아볼 수 있는 문구와 다시 시도할 간격으로 바꾼다. */
+export function liveError(status, bodyText) {
+  let reason = "";
+  try { reason = JSON.parse(bodyText).error ?? ""; } catch { /* JSON 이 아니면 이유 없음 */ }
+  if (/codecs not supported/i.test(reason)) {
+    // 다시 시도해도 브라우저가 바뀌지 않는 한 같다. 카메라 설정이 바뀌었을 수 있으니 가끔만 시도한다.
+    return {
+      message: "이 브라우저는 카메라 영상 코덱을 재생할 수 없습니다. 카메라 영상 코덱을 H.264 로 설정하세요 (VIGI 앱 → 영상 설정).",
+      retryMs: 15000,
+    };
+  }
+  if (status === 404) {
+    return { message: "카메라 영상이 아직 없습니다 (중계기에 카메라가 연결됐는지 확인).", retryMs: 3000 };
+  }
+  return { message: `중계기 응답 ${status}${reason ? ` — ${reason}` : ""}`, retryMs: 3000 };
+}

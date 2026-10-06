@@ -1,6 +1,6 @@
 // HawkEye PC 관제 대시보드. 안드로이드 앱과 같은 서버 API·WebSocket 을 쓴다 (docs/design.md §5).
 import {
-  applyCase, listCases, latestUpdatedAt, alertFor, missedAlert, levelLabel, stateLabel, resolutionLabel, clockTime,
+  applyCase, listCases, latestUpdatedAt, alertFor, missedAlert, levelLabel, stateLabel, resolutionLabel, clockTime, liveError,
 } from "./store.js";
 import { playWhep } from "./whep.js";
 
@@ -187,10 +187,10 @@ async function startLive() {
     return;
   }
   $("liveName").textContent = `라이브 · ${cam.camera_id}`;
-  const retry = (why) => {
+  const retry = (why, ms = 3000) => {
     status.hidden = false;
     status.textContent = `${why} — 다시 연결합니다`;
-    setTimeout(startLive, 3000);
+    setTimeout(startLive, ms);
   };
   try {
     status.hidden = false;
@@ -198,7 +198,12 @@ async function startLive() {
     await playWhep($("video"), `${cam.web_url.replace(/\/$/, "")}/whep`, () => retry("영상이 끊겼습니다"));
     $("video").onplaying = () => { status.hidden = true; };
   } catch (e) {
-    retry(e.message);
+    if (e.status) {
+      const { message, retryMs } = liveError(e.status, e.body);
+      retry(message, retryMs);
+    } else {
+      retry(`영상에 연결하지 못했습니다 (${e.message})`);
+    }
   }
 }
 

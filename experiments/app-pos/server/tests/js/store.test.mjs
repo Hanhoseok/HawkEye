@@ -71,3 +71,25 @@ test("시각은 이 PC 시간대의 시:분:초 (관제 화면용 짧은 형식)
   assert.equal(clockTime(iso), `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`);
   assert.match(clockTime(iso), /^\d{2}:\d{2}:\d{2}$/);
 });
+
+test("코덱을 못 트는 브라우저면 원인과 해결을 알려주고 자주 재시도하지 않는다", async () => {
+  const { liveError } = await import("../../hawkeye_server/dashboard/store.js");
+  // MediaMTX 실제 응답 (2026-10-06 확인): 400 + {"status":"error","error":"codecs not supported by client"}
+  const e = liveError(400, '{"status":"error","error":"codecs not supported by client"}');
+  assert.match(e.message, /코덱/);
+  assert.match(e.message, /H\.264/);
+  assert.equal(e.retryMs, 15000);
+});
+
+test("카메라 영상이 아직 없으면(404) 중계기 연결을 확인하라고 하고 금방 다시 시도한다", async () => {
+  const { liveError } = await import("../../hawkeye_server/dashboard/store.js");
+  const e = liveError(404, '{"status":"error","error":"no stream is available on path \'cam1\'"}');
+  assert.match(e.message, /카메라 영상이 아직 없습니다/);
+  assert.equal(e.retryMs, 3000);
+});
+
+test("그 밖의 오류는 중계기가 준 이유를 그대로 보여준다", async () => {
+  const { liveError } = await import("../../hawkeye_server/dashboard/store.js");
+  assert.match(liveError(500, '{"error":"boom"}').message, /500.*boom/);
+  assert.match(liveError(502, "not json").message, /502/);
+});
