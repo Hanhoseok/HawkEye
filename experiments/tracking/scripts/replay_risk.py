@@ -27,6 +27,7 @@ from src.core.types import Frame, RiskLevel  # noqa: E402
 from src.interaction.detector import InteractionDetector  # noqa: E402
 from src.risk.engine import RiskEngine  # noqa: E402
 from src.risk.payments import PaymentFeed  # noqa: E402
+from src.sinks.alert_sink import AlertSink  # noqa: E402
 from src.sinks.observation_log import ObservationLog, read_identities  # noqa: E402
 from src.zones.zone_map import ZoneMap  # noqa: E402
 
@@ -40,6 +41,8 @@ def main() -> None:
     parser.add_argument("--merges", help="identity_merges.jsonl (파이프라인 출력일 때)")
     parser.add_argument("--interaction", help="TAKE 판정 설정 JSON (기본: config.yaml)")
     parser.add_argument("--out", help="risk_events.jsonl / payments.jsonl 을 쓸 폴더")
+    parser.add_argument("--alert-server", help="경보 서버로도 보낸다 (예: http://127.0.0.1:8000)")
+    parser.add_argument("--camera-id", default=None)
     args = parser.parse_args()
 
     config = AppConfig.load("config.yaml")
@@ -51,6 +54,20 @@ def main() -> None:
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
+
+    alert_sink = AlertSink.create(args.alert_server or config.alerts.server,
+                                  args.camera_id or config.alerts.camera_id, config.alerts.client_path)
+    snap_cap = cv2.VideoCapture(args.video) if alert_sink is not None else None
+    if alert_sink is not None:
+        print(f"경보 전송: {alert_sink.server} (카메라 {alert_sink.camera_id}, 실행 {alert_sink.run_id})")
+
+    def send_alert(event):
+        """그 손님이 마지막으로 보인 장면을 영상에서 꺼내 사진으로 함께 보낸다."""
+        customer = engine.book.customers.get(event.person_id)
+        idx = round(customer.last_seen_ms * fps / 1000.0) if customer is not None else event.frame
+        snap_cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, idx))
+        ok, image = snap_cap.read()
+        alert_sink.send(event, image if ok else None)
 
     zone_map = ZoneMap.load(args.zones)
     zone_map.resolve(width, height)
@@ -88,6 +105,8 @@ def main() -> None:
             who = f"손님 {r.person_id}" if r.person_id is not None else "연결 실패"
             print(f"  [pay ] {r.time_sec:7.2f}s  {r.items}개 -> {who} ({r.method}, 후보 {r.candidates}명)")
         for e in events:
+            if alert_sink is not None:
+                send_alert(e)
             mark = {RiskLevel.HIGH_RISK: "!!", RiskLevel.REVIEW: "??", RiskLevel.WARNING: "!?"}.get(e.level, "ok")
             print(f"  [{mark}  ] {e.time_sec:7.2f}s  손님 {e.person_id}  {e.level.value}  {e.reason}")
         events_all += events
@@ -97,6 +116,9 @@ def main() -> None:
 
     print()
     print(engine.summary())
+    if alert_sink is not None:
+        print(alert_sink.close())
+        snap_cap.release()
 
     if args.out:
         out = Path(args.out)

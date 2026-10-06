@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,7 +43,9 @@ class RunStats:
     takes_path: Path | None = None
     risk_events: list = field(default_factory=list)
     risk_summary: str = ""
+    alert_summary: str = ""
     risk_path: Path | None = None
+    shelf_visits: list = field(default_factory=list)
 
     @property
     def fps(self) -> float:
@@ -69,8 +72,13 @@ class RunStats:
             total = sum(c.duration_sec for c in self.take_candidates)
             lines.append(f"TAKE 후보       : {len(self.take_candidates)}건 / {len(people)}명")
             lines.append(f"  └ 총 체류 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
+        if self.shelf_visits and not self.risk_summary:
+            changed = sum(1 for v in self.shelf_visits if v.removed or v.added)
+            lines.append(f"선반 방문       : {len(self.shelf_visits)}건 (변화 {changed}건)")
         if self.risk_summary:
             lines.append(self.risk_summary)
+        if self.alert_summary:
+            lines.append(self.alert_summary)
         if self.risk_path:
             lines.append(f"위험 판정 로그   : {self.risk_path}")
         if self.video_path:
@@ -93,6 +101,8 @@ class TrackingPipeline:
         zone_map: ZoneMap | None = None,
         interactions=None,
         risk=None,
+        alert_sink=None,
+        shelves=None,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -101,6 +111,11 @@ class TrackingPipeline:
         self.zone_map = zone_map or ZoneMap.empty()
         self.interactions = interactions
         self.risk = risk
+        self.alert_sink = alert_sink
+        self.shelves = shelves
+        """선반 지켜보기 (src/shelf/watcher.py). 손님이 다녀간 선반에서 물건이 몇 개 줄었는지 센다."""
+        self._recent: deque = deque()
+        """(재생 시각 ms, 줄인 장면, 줄인 비율) — 경보 사진용 최근 장면."""
 
     ALERT_SHOW_SECONDS = 3.0
     """HIGH_RISK 판정 뒤 결과 영상에 빨간 박스를 몇 초간 띄울지."""
@@ -119,6 +134,8 @@ class TrackingPipeline:
             self.interactions.reset()
         if self.risk is not None:
             self.risk.reset()
+        if self.shelves is not None:
+            self.shelves.reset()
         alert_until: dict[int, tuple[float, str]] = {}  # 손님 -> (표시 종료 시각, 문구)
         last_pts_ms = 0.0
 
@@ -128,6 +145,7 @@ class TrackingPipeline:
         takes_log: ObservationLog | None = None
         risk_log: ObservationLog | None = None
         payments_log: ObservationLog | None = None
+        shelf_log: ObservationLog | None = None
         started = time.perf_counter()
 
         try:
@@ -159,6 +177,11 @@ class TrackingPipeline:
                     risk_log = ObservationLog(out_dir / cfg.output.risk_name)
                     payments_log = ObservationLog(out_dir / cfg.output.payments_name)
                     stats.risk_path = risk_log.path
+                if self.shelves is not None and self.registry is not None:
+                    self.shelves.resolve(source.width, source.height, effective_fps)
+                    shelf_log = ObservationLog(out_dir / cfg.output.shelf_name)
+                    print("선반: " + ", ".join(
+                        f"{name} {tuple(int(v) for v in box)}" for name, box in self.shelves.boxes))
 
                 if self.zone_map:
                     self.zone_map.resolve(source.width, source.height)
@@ -205,16 +228,32 @@ class TrackingPipeline:
                                 if takes_log is not None:
                                     takes_log.write_many(done)
 
+                        # 선반 지도: 손님이 다녀간 선반에서 몇 개가 비었/다시 찼는지
+                        visits = []
+                        if self.shelves is not None:
+                            visits, changes = self.shelves.update(frame, identities, self.registry.resolve)
+                            stats.shelf_visits.extend(visits)
+                            if shelf_log is not None:
+                                shelf_log.write_many(visits)
+                            for visit, change in zip(visits, changes):
+                                if visit.removed or visit.added:
+                                    print(f"  [선반] {change.start_ms / 1000:6.1f}s ~ {change.end_ms / 1000:6.1f}s  "
+                                          f"{visit.detail}")
+
                         # 손님 상태 · 결제 · 출구 판정
                         if self.risk is not None:
                             events, records = self.risk.update(
-                                frame, identities, done, self.registry.merges
+                                frame, identities, done, self.registry.merges, visits
                             )
                             if risk_log is not None:
                                 risk_log.write_many(events)
                                 payments_log.write_many(records)
+                            if self.alert_sink is not None:
+                                self._remember(frame)
                             for event in events:
                                 self._report(event, frame, out_dir, alert_until)
+                                if self.alert_sink is not None:
+                                    self._send_alert(event, frame)
                         last_pts_ms = frame.pts_ms
 
                     if writer is not None or cfg.output.show_window or on_frame is not None:
@@ -230,6 +269,11 @@ class TrackingPipeline:
                         base = frame.image
                         if self.zone_map and cfg.output.draw_zones:
                             base = draw_zones(base, self.zone_map)
+                        if self.shelves is not None and cfg.output.draw_zones:
+                            base = base.copy() if base is frame.image else base
+                            for name, (x1, y1, x2, y2) in self.shelves.boxes:
+                                cv2.rectangle(base, (int(x1), int(y1)), (int(x2), int(y2)), (255, 200, 0), 1)
+                                cv2.putText(base, name, (int(x1) + 4, int(y1) + 16), 0, 0.5, (255, 200, 0), 1)
                         canvas = overlay.draw(base, drawable, header)
                         if alert_until and self.risk is not None:
                             canvas = draw_alerts(canvas, self._live_alerts(drawable, frame, alert_until))
@@ -264,6 +308,10 @@ class TrackingPipeline:
             if risk_log is not None:
                 risk_log.close()
                 payments_log.close()
+            if self.alert_sink is not None:
+                stats.alert_summary = self.alert_sink.close()
+            if shelf_log is not None:
+                shelf_log.close()
             if identity_log is not None:
                 identity_log.close()
                 if self.registry.merges:
@@ -296,6 +344,32 @@ class TrackingPipeline:
         path = out_dir / self.config.output.alerts_dir / f"{frame.index:06d}_p{event.person_id}.jpg"
         path.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(path), image)
+
+    def _remember(self, frame) -> None:
+        """경보 사진용으로 최근 장면을 줄여 보관한다."""
+        if frame.image is None:
+            return
+        acfg = self.config.alerts
+        h, w = frame.image.shape[:2]
+        scale = min(1.0, acfg.snapshot_max_side / float(max(h, w)))
+        small = frame.image if scale >= 1.0 else cv2.resize(frame.image, (int(w * scale), int(h * scale)))
+        self._recent.append((frame.pts_ms, small.copy() if small is frame.image else small, scale))
+        limit = acfg.snapshot_seconds * 1000.0
+        while self._recent and frame.pts_ms - self._recent[0][0] > limit:
+            self._recent.popleft()
+
+    def _send_alert(self, event, frame) -> None:
+        """경보 서버로 보낸다. 사진은 그 손님이 마지막으로 보인 장면 (사라진 뒤 확정된 경보 대비)."""
+        customer = self.risk.book.customers.get(event.person_id) if self.risk is not None else None
+        target = customer.last_seen_ms if customer is not None else frame.pts_ms
+        best = None
+        for pts, image, scale in self._recent:
+            if pts <= target + 1e-6:
+                best = (image, scale)
+        if best is None and self._recent:
+            best = self._recent[0][1:]
+        image, scale = best if best is not None else (frame.image, 1.0)
+        self.alert_sink.send(event, image, scale)
 
     def _live_alerts(self, identities, frame, alert_until: dict) -> list:
         """판정 뒤 몇 초간, 지금 위치의 그 손님에게 빨간 박스를 띄운다."""

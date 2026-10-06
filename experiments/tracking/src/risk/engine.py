@@ -4,6 +4,7 @@
 
     1. 신원 합침 반영       계층 2 가 두 신원을 합쳤으면 장부도 합친다
     2. TAKE 후보 반영       계층 3 이 끝낸 후보를 해당 손님의 '집은 것'에 더한다
+       선반 방문 반영       선반 지도가 확인한 '비었다/다시 찼다/그대로'를 손님에게 붙인다 (customers.py)
     3. 위치·구역 갱신       누가 계산대에, 누가 출구에 서 있는가
     4. 결제 반영           지금까지 도착한 결제를 계산대의 손님에게 연결한다
     5. 출구에 다가섬        출구에 0.5초 이상 들어섰고, 이대로 나가면 HIGH_RISK 인 손님 -> WARNING
@@ -12,12 +13,14 @@
                            (b) 출구·문 밖 구역에 있다가(또는 그곳을 떠난 지 2초 안에) 사라져 3초간 안 나타남
                                — 문 밖이 안 보이는 매장, 화면 가장자리 출구용
 
-| 집기 행동 | 결제 | 최종 판정 |
+| 가져간 물건 | 결제 | 최종 판정 |
 |---|---|---|
 | 0 | - | CLEAR |
 | 1 이상 | 0 | **HIGH_RISK** (단, 신원 뒤바뀜이 의심되면 REVIEW) |
-| 1 이상 | 행동 수보다 적음 | REVIEW |
-| 1 이상 | 행동 수 이상 | CLEAR |
+| 1 이상 | 물건 수보다 적음 | REVIEW |
+| 1 이상 | 물건 수 이상 | CLEAR |
+
+'가져간 물건'은 선반 확인 개수 + 선반 기록이 없는 집기 동작 수다(선반 지도가 꺼져 있으면 집기 동작 수).
 
 ## 경보를 두 단계로 나눈 이유 (UCF-Crime Shoplifting047)
 
@@ -52,7 +55,7 @@ from typing import Callable
 from ..core.config import RiskConfig
 from ..core.types import Frame, IdentityObservation, RiskEvent, RiskLevel, TakeCandidate
 from ..zones.zone_map import ZoneMap
-from .customers import Customer, CustomerBook
+from .customers import Customer, CustomerBook, ShelfVisit
 from .payments import PaymentFeed, PaymentRecord
 
 
@@ -85,6 +88,7 @@ class RiskEngine:
         identities: list[IdentityObservation],
         takes: list[TakeCandidate] = (),
         merges: list[dict] = (),
+        shelf_visits: list[ShelfVisit] = (),
     ) -> tuple[list[RiskEvent], list[PaymentRecord]]:
         """이번 프레임에 나온 판정과 결제 연결 결과.
 
@@ -98,6 +102,8 @@ class RiskEngine:
 
         for c in takes:
             self.book.add_take(c, now)
+        for v in shelf_visits:
+            self.book.add_shelf_visit(v, now)
 
         visible = self.book.observe(now, identities)
         self.retracted += [(pid, frame.index) for pid in self.book.reappeared]
@@ -198,18 +204,35 @@ class RiskEngine:
     @staticmethod
     def _judge(customer: Customer, frame: Frame, how: str = "") -> RiskEvent:
         unpaid = customer.unpaid
-        if unpaid > 0 and customer.paid_items == 0:
-            level = RiskLevel.HIGH_RISK
-            reason = f"집기 행동 {customer.taken}번, 결제 없음"
-        elif unpaid > 0:
-            level = RiskLevel.REVIEW
-            reason = f"결제가 집기 행동보다 적음 (집음 {customer.taken} / 결제 {customer.paid_items}) — 확인 필요"
+        detail = customer.count_detail()
+        if not detail:
+            # 선반 지도가 없으면 지금까지처럼 집기 행동 수로 말한다.
+            if unpaid > 0 and customer.paid_items == 0:
+                level = RiskLevel.HIGH_RISK
+                reason = f"집기 행동 {customer.taken}번, 결제 없음"
+            elif unpaid > 0:
+                level = RiskLevel.REVIEW
+                reason = f"결제가 집기 행동보다 적음 (집음 {customer.taken} / 결제 {customer.paid_items}) — 확인 필요"
+            else:
+                level = RiskLevel.CLEAR
+                reason = (
+                    "집은 물건 없음" if customer.taken == 0
+                    else f"모두 결제함 (집음 {customer.taken} / 결제 {customer.paid_items})"
+                )
         else:
-            level = RiskLevel.CLEAR
-            reason = (
-                "집은 물건 없음" if customer.taken == 0
-                else f"모두 결제함 (집음 {customer.taken} / 결제 {customer.paid_items})"
-            )
+            if unpaid > 0 and customer.paid_items == 0:
+                level = RiskLevel.HIGH_RISK
+                reason = f"물건 {customer.taken}개, 결제 없음"
+            elif unpaid > 0:
+                level = RiskLevel.REVIEW
+                reason = f"결제가 물건보다 적음 (물건 {customer.taken} / 결제 {customer.paid_items}) — 확인 필요"
+            else:
+                level = RiskLevel.CLEAR
+                reason = (
+                    "가져간 물건 없음" if customer.taken == 0
+                    else f"모두 결제함 (물건 {customer.taken} / 결제 {customer.paid_items})"
+                )
+            reason += f" [{detail}]"
         if how:
             reason += f" — {how}"
         return RiskEvent(
@@ -238,6 +261,13 @@ class RiskEngine:
         )
         if self.retracted:
             lines.append(f"  └ '나감' 확정 뒤 다시 나타남: {len(self.retracted)}건 (이른 판정, 되돌림)")
+        visits = [v for c in self.book.customers.values() for v in c.shelf_visits]
+        if visits or self.book.shelf_unassigned:
+            changed = sum(1 for v in visits if v.removed or v.added)
+            lines.append(
+                f"선반 확인       : 손님에게 연결한 변화 {changed}건, 구경만 {len(visits) - changed}건"
+                + (f", 누구 것인지 못 정한 변화 {self.book.shelf_unassigned}건" if self.book.shelf_unassigned else "")
+            )
         unmatched = sum(1 for p in self.book.payments if p.person_id is None)
         if self.book.payments:
             lines.append(f"결제            : {len(self.book.payments)}건 (손님 연결 실패 {unmatched}건)")

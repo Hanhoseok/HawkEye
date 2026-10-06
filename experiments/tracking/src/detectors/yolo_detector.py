@@ -70,6 +70,23 @@ class YoloDetector:
         ]
 
 
+def build_item_detector(model_path: str, imgsz: int, conf: float, device: str,
+                        ignore: list[str]) -> YoloDetector:
+    """선반 물건 탐지기 — 같은 YOLO 의 사람·가구를 뺀 나머지 종류를 큰 해상도로 찾는다 (src/shelf).
+
+    겹침 제거(NMS) 기준은 ultralytics 기본값 0.7 — 1단계 시연(shelf_demo.py)과 같게. 사람용 0.45 로 하면
+    붙어 있는 병들이 하나로 합쳐질 수 있다.
+
+    찾을 종류를 매 호출 명시한다(YoloDetector.detect). ultralytics 는 앞 호출의 classes 설정을 다음 호출에
+    남기므로, 사람 탐지와 모델을 나눠 쓰더라도 명시해 두는 편이 안전하다.
+    """
+    detector = YoloDetector(DetectorConfig(model_path=model_path, imgsz=imgsz, conf_threshold=conf,
+                                           iou_threshold=0.7, device=device, classes=None))
+    skip = {name.lower() for name in ignore}
+    detector.class_ids = [i for i, name in detector.names.items() if name.lower() not in skip]
+    return detector
+
+
 def build_detector(config: DetectorConfig):
     """config.detector.name 으로 detector 를 고른다. 교체 지점은 여기 한 곳뿐이다."""
     if config.name == "yolo":

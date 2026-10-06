@@ -13,16 +13,56 @@
 
 신원이 나중에 합쳐지면(계층 2 의 late merge) 두 손님의 기록도 하나로 합친다.
 합쳐지기 전 번호로 뒤늦게 도착하는 TAKE 후보도 합쳐진 손님에게 간다.
+
+## 선반 확인 (docs/shelf-map.md §손님 기록 연결)
+
+선반 지도를 켜면, 손님이 지켜보는 선반에 다녀간 기록(ShelfVisit)이 들어온다.
+"그 사이 자리 2개가 비었다" / "1개가 다시 찼다" / "아무것도 안 바뀌었다(구경)".
+**같은 시간의 집기 동작은 선반 기록으로 대신한다** — 동작은 '집었을 것 같다', 선반은 '실제로 줄었다'이므로.
+
+    손님 3: 집기 동작 1번(10~14초), 선반 방문 10~15초 '자리 2개 비었음'  -> 물건 2개 (한 번에 두 개)
+    손님 4: 집기 동작 1번(20~25초), 선반 방문 20~26초 '변화 없음'        -> 물건 0개 (구경만 함)
+    손님 5: 집기 동작 1번(지켜보지 않는 선반), 선반 방문 '1개 다시 참'     -> 물건 0개 (다른 데서 집어 놓고 감)
+
+선반 앞에 두 사람이 함께 있었거나 사람이 안 보인 변화는 누구 것인지 몰라 손님에게 붙이지 않는다.
+그때는 지금처럼 집기 동작 수를 쓴다.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from ..core.config import RiskConfig
 from ..core.types import BBox, IdentityObservation, TakeCandidate, ZoneType
 from ..zones.zone_map import ZoneMap
 from .payments import PaymentEvent, PaymentRecord
+
+
+@dataclass(frozen=True)
+class ShelfVisit:
+    """손님 한 명이 지켜보는 선반에 다녀간 결과. 선반 지도(src/shelf)가 만들고 여기서는 개수만 쓴다."""
+
+    person_id: int
+    shelf: str
+    start_frame: int
+    end_frame: int
+    removed: int
+    """그 사이 비게 된 자리 수 (가져감)."""
+    added: int
+    """그 사이 다시 찬 자리 수 (되돌려놓음)."""
+    zone: str | None = None
+    """이 선반에 해당하는 SHELF 구역 이름. 주면 그 구역의 집기 동작만 대신한다."""
+    detail: str = ""
+    """사람이 읽는 설명 (예: '사라짐: 1단 2번째 bottle')."""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def covers(self, take: TakeCandidate) -> bool:
+        """이 방문이 그 집기 동작을 대신하는가 — 같은 시간, 같은 선반."""
+        if self.zone is not None and take.zone != self.zone:
+            return False
+        return take.start_frame <= self.end_frame and take.end_frame >= self.start_frame
 
 
 @dataclass
@@ -31,6 +71,7 @@ class Customer:
     first_seen_ms: float
     last_seen_ms: float
     takes: list[TakeCandidate] = field(default_factory=list)
+    shelf_visits: list[ShelfVisit] = field(default_factory=list)
     paid_items: int = 0
 
     # 계산대 구역
@@ -65,17 +106,52 @@ class Customer:
 
     last_bbox: BBox | None = None
 
-    @property
-    def taken(self) -> int:
+    @staticmethod
+    def _acts(takes: list[TakeCandidate]) -> int:
         """집기 행동 수. 시간이 겹치는 TAKE 후보는 하나로 묶는다."""
         acts, current_end = 0, None
-        for c in sorted(self.takes, key=lambda c: c.start_frame):
+        for c in sorted(takes, key=lambda c: c.start_frame):
             if current_end is None or c.start_frame > current_end:
                 acts += 1
                 current_end = c.end_frame
             else:
                 current_end = max(current_end, c.end_frame)
         return acts
+
+    @property
+    def uncovered_takes(self) -> list[TakeCandidate]:
+        """선반 기록이 대신하지 않은 집기 동작 (지켜보지 않는 선반, 또는 선반 기록이 없는 시간)."""
+        return [t for t in self.takes if not any(v.covers(t) for v in self.shelf_visits)]
+
+    @property
+    def shelf_net(self) -> int:
+        """선반에서 확인한 순 개수 (가져감 - 되돌려놓음)."""
+        return sum(v.removed - v.added for v in self.shelf_visits)
+
+    @property
+    def taken(self) -> int:
+        """가져간 물건 수(추정) = 선반에서 확인한 개수 + 선반 기록이 없는 집기 동작 수.
+
+        선반 지도가 꺼져 있으면 집기 동작 수 그대로다.
+        """
+        return max(0, self._acts(self.uncovered_takes) + self.shelf_net)
+
+    def count_detail(self) -> str:
+        """물건 수의 근거 (판정 문구용). 선반 기록이 없으면 빈 문자열."""
+        if not self.shelf_visits:
+            return ""
+        removed = sum(v.removed for v in self.shelf_visits)
+        added = sum(v.added for v in self.shelf_visits)
+        parts = [f"선반 확인 {removed}개 가져감"]
+        if added:
+            parts.append(f"{added}개 되돌려놓음")
+        browse = sum(1 for v in self.shelf_visits if not v.removed and not v.added)
+        if browse:
+            parts.append(f"구경만 {browse}번")
+        acts = self._acts(self.uncovered_takes)
+        if acts:
+            parts.append(f"선반 밖 집기 동작 {acts}번")
+        return ", ".join(parts)
 
     @property
     def unpaid(self) -> int:
@@ -96,6 +172,8 @@ class CustomerBook:
         self.customers: dict[int, Customer] = {}
         self._alias: dict[int, int] = {}
         self.payments: list[PaymentRecord] = []
+        self.shelf_unassigned: int = 0
+        """누구 것인지 정하지 못한 선반 변화 수 (두 사람이 함께 있었거나 사람이 안 보임)."""
 
     # ------------------------------------------------------------------ 신원
 
@@ -125,6 +203,7 @@ class CustomerBook:
             self.customers[dst_id] = src
             return
         dst.takes = sorted(dst.takes + src.takes, key=lambda c: c.start_frame)
+        dst.shelf_visits = sorted(dst.shelf_visits + src.shelf_visits, key=lambda v: v.start_frame)
         dst.paid_items += src.paid_items
         dst.first_seen_ms = min(dst.first_seen_ms, src.first_seen_ms)
         if src.last_seen_ms >= dst.last_seen_ms:
@@ -146,6 +225,16 @@ class CustomerBook:
     def add_take(self, candidate: TakeCandidate, now_ms: float) -> Customer:
         customer = self._get(candidate.person_id, now_ms)
         customer.takes.append(candidate)
+        return customer
+
+    def add_shelf_visit(self, visit: ShelfVisit, now_ms: float) -> Customer | None:
+        """선반 방문 결과를 그 손님에게 붙인다. 누구 것인지 모르는(번호 0 이하) 변화는 세기만 한다."""
+        if visit.person_id <= 0:
+            if visit.removed or visit.added:
+                self.shelf_unassigned += 1
+            return None
+        customer = self._get(visit.person_id, now_ms)
+        customer.shelf_visits.append(visit)
         return customer
 
     def observe(self, now_ms: float, identities: list[IdentityObservation]) -> list[Customer]:
