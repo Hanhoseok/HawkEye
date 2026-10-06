@@ -209,6 +209,7 @@ outputs/                   결과물 (git 제외)
 |---|---|
 | **`docs/진행경과-정리.md`** | **팀원 공유용 전체 정리.** 왜 ByteTrack에서 BoT-SORT로 갔는지, 수치 포함 |
 | **`docs/limitations.md`** | **한계 총정리 — 부딪힌 한계·실패와 현재 상태. 해결돼도 지우지 않는다** |
+| **`docs/validation-set.md`** | **검증 영상 세트 — 기능별 고르는 기준, 가진 영상 149편 분류, 촬영할 선반 장면** |
 | `docs/phase3-failure-notes.md` | tracker 실패 실험 원본 기록 |
 | `docs/tracker-comparison.md` | ByteTrack vs BoT-SORT 9회 실험 비교 |
 | `docs/phase5-take-return-survey.md` | TAKE/RETURN 후보 사전조사 |
@@ -287,5 +288,6 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 | 2026-10-06 | 위험 판정을 app-pos 경보 서버·대시보드로 전송 (장면 사진 포함) | UCF-Crime 039 전체 파이프라인: 판정 6건 전송, 도둑만 HIGH_RISK 사건·나머지 통과로 대시보드에 표시 | `docs/risk-pipeline.md` §6-B |
 | 2026-10-06 | 선반 확인 개수를 손님 기록에 연결 — '몇 번 집었나' 대신 '몇 개 가져갔나' | Pexels 2편 전체 파이프라인: 가져간 병을 손님 1 에게 1개로 붙임, 들었다 놓은 통은 안 셈. CPU 13.8 → 4.8 FPS | `docs/shelf-map.md` 손님 기록 연결 |
 | 2026-10-06 | 한계 총정리 문서 — 문서 13개의 한계·실패 기록을 모아 상태로 관리 (해결돼도 지우지 않음) | 항목 69개, 시도했지만 접은 방법 10개 | `docs/limitations.md` |
+| 2026-10-06 | 검증 영상 선정 — 사람 추적 / 집기 / 선반 물건 개수별 기준을 정하고 가진 영상 149편을 자동 거름망 + 눈으로 분류 | 개수 세기 검증 가능한 영상은 Pexels 같은 촬영본 3편뿐(새로 추가한 10566653 도 정답 일치). 실제 CCTV(UCF·MERL)는 일반 YOLO 로 상품을 하나씩 못 잡음 → 촬영 장면 10개 제안 | `docs/validation-set.md` |
 
 **다음에 확인할 것**: 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
