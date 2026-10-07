@@ -105,6 +105,7 @@ class TrackingPipeline:
         risk=None,
         alert_sink=None,
         shelves=None,
+        panel=None,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -115,6 +116,8 @@ class TrackingPipeline:
         self.risk = risk
         self.alert_sink = alert_sink
         self.shelves = shelves
+        self.panel = panel
+        """실시간 상황판 (src/viz/live_panel.py). 있으면 영상 옆에 손님별 상태와 최근 사건을 붙인다."""
         """선반 지켜보기 (src/shelf/watcher.py). 손님이 다녀간 선반에서 물건이 몇 개 줄었는지 센다."""
         self._recent: deque = deque()
         """(재생 시각 ms, 줄인 장면, 줄인 비율) — 경보 사진용 최근 장면."""
@@ -254,6 +257,14 @@ class TrackingPipeline:
                             for action in self.risk.new_actions:
                                 if action.kind != "LOOK":
                                     print(f"  [행동] {frame.pts_ms / 1000:6.1f}s  {action.describe()}")
+                                    if self.panel is not None:
+                                        self.panel.note(frame.pts_ms / 1000, f"손님 {action.person_id} {action.name}"
+                                                        + (f" {abs(action.count)}개" if action.count else ""), (150, 220, 255))
+                            if self.panel is not None:
+                                self.panel.add_events(events)
+                                for r in records:
+                                    who = f"손님 {r.person_id}" if r.person_id is not None else "손님 못 찾음"
+                                    self.panel.note(frame.pts_ms / 1000, f"결제 {r.items}개 -> {who}", (200, 200, 255))
                             if self.alert_sink is not None:
                                 self._remember(frame)
                             for event in events:
@@ -283,6 +294,8 @@ class TrackingPipeline:
                         canvas = overlay.draw(base, drawable, header)
                         if alert_until and self.risk is not None:
                             canvas = draw_alerts(canvas, self._live_alerts(drawable, frame, alert_until))
+                        if self.panel is not None:
+                            canvas = self.panel.render(canvas, frame, self.risk)
                         if writer is not None:
                             writer.write(canvas)
                         if cfg.output.show_window:

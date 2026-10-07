@@ -22,6 +22,7 @@ from src.risk.engine import RiskEngine
 from src.risk.payments import PaymentFeed
 from src.shelf.watcher import ShelfWatcher, parse_area
 from src.sinks.alert_sink import AlertSink
+from src.viz.live_panel import LivePanel, parse_truth
 from src.identity.registry import IdentityRegistry
 from src.trackers import build_tracker
 from src.zones.zone_map import ZoneMap
@@ -82,7 +83,9 @@ def parse_args() -> argparse.Namespace:
         help="botsort 에서 외형 모델을 끈다. 외형의 기여를 분리 측정하는 대조 실험용",
     )
     parser.add_argument("--out-dir", help="결과 저장 폴더")
-    parser.add_argument("--show", action="store_true", help="실시간 창으로 보기")
+    parser.add_argument("--show", action="store_true", help="실시간 창으로 보기 (상황판 포함)")
+    parser.add_argument("--panel", action="store_true", help="영상 옆에 손님별 상태·최근 사건 상황판을 붙인다 (결과 영상에도)")
+    parser.add_argument("--truth", help="정답 구간(초) — 상황판에 표시. 예: '24-73;76-80'")
     parser.add_argument("--no-video", action="store_true", help="결과 영상 저장 안 함")
     parser.add_argument("--zones", help="구역 정의 파일 경로 (기본 zones.yaml)")
     parser.add_argument("--no-takes", action="store_true", help="TAKE 후보 판정(계층 3)을 끈다")
@@ -280,8 +283,12 @@ def main() -> int:
                 f"({scfg.model_path}, 해상도 {scfg.imgsz}, 관찰 {scfg.stable_seconds:g}초)"
             )
 
+    panel = None
+    if args.panel or args.show:
+        panel = LivePanel(Path(str(config.video.source)).name, parse_truth(args.truth))
+
     stats = TrackingPipeline(
-        config, detector, tracker, registry, zone_map, interactions, risk, alert_sink, shelves
+        config, detector, tracker, registry, zone_map, interactions, risk, alert_sink, shelves, panel
     ).run()
     print(stats.summary())
 
