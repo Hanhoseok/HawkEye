@@ -30,7 +30,7 @@ app-pos/
 ```bash
 cd experiments/app-pos/server
 python -m venv .venv
-.venv\Scriptsctivate                 # Windows
+.venv\Scripts\activate                 # Windows
 pip install -r requirements.txt
 python -m pytest -q                     # 테스트
 python -m hawkeye_server --host 0.0.0.0 --port 8000
@@ -102,20 +102,19 @@ adb install -r admin/build/outputs/apk/debug/admin-debug.apk
 모든 구성 요소가 이 PC 안(127.0.0.1)에서만 통신한다. 방화벽 설정이 필요 없다.
 
 ```powershell
-# 1) 중계기 — 카메라 (또는 카메라가 없으면 .un-replay.ps1 로 시험 화면)
-cd experimentspp-poselay
+# 1) 중계기 — 카메라 (또는 카메라가 없으면 .\run-replay.ps1 로 시험 화면)
+cd experiments\app-pos\relay
 $env:MTX_RTSPADDRESS = "127.0.0.1:9554"
-$env:HAWKEYE_CAMERA_URL = "rtsp://계정:비밀번호@카메라IP:554/stream1"
-.un-camera.ps1
+.\run-camera.ps1     # 카메라 IP·RTSP 계정·비밀번호를 물어본다 (비밀번호는 화면에 안 보이고 저장 안 됨)
 
 # 2) 경보 서버 + 대시보드 (다른 터미널)
-cd experimentspp-pos\server
+cd experiments\app-pos\server
 $env:HAWKEYE_WEB_STREAMS = "cam1=http://127.0.0.1:8889/cam1"
 python -m hawkeye_server --port 8000
 #   → 브라우저에서 http://127.0.0.1:8000
 
 # 3) 경보 보내기 (다른 터미널, 시뮬레이터)
-cd experimentspp-pos\client
+cd experiments\app-pos\client
 python -m hawkeye_client.simulate --scenario all
 ```
 
