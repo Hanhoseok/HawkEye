@@ -33,7 +33,14 @@
 | 모드 | 명령 | 용도 |
 |---|---|---|
 | 녹화 | `.\run-replay.ps1` 또는 `.\run-replay.ps1 -Video <파일>` | 개발·녹화 영상 시연. 파일이 없으면 시계가 도는 시험 화면 |
-| 카메라 | `$env:HAWKEYE_CAMERA_URL="rtsp://..."; .\run-camera.ps1` | 실제 카메라 |
+| 카메라 | `.\run-camera.ps1` (저화질: `-Stream stream2`) | 실제 카메라. IP·RTSP 계정·비밀번호를 물어본다 |
+
+카메라 모드 메모:
+- 비밀번호는 입력할 때 화면에 안 보이고 어디에도 저장되지 않는다. 특수문자가 있어도 주소에 맞게 바꿔 넘긴다.
+- 다음 실행 때 Enter 만 쳐도 되도록 마지막 IP·계정만 `bin\camera.local.json` 에 기억한다 (git 제외).
+- 입력한 IP 에 닿지 않으면 다시 묻는다. 중계 중 비밀번호가 틀리거나(401) 카메라가 끊기면 로그 아래에 `>>` 로 원인을 알려 준다.
+- 자동 실행용: `$env:HAWKEYE_CAMERA_URL` 에 전체 주소가 있으면 묻지 않는다. 이 값이 남아 있는 창에서는 계속 그 주소를 쓰니, 묻게 하려면 `Remove-Item Env:HAWKEYE_CAMERA_URL`.
+- 시험: `powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-camera.tests.ps1`
 
 ## 열리는 포트
 
