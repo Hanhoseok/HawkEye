@@ -26,6 +26,22 @@
 
 선반 앞에 두 사람이 함께 있었거나 사람이 안 보인 변화는 누구 것인지 몰라 손님에게 붙이지 않는다.
 그때는 지금처럼 집기 동작 수를 쓴다.
+
+## 행동 판정 — 집음 / 놓음 / 만짐 (ShelfAction)
+
+손 뻗기(집기 동작)는 '언제 누가 선반에 손을 댔나', 선반 방문은 '그 사이 무엇이 바뀌었나'를 안다. 둘을 합쳐 행동을 정한다.
+
+| 선반 방문 결과 | 그 시간 손 뻗기 | 행동 |
+|---|---|---|
+| 자리가 비었음 | 있음/없음 | **집음** (TAKE, 비운 개수만큼) |
+| 자리가 다시 참 | 있음/없음 | **놓음** (RETURN) |
+| 비기도 하고 차기도 함 | 있음/없음 | **자리 바뀜** (MOVE, 순변화만 셈) |
+| 그대로 | 있음 | **만지기만** (TOUCH) |
+| 그대로 | 없음 | 구경 (LOOK, 개수 변화 없음) |
+| 선반 기록 없음 | 있음 | **확인 못 함** (UNVERIFIED, 지금처럼 1개로 셈) |
+
+근거(evidence)도 함께 남긴다: 선반+동작 / 선반만(손 뻗기가 안 잡힘) / 동작만(선반 기록 없음).
+한계: 한 번의 방문 안에서 들었다 놓은 것은 순변화로만 보인다(가려진 동안은 셀 수 없다).
 """
 
 from __future__ import annotations
@@ -63,6 +79,80 @@ class ShelfVisit:
         if self.zone is not None and take.zone != self.zone:
             return False
         return take.start_frame <= self.end_frame and take.end_frame >= self.start_frame
+
+
+KIND_NAMES = {
+    "TAKE": "집음", "RETURN": "놓음", "MOVE": "자리 바뀜",
+    "TOUCH": "만지기만", "LOOK": "구경", "UNVERIFIED": "확인 못 한 집기 동작",
+}
+
+
+@dataclass(frozen=True)
+class ShelfAction:
+    """손님 한 명의 행동 하나 — 집음 / 놓음 / 자리 바뀜 / 만지기만 / 구경 / 확인 못 함."""
+
+    person_id: int
+    kind: str
+    count: int
+    """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1."""
+    start_frame: int
+    end_frame: int
+    evidence: str
+    """선반+동작 / 선반만 / 동작만."""
+    shelf: str = ""
+    reach_frames: tuple[tuple[int, int], ...] = ()
+    """근거가 된 손 뻗기(TAKE 후보)들의 (시작, 끝) 프레임."""
+    detail: str = ""
+
+    @property
+    def name(self) -> str:
+        return KIND_NAMES.get(self.kind, self.kind)
+
+    def describe(self) -> str:
+        amount = f" {abs(self.count)}개" if self.kind in ("TAKE", "RETURN") else ""
+        where = f" — {self.detail}" if self.detail else ""
+        return f"손님 {self.person_id}: {self.name}{amount}{where} ({self.evidence})"
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["name"] = self.name
+        return d
+
+
+def classify_visit(visit: ShelfVisit, takes: list[TakeCandidate]) -> ShelfAction:
+    """선반 방문 하나를 행동으로. 같은 시간·같은 선반의 손 뻗기를 근거로 붙인다."""
+    covered = [t for t in takes if visit.covers(t)]
+    if visit.removed and visit.added:
+        kind = "MOVE"
+    elif visit.removed:
+        kind = "TAKE"
+    elif visit.added:
+        kind = "RETURN"
+    else:
+        kind = "TOUCH" if covered else "LOOK"
+    detail = visit.detail.split("] ", 1)[-1].split(" -> ", 1)[0] if visit.detail else ""
+    if detail == "변화 없음":
+        detail = ""
+    return ShelfAction(
+        person_id=visit.person_id, kind=kind, count=visit.removed - visit.added,
+        start_frame=visit.start_frame, end_frame=visit.end_frame,
+        evidence="선반+동작" if covered else "선반만", shelf=visit.shelf,
+        reach_frames=tuple((t.start_frame, t.end_frame) for t in covered), detail=detail,
+    )
+
+
+def _group_by_overlap(takes: list[TakeCandidate]) -> list[list[TakeCandidate]]:
+    """시간이 겹치는 TAKE 후보를 한 번의 집기 행동으로 묶는다."""
+    groups: list[list[TakeCandidate]] = []
+    current_end = None
+    for c in sorted(takes, key=lambda c: c.start_frame):
+        if current_end is None or c.start_frame > current_end:
+            groups.append([c])
+            current_end = c.end_frame
+        else:
+            groups[-1].append(c)
+            current_end = max(current_end, c.end_frame)
+    return groups
 
 
 @dataclass
@@ -109,14 +199,7 @@ class Customer:
     @staticmethod
     def _acts(takes: list[TakeCandidate]) -> int:
         """집기 행동 수. 시간이 겹치는 TAKE 후보는 하나로 묶는다."""
-        acts, current_end = 0, None
-        for c in sorted(takes, key=lambda c: c.start_frame):
-            if current_end is None or c.start_frame > current_end:
-                acts += 1
-                current_end = c.end_frame
-            else:
-                current_end = max(current_end, c.end_frame)
-        return acts
+        return len(_group_by_overlap(takes))
 
     @property
     def uncovered_takes(self) -> list[TakeCandidate]:
@@ -129,29 +212,52 @@ class Customer:
         return sum(v.removed - v.added for v in self.shelf_visits)
 
     @property
-    def taken(self) -> int:
-        """가져간 물건 수(추정) = 선반에서 확인한 개수 + 선반 기록이 없는 집기 동작 수.
+    def actions(self) -> list[ShelfAction]:
+        """이 손님의 행동 목록 (시간순). 선반 방문마다 하나 + 선반 기록이 없는 집기 행동마다 하나."""
+        acts = [classify_visit(v, self.takes) for v in self.shelf_visits]
+        for group in _group_by_overlap(self.uncovered_takes):
+            acts.append(ShelfAction(
+                person_id=self.person_id, kind="UNVERIFIED", count=1,
+                start_frame=min(t.start_frame for t in group), end_frame=max(t.end_frame for t in group),
+                evidence="동작만", shelf=group[0].zone,
+                reach_frames=tuple((t.start_frame, t.end_frame) for t in group),
+            ))
+        return sorted(acts, key=lambda a: a.start_frame)
 
+    @property
+    def taken(self) -> int:
+        """가져간 물건 수(추정) = 행동들의 개수 변화 합.
+
+        = 선반에서 확인한 개수(집음 - 놓음) + 선반 기록이 없는 집기 동작 수.
         선반 지도가 꺼져 있으면 집기 동작 수 그대로다.
         """
-        return max(0, self._acts(self.uncovered_takes) + self.shelf_net)
+        return max(0, sum(a.count for a in self.actions))
 
     def count_detail(self) -> str:
         """물건 수의 근거 (판정 문구용). 선반 기록이 없으면 빈 문자열."""
         if not self.shelf_visits:
             return ""
-        removed = sum(v.removed for v in self.shelf_visits)
-        added = sum(v.added for v in self.shelf_visits)
-        parts = [f"선반 확인 {removed}개 가져감"]
-        if added:
-            parts.append(f"{added}개 되돌려놓음")
-        browse = sum(1 for v in self.shelf_visits if not v.removed and not v.added)
-        if browse:
-            parts.append(f"구경만 {browse}번")
-        acts = self._acts(self.uncovered_takes)
-        if acts:
-            parts.append(f"선반 밖 집기 동작 {acts}번")
-        return ", ".join(parts)
+        acts = self.actions
+        parts = []
+        took = sum(a.count for a in acts if a.kind == "TAKE")
+        if took:
+            parts.append(f"집음 {took}개")
+        put = -sum(a.count for a in acts if a.kind == "RETURN")
+        if put:
+            parts.append(f"놓음 {put}개")
+        moved = [a for a in acts if a.kind == "MOVE"]
+        if moved:
+            parts.append(f"자리 바뀜 {len(moved)}번(순변화 {sum(a.count for a in moved):+d})")
+        touch = sum(1 for a in acts if a.kind == "TOUCH")
+        if touch:
+            parts.append(f"만지기만 {touch}번")
+        look = sum(1 for a in acts if a.kind == "LOOK")
+        if look:
+            parts.append(f"구경 {look}번")
+        unverified = sum(1 for a in acts if a.kind == "UNVERIFIED")
+        if unverified:
+            parts.append(f"선반으로 확인 못 한 집기 동작 {unverified}번")
+        return ", ".join(parts) or "선반 변화 없음"
 
     @property
     def unpaid(self) -> int:
@@ -174,6 +280,7 @@ class CustomerBook:
         self.payments: list[PaymentRecord] = []
         self.shelf_unassigned: int = 0
         """누구 것인지 정하지 못한 선반 변화 수 (두 사람이 함께 있었거나 사람이 안 보임)."""
+        self.unassigned_visits: list[ShelfVisit] = []
 
     # ------------------------------------------------------------------ 신원
 
@@ -232,6 +339,7 @@ class CustomerBook:
         if visit.person_id <= 0:
             if visit.removed or visit.added:
                 self.shelf_unassigned += 1
+                self.unassigned_visits.append(visit)
             return None
         customer = self._get(visit.person_id, now_ms)
         customer.shelf_visits.append(visit)

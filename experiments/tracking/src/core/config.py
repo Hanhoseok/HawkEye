@@ -379,6 +379,7 @@ class OutputConfig:
     risk_name: str = "risk_events.jsonl"
     payments_name: str = "payments.jsonl"
     shelf_name: str = "shelf_visits.jsonl"
+    actions_name: str = "actions.jsonl"
     alerts_dir: str = "alerts"
     """HIGH_RISK 순간의 장면을 이미지로 저장할 폴더 (결과 폴더 아래)."""
     show_window: bool = False

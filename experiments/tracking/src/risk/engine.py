@@ -55,7 +55,7 @@ from typing import Callable
 from ..core.config import RiskConfig
 from ..core.types import Frame, IdentityObservation, RiskEvent, RiskLevel, TakeCandidate
 from ..zones.zone_map import ZoneMap
-from .customers import Customer, CustomerBook, ShelfVisit
+from .customers import KIND_NAMES, Customer, CustomerBook, ShelfAction, ShelfVisit, classify_visit
 from .payments import PaymentFeed, PaymentRecord
 
 
@@ -78,6 +78,9 @@ class RiskEngine:
         self.book.reset()
         self.payments.reset()
         self.events: list[RiskEvent] = []
+        self.new_actions: list[ShelfAction] = []
+        """이번 프레임에 끝난 선반 방문의 행동 판정 (집음 / 놓음 / 만지기만 ...). 화면 표시용.
+        최종 목록은 손님마다 Customer.actions — 방문이 끝난 뒤 늦게 도착하는 손 뻗기까지 반영된다."""
         self.retracted: list[tuple[int, int]] = []
         """(손님, 프레임): '나갔다'고 확정했는데 다시 나타난 경우. 이른 판정이 있었다는 기록."""
         self._merges_seen = 0
@@ -102,8 +105,11 @@ class RiskEngine:
 
         for c in takes:
             self.book.add_take(c, now)
+        self.new_actions = []
         for v in shelf_visits:
-            self.book.add_shelf_visit(v, now)
+            customer = self.book.add_shelf_visit(v, now)
+            if customer is not None:
+                self.new_actions.append(classify_visit(replace(v, person_id=customer.person_id), customer.takes))
 
         visible = self.book.observe(now, identities)
         self.retracted += [(pid, frame.index) for pid in self.book.reappeared]
@@ -250,6 +256,11 @@ class RiskEngine:
             reason=reason,
         )
 
+    def all_actions(self) -> list[ShelfAction]:
+        """모든 손님의 최종 행동 목록 (영상 끝에 기록용)."""
+        return sorted((a for c in self.book.customers.values() for a in c.actions),
+                      key=lambda a: (a.start_frame, a.person_id))
+
     def summary(self) -> str:
         """영상이 끝났을 때의 장부. 출구에 가지 않은 손님도 보여준다."""
         lines = []
@@ -261,11 +272,18 @@ class RiskEngine:
         )
         if self.retracted:
             lines.append(f"  └ '나감' 확정 뒤 다시 나타남: {len(self.retracted)}건 (이른 판정, 되돌림)")
+        acts = [a for c in self.book.customers.values() for a in c.actions if a.kind != "LOOK"]
+        if any(c.shelf_visits for c in self.book.customers.values()):
+            counts = ", ".join(
+                f"{KIND_NAMES[k]} {sum(1 for a in acts if a.kind == k)}건"
+                for k in KIND_NAMES if k != "LOOK" and any(a.kind == k for a in acts)
+            )
+            lines.append(f"행동 판정       : {counts or '없음'}")
         visits = [v for c in self.book.customers.values() for v in c.shelf_visits]
         if visits or self.book.shelf_unassigned:
             changed = sum(1 for v in visits if v.removed or v.added)
             lines.append(
-                f"선반 확인       : 손님에게 연결한 변화 {changed}건, 구경만 {len(visits) - changed}건"
+                f"선반 확인       : 손님에게 연결한 변화 {changed}건, 변화 없는 방문 {len(visits) - changed}건"
                 + (f", 누구 것인지 못 정한 변화 {self.book.shelf_unassigned}건" if self.book.shelf_unassigned else "")
             )
         unmatched = sum(1 for p in self.book.payments if p.person_id is None)

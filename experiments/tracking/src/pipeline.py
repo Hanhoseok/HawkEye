@@ -46,6 +46,8 @@ class RunStats:
     alert_summary: str = ""
     risk_path: Path | None = None
     shelf_visits: list = field(default_factory=list)
+    actions: list = field(default_factory=list)
+    actions_path: Path | None = None
 
     @property
     def fps(self) -> float:
@@ -236,7 +238,8 @@ class TrackingPipeline:
                             if shelf_log is not None:
                                 shelf_log.write_many(visits)
                             for visit, change in zip(visits, changes):
-                                if visit.removed or visit.added:
+                                # 손님 장부가 있으면 아래에서 행동(집음/놓음...)으로 알린다. 주인을 못 정한 변화만 여기서.
+                                if (visit.removed or visit.added) and (self.risk is None or visit.person_id <= 0):
                                     print(f"  [선반] {change.start_ms / 1000:6.1f}s ~ {change.end_ms / 1000:6.1f}s  "
                                           f"{visit.detail}")
 
@@ -248,6 +251,9 @@ class TrackingPipeline:
                             if risk_log is not None:
                                 risk_log.write_many(events)
                                 payments_log.write_many(records)
+                            for action in self.risk.new_actions:
+                                if action.kind != "LOOK":
+                                    print(f"  [행동] {frame.pts_ms / 1000:6.1f}s  {action.describe()}")
                             if self.alert_sink is not None:
                                 self._remember(frame)
                             for event in events:
@@ -312,6 +318,12 @@ class TrackingPipeline:
                 stats.alert_summary = self.alert_sink.close()
             if shelf_log is not None:
                 shelf_log.close()
+                if self.risk is not None:
+                    # 최종 행동 목록 — 방문이 끝난 뒤 늦게 도착한 손 뻗기까지 반영한 것
+                    stats.actions = self.risk.all_actions()
+                    stats.actions_path = shelf_log.path.with_name(cfg.output.actions_name)
+                    with ObservationLog(stats.actions_path) as actions_log:
+                        actions_log.write_many(stats.actions)
             if identity_log is not None:
                 identity_log.close()
                 if self.registry.merges:
