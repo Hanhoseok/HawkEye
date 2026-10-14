@@ -129,6 +129,8 @@ class RiskEngine:
                     customer.inside_checks = customer.inside_checks[-600:]
 
         records = [self.book.pay(e, now) for e in self.payments.due(now)]
+        if self.config.payment_mode == "dwell":
+            records += self.book.dwell_payments(now, visible)
 
         events = []
 

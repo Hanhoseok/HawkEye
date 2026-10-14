@@ -211,8 +211,9 @@ def judge_clip(name: str, config: AppConfig, use_shelf: bool = True) -> dict:
     out = OUT / name
     zm = ZoneMap.load(out / "zones.yaml")
     zm.resolve(1920, 1080)
-    payments_csv = LABELS / f"payments_{name}.csv"
-    feed = PaymentFeed.load(str(payments_csv)) if payments_csv.exists() else PaymentFeed.empty()
+    # 결제 기록이 없는 매장: 계산대에 서 있으면 결제, 다시 상품 쪽으로 가면 취소 (사용자 확인 규칙)
+    config.risk.payment_mode = "dwell"
+    feed = PaymentFeed.empty()
     engine = RiskEngine(config.risk, zm, feed)
     engine.reset()
     merges = [json.loads(l) for l in (out / "identity_merges.jsonl").read_text(encoding="utf-8").splitlines()] \
@@ -247,7 +248,8 @@ def judge_clip(name: str, config: AppConfig, use_shelf: bool = True) -> dict:
     correct = hit if expected_theft else not hit
     return {"clip": name, "kind": kind(name), "verdicts": levels, "correct": correct,
             "review": levels.count("REVIEW"), "reasons": [f"P{e.person_id} {e.level.value}: {e.reason}" for e in finals],
-            "payments": len(feed)}
+            "payments": sum(1 for p in engine.book.payments if p.method == "dwell"),
+            "cancels": sum(1 for p in engine.book.payments if p.method == "cancel")}
 
 
 def judge(pattern: str | None, label: str = "", use_shelf: bool = True) -> list[dict]:
@@ -260,7 +262,8 @@ def judge(pattern: str | None, label: str = "", use_shelf: bool = True) -> list[
             print(f"{label}{k}: {ok}/{len(part)} 정답" + (f", REVIEW {sum(r['review'] for r in part)}건" if k != "절도" else ""))
     for r in rows:
         mark = "OK " if r["correct"] else "XX "
-        print(f"  {mark}{r['clip']:10s} {','.join(r['verdicts']) or '(판정 없음)'}  결제 {r['payments']}건")
+        print(f"  {mark}{r['clip']:10s} {','.join(r['verdicts']) or '(판정 없음)'}  계산대 결제 {r['payments']}건"
+              + (f", 취소 {r['cancels']}건" if r.get("cancels") else ""))
         if not r["correct"] or r["review"]:
             for reason in r["reasons"]:
                 print(f"        {reason}")

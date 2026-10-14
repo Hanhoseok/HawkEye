@@ -98,6 +98,8 @@ def parse_args() -> argparse.Namespace:
         help="지켜볼 선반 영역 [이름=]x1,y1,x2,y2[@SHELF구역] (화면 비율 0~1, 여러 번 가능). "
              "주면 선반에서 물건이 몇 개 줄었는지 세어 손님 기록에 붙인다",
     )
+    parser.add_argument("--pay-by-dwell", action="store_true",
+                        help="결제 기록 없이 '계산대에 서 있으면 결제, 다시 상품 쪽으로 가면 취소'로 본다")
     parser.add_argument("--shelf-log", action="store_true",
                         help="물건 탐지 결과를 shelf_items.jsonl 로 남긴다 (가리지 않은 장면은 모두 탐지 — 평가용)")
     parser.add_argument("--dwell", type=float, help="선반 앞 체류 시간 기준(초)")
@@ -178,6 +180,8 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.risk.payments = args.payments
     if args.shelf:
         config.shelves.areas = [parse_area(text, i) for i, text in enumerate(args.shelf)]
+    if args.pay_by_dwell:
+        config.risk.payment_mode = "dwell"
     if args.shelf_log:
         config.shelves.log_items = True
         config.shelves.idle_every = 1   # 기록이 빠짐없게 (가린 장면은 어차피 안 찾는다)

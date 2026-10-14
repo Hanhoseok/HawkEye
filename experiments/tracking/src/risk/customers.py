@@ -191,6 +191,10 @@ class Customer:
     같은 사람인데도 값이 0.87 -> 0.68 로 꾸준히 떨어졌다. 조명 변화는 문에 다가가는 몇 초 동안의
     일시적 하락이고, 번호 뒤바뀜은 그 뒤로 계속 낮다. 그래서 최근 몇 초 중 최고값으로 판단한다.
     """
+    dwell_paid_items: int = 0
+    """payment_mode="dwell": 계산대 체류로 결제한 물건 수 (취소되면 0). paid_items 에 포함돼 있다."""
+    at_shelf_overlap: float = 0.0
+    """지금 SHELF 구역과 몸이 겹친 비율 (가장 큰 값)."""
     seen_inside: bool = False
     """매장 안(문 밖 구역이 아닌 곳)에서 보인 적이 있는가. 문 밖 행인은 판정하지 않는다."""
 
@@ -312,6 +316,7 @@ class CustomerBook:
         dst.takes = sorted(dst.takes + src.takes, key=lambda c: c.start_frame)
         dst.shelf_visits = sorted(dst.shelf_visits + src.shelf_visits, key=lambda v: v.start_frame)
         dst.paid_items += src.paid_items
+        dst.dwell_paid_items += src.dwell_paid_items
         dst.first_seen_ms = min(dst.first_seen_ms, src.first_seen_ms)
         if src.last_seen_ms >= dst.last_seen_ms:
             # 지금 보이는 쪽은 합쳐지기 전 번호(src)다. 위치·구역 상태는 그쪽을 따른다.
@@ -374,6 +379,7 @@ class CustomerBook:
                 customer.outside_since_ms = None
                 customer.seen_inside = True
             in_checkout = any(h.zone_type == ZoneType.CHECKOUT and h.contains_foot for h in hits)
+            customer.at_shelf_overlap = max((h.overlap for h in hits if h.zone_type == ZoneType.SHELF), default=0.0)
             exit_hit = next((h for h in hits if h.zone_type == ZoneType.EXIT and h.contains_foot), None)
 
             if in_checkout:
@@ -398,6 +404,27 @@ class CustomerBook:
                 customer.exit_since_ms = None
             seen[customer.person_id] = customer
         return list(seen.values())
+
+    def dwell_payments(self, now_ms: float, visible: list[Customer]) -> list[PaymentRecord]:
+        """payment_mode="dwell": 계산대에 서 있으면 결제, 결제 뒤 상품 쪽으로 가면 취소."""
+        pay_ms = self.config.dwell_pay_seconds * 1000.0
+        records = []
+        for c in visible:
+            if c.checkout_since_ms is not None and now_ms - c.checkout_since_ms >= pay_ms:
+                # 서 있는 동안 늘어난 것(늦게 확정된 선반 기록 등)까지 결제에 포함한다
+                owed = max(0, c.taken - (c.paid_items - c.dwell_paid_items))
+                if owed > c.dwell_paid_items:
+                    first = c.dwell_paid_items == 0
+                    c.paid_items += owed - c.dwell_paid_items
+                    c.dwell_paid_items = owed
+                    if first:
+                        records.append(PaymentRecord(round(now_ms / 1000.0, 3), owed, c.person_id, "dwell", 1))
+            elif c.dwell_paid_items and c.at_shelf_overlap >= self.config.cancel_shelf_overlap:
+                records.append(PaymentRecord(round(now_ms / 1000.0, 3), -c.dwell_paid_items, c.person_id, "cancel", 1))
+                c.paid_items -= c.dwell_paid_items
+                c.dwell_paid_items = 0
+        self.payments.extend(records)
+        return records
 
     def pay(self, event: PaymentEvent, now_ms: float) -> PaymentRecord:
         """결제 한 건을 손님에게 연결한다."""

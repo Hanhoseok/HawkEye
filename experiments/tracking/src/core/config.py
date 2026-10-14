@@ -300,6 +300,19 @@ class RiskConfig:
     대가: 나가기 직전 이 시간 안에 뒤바뀐 경우는 잡지 못한다.
     """
 
+    payment_mode: str = "feed"
+    """결제를 어떻게 아나.
+    - "feed":  결제 기록(CSV, POS)을 받아 계산대에 있던 손님에게 붙인다.
+    - "dwell": 결제 기록이 없는 매장 — **계산대에 dwell_pay_seconds 이상 서 있으면 그때까지 가진 것을 모두 결제한 것**으로 본다.
+               결제 뒤 다시 상품 쪽(SHELF 구역)으로 가면 **취소**로 보고, 다음 계산대 체류에서 다시 결제한다.
+               (직접 찍은 매장 영상의 규칙, 2026-10-14 사용자 확인)"""
+
+    dwell_pay_seconds: float = 1.5
+    """payment_mode="dwell": 계산대 구역에 이만큼 연속으로 있으면 결제. 정상 영상의 계산대 체류는 2.4~9초였다."""
+
+    cancel_shelf_overlap: float = 0.5
+    """payment_mode="dwell": 결제 뒤 몸이 SHELF 구역과 이 비율 이상 겹치면 '상품 쪽으로 돌아감' = 결제 취소."""
+
     checkout_grace_seconds: float = 3.0
     """결제 순간 계산대 구역에 없더라도, 이 시간 안에 있었던 손님이면 결제자로 본다.
 
