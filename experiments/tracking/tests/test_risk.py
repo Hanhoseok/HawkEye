@@ -405,3 +405,14 @@ def test_video_end_ignores_vanishing_away_from_exit():
     eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
     nobody(eng, 1.1, 2.0)
     assert eng.finish(at(3.5)) == []
+
+
+
+def test_video_end_judges_customer_half_out_at_exit_edge():
+    """마지막 장면에 출구 구역에서 화면 끝에 반쯤 걸쳐 있으면 나가는 중으로 본다 (정상 영상 N05·N06)."""
+    eng = engine()
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    for i in range(10):
+        eng.update(at(5.0 + i * 0.1), [person(1, EXIT, x=360.0)])   # 상자 x 360~410: 화면(400) 오른쪽 끝에 걸침
+    final = eng.finish(at(5.95), frame_size=(400, 400))
+    assert levels(final) == [H]

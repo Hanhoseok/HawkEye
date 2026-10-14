@@ -174,12 +174,15 @@ class RiskEngine:
         self.events.extend(events)
         return events, records
 
-    def finish(self, frame: Frame) -> list[RiskEvent]:
+    def finish(self, frame: Frame, frame_size: tuple[int, int] | None = None) -> list[RiskEvent]:
         """영상이 끝났다 — 출구 쪽에서 사라졌지만 확정 시간(exit_confirm_seconds)을 다 못 채운 손님을 나간 것으로 확정한다.
 
         녹화 파일은 끝나면 더 이상 아무도 돌아올 수 없다. 직접 찍은 짧은 영상(source/N01 등)은 손님이 나가고
         1초 남짓 뒤에 끝나서, 3초 기다리는 규칙(6-b)으로는 판정이 하나도 나오지 않았다.
-        마지막 장면에도 보이는 손님(아직 출구에 서 있음)과 출구가 아닌 곳에서 사라진 손님은 판정하지 않는다.
+        출구가 아닌 곳에서 사라진 손님은 판정하지 않는다.
+        마지막 장면에도 보이는 손님은 **출구 구역에서 화면 끝에 걸쳐 있을 때만** 나가는 중으로 본다(frame_size 필요) —
+        정상 영상 N05·N06 이 손님이 화면 오른쪽 끝에 반쯤 걸린 채 끝나서(마지막 관측이 끝나기 0.03~0.17초 전) 판정이 없었다.
+        출구 구역 안이라도 화면 가운데 서 있으면 아직 안 나간 것이다.
         실시간 카메라에는 '끝'이 없으므로 쓰이지 않는다.
         """
         near_ms = self.config.exit_rearm_seconds * 1000.0
@@ -190,11 +193,20 @@ class RiskEngine:
             if customer.last_seen_ms - customer.last_exit_ms > near_ms:
                 continue  # 출구 근처가 아닌 곳에서 사라졌다
             if frame.pts_ms - customer.last_seen_ms < 300.0:
-                continue  # 마지막 장면에도 보인다 — 아직 안 나갔다
+                # 마지막 장면에도 보인다 — 방금(2초 안) 출구 구역에 있었고 지금 화면 끝에 걸쳐 있으면 나가는 중.
+                # 나가는 마지막 몇 장면은 머리·어깨만 잡혀 상자 아래쪽(발)이 출구 띠 밖으로 올라간다 (정상 영상 N06).
+                if not (frame_size and customer.last_bbox and self._at_edge(customer.last_bbox, frame_size)):
+                    continue
             customer.departed = True
             events.append(self._check_identity(customer, self._judge(customer, frame, how="출구 쪽에서 사라짐 (영상 끝)")))
         self.events.extend(events)
         return events
+
+    @staticmethod
+    def _at_edge(bbox, frame_size, margin: float = 0.02) -> bool:
+        w, h = frame_size
+        x1, y1, x2, y2 = bbox
+        return x1 <= margin * w or x2 >= (1 - margin) * w   # 화면 왼쪽·오른쪽 끝에 걸침
 
     def add_late_takes(self, takes: list[TakeCandidate], now_ms: float) -> None:
         """영상이 끝날 때 계층 3 이 마저 내보낸 후보. 판정은 없고 장부에만 더한다."""

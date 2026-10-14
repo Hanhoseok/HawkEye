@@ -148,6 +148,7 @@ class TrackingPipeline:
         alert_until: dict[int, tuple[float, str]] = {}  # 손님 -> (표시 종료 시각, 문구)
         last_pts_ms = 0.0
         last_frame = None
+        frame_size = None
 
         writer: VideoWriter | None = None
         log: ObservationLog | None = None
@@ -193,6 +194,7 @@ class TrackingPipeline:
                     print("선반: " + ", ".join(
                         f"{name} {tuple(int(v) for v in box)}" for name, box in self.shelves.boxes))
 
+                frame_size = (source.width, source.height)
                 if self.zone_map:
                     self.zone_map.resolve(source.width, source.height)
                     print(f"구역: {self.zone_map.summary()}")
@@ -327,7 +329,7 @@ class TrackingPipeline:
                         self.risk.add_late_takes(remaining, last_pts_ms)
             if self.risk is not None and last_frame is not None:
                 # 영상이 끝났다: 출구 쪽에서 막 사라진 손님은 더 돌아올 수 없으므로 나간 것으로 확정
-                for event in self.risk.finish(last_frame):
+                for event in self.risk.finish(last_frame, frame_size):
                     self._report(event, last_frame, out_dir, {})
                     if risk_log is not None:
                         risk_log.write_many([event])
@@ -343,6 +345,9 @@ class TrackingPipeline:
                 stats.alert_summary = self.alert_sink.close()
             if self.shelves is not None:
                 stats.shelf_summary = self.shelves.summary()
+                if self.shelves.item_log:
+                    path = out_dir / "shelf_items.jsonl"
+                    path.write_text("".join(json.dumps(r) + "\n" for r in self.shelves.item_log), encoding="utf-8")
             if shelf_log is not None:
                 shelf_log.close()
                 if self.risk is not None:

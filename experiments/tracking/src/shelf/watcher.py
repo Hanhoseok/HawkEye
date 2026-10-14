@@ -27,6 +27,8 @@ class ShelfWatcher:
         self._seen: list[int] = []
         self.frames = 0
         self.detect_calls = 0
+        self.item_log: list[dict] = []
+        """config.log_items 면 물건을 찾은 장면마다 {frame, items} — 평가에서 영상 없이 선반 판정을 다시 돌릴 때 쓴다."""
         """물건을 실제로 찾은 장면 수. 가린 동안·한가한 동안은 건너뛴다."""
 
     def resolve(self, width: int, height: int, fps: float) -> None:
@@ -36,7 +38,9 @@ class ShelfWatcher:
             x1, y1, x2, y2 = (float(v) for v in area["box"])
             name = area.get("name") or f"shelf{i + 1}"
             box = (x1 * width, y1 * height, x2 * width, y2 * height)
-            self.monitors.append((area, ShelfMonitor(name, box, stable_seconds=self.config.stable_seconds)))
+            self.monitors.append((area, ShelfMonitor(name, box, stable_seconds=self.config.stable_seconds,
+                                                     map_score=self.config.map_score,
+                                                     weak_presence=self.config.weak_presence)))
         self.per_window = max(1, int(round(self.config.stable_seconds * fps)))
         self._seen = [0] * len(self.monitors)
 
@@ -85,6 +89,9 @@ class ShelfWatcher:
         if any(wants):
             items = [ShelfItem(d.class_name, d.bbox, d.score) for d in self.detector.detect(frame)]
             self.detect_calls += 1
+            if self.config.log_items:
+                self.item_log.append({"frame": frame.index, "items": [
+                    [it.label, *(round(v, 1) for v in it.bbox), round(it.score, 3)] for it in items]})
         visits: list[ShelfVisit] = []
         changes: list[ShelfChange] = []
         for i, (area, monitor) in enumerate(self.monitors):
