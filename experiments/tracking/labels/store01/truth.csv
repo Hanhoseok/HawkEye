@@ -17,7 +17,7 @@ T02,theft,1,HIGH_RISK,작은 흰 상자를 가방에
 T03-1,theft,1,HIGH_RISK,후드 — 선반 4~9s -> 나감
 T03-2,theft,1,HIGH_RISK,후드 — 선반 4~9s -> 나감
 T03-2(1),theft,1,HIGH_RISK,니트 — 선반 4~6s 집어 옷 속에 -> 바로 나감 (선반 앞 2.5초)
-T08,theft,1,HIGH_RISK,계산대에 섰지만 결제하지 않음 (위장 결제)
+T08,theft,1,HIGH_RISK,흰 상자 집음 4~7s -> 계산대 결제 8~13s -> 다시 선반 오른쪽 끝에서 흰 카드 집음 14s -> 결제 없이 나감
 T09,theft,2,HIGH_RISK,후드(절도)는 왼쪽 화면 밖까지 감 + 니트 손님
 T10-1,theft,1,HIGH_RISK,후드 — 선반 4~10s
 T10-2,theft,1,HIGH_RISK,후드 — 선반 4~9s
