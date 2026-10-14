@@ -22,6 +22,7 @@ from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
 from .sinks.video_writer import VideoWriter
 from .viz.overlay import TrackOverlay, draw_alerts, draw_zones
+from .viz.shelf_overlay import draw_shelves
 from .zones.zone_map import ZoneMap
 
 
@@ -46,6 +47,9 @@ class RunStats:
     alert_summary: str = ""
     risk_path: Path | None = None
     shelf_visits: list = field(default_factory=list)
+    shelf_summary: str = ""
+    actions: list = field(default_factory=list)
+    actions_path: Path | None = None
 
     @property
     def fps(self) -> float:
@@ -72,6 +76,8 @@ class RunStats:
             total = sum(c.duration_sec for c in self.take_candidates)
             lines.append(f"TAKE 후보       : {len(self.take_candidates)}건 / {len(people)}명")
             lines.append(f"  └ 총 체류 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
+        if self.shelf_summary:
+            lines.append(self.shelf_summary)
         if self.shelf_visits and not self.risk_summary:
             changed = sum(1 for v in self.shelf_visits if v.removed or v.added)
             lines.append(f"선반 방문       : {len(self.shelf_visits)}건 (변화 {changed}건)")
@@ -103,6 +109,7 @@ class TrackingPipeline:
         risk=None,
         alert_sink=None,
         shelves=None,
+        panel=None,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -113,6 +120,8 @@ class TrackingPipeline:
         self.risk = risk
         self.alert_sink = alert_sink
         self.shelves = shelves
+        self.panel = panel
+        """실시간 상황판 (src/viz/live_panel.py). 있으면 영상 옆에 손님별 상태와 최근 사건을 붙인다."""
         """선반 지켜보기 (src/shelf/watcher.py). 손님이 다녀간 선반에서 물건이 몇 개 줄었는지 센다."""
         self._recent: deque = deque()
         """(재생 시각 ms, 줄인 장면, 줄인 비율) — 경보 사진용 최근 장면."""
@@ -138,6 +147,8 @@ class TrackingPipeline:
             self.shelves.reset()
         alert_until: dict[int, tuple[float, str]] = {}  # 손님 -> (표시 종료 시각, 문구)
         last_pts_ms = 0.0
+        last_frame = None
+        frame_size = None
 
         writer: VideoWriter | None = None
         log: ObservationLog | None = None
@@ -183,6 +194,7 @@ class TrackingPipeline:
                     print("선반: " + ", ".join(
                         f"{name} {tuple(int(v) for v in box)}" for name, box in self.shelves.boxes))
 
+                frame_size = (source.width, source.height)
                 if self.zone_map:
                     self.zone_map.resolve(source.width, source.height)
                     print(f"구역: {self.zone_map.summary()}")
@@ -236,7 +248,8 @@ class TrackingPipeline:
                             if shelf_log is not None:
                                 shelf_log.write_many(visits)
                             for visit, change in zip(visits, changes):
-                                if visit.removed or visit.added:
+                                # 손님 장부가 있으면 아래에서 행동(집음/놓음...)으로 알린다. 주인을 못 정한 변화만 여기서.
+                                if (visit.removed or visit.added) and (self.risk is None or visit.person_id <= 0):
                                     print(f"  [선반] {change.start_ms / 1000:6.1f}s ~ {change.end_ms / 1000:6.1f}s  "
                                           f"{visit.detail}")
 
@@ -248,6 +261,17 @@ class TrackingPipeline:
                             if risk_log is not None:
                                 risk_log.write_many(events)
                                 payments_log.write_many(records)
+                            for action in self.risk.new_actions:
+                                if action.kind != "LOOK":
+                                    print(f"  [행동] {frame.pts_ms / 1000:6.1f}s  {action.describe()}")
+                                    if self.panel is not None:
+                                        self.panel.note(frame.pts_ms / 1000, f"손님 {action.person_id} {action.name}"
+                                                        + (f" {abs(action.count)}개" if action.count else ""), (150, 220, 255))
+                            if self.panel is not None:
+                                self.panel.add_events(events)
+                                for r in records:
+                                    who = f"손님 {r.person_id}" if r.person_id is not None else "손님 못 찾음"
+                                    self.panel.note(frame.pts_ms / 1000, f"결제 {r.items}개 -> {who}", (200, 200, 255))
                             if self.alert_sink is not None:
                                 self._remember(frame)
                             for event in events:
@@ -255,6 +279,7 @@ class TrackingPipeline:
                                 if self.alert_sink is not None:
                                     self._send_alert(event, frame)
                         last_pts_ms = frame.pts_ms
+                        last_frame = frame
 
                     if writer is not None or cfg.output.show_window or on_frame is not None:
                         header = (
@@ -270,13 +295,13 @@ class TrackingPipeline:
                         if self.zone_map and cfg.output.draw_zones:
                             base = draw_zones(base, self.zone_map)
                         if self.shelves is not None and cfg.output.draw_zones:
-                            base = base.copy() if base is frame.image else base
-                            for name, (x1, y1, x2, y2) in self.shelves.boxes:
-                                cv2.rectangle(base, (int(x1), int(y1)), (int(x2), int(y2)), (255, 200, 0), 1)
-                                cv2.putText(base, name, (int(x1) + 4, int(y1) + 16), 0, 0.5, (255, 200, 0), 1)
+                            # 선반 지도: 확정된 물건 자리, 방금 사라진/생긴 자리, 선반 상태(가림/비교 중)
+                            base = draw_shelves(base, self.shelves, frame.pts_ms)
                         canvas = overlay.draw(base, drawable, header)
                         if alert_until and self.risk is not None:
                             canvas = draw_alerts(canvas, self._live_alerts(drawable, frame, alert_until))
+                        if self.panel is not None:
+                            canvas = self.panel.render(canvas, frame, self.risk, self.shelves)
                         if writer is not None:
                             writer.write(canvas)
                         if cfg.output.show_window:
@@ -302,6 +327,14 @@ class TrackingPipeline:
                         takes_log.write_many(remaining)
                     if self.risk is not None:
                         self.risk.add_late_takes(remaining, last_pts_ms)
+            if self.risk is not None and last_frame is not None:
+                # 영상이 끝났다: 출구 쪽에서 막 사라진 손님은 더 돌아올 수 없으므로 나간 것으로 확정
+                for event in self.risk.finish(last_frame, frame_size):
+                    self._report(event, last_frame, out_dir, {})
+                    if risk_log is not None:
+                        risk_log.write_many([event])
+                    if self.alert_sink is not None:
+                        self._send_alert(event, last_frame)
             if self.risk is not None:
                 stats.risk_events = list(self.risk.events)
                 stats.risk_summary = self.risk.summary()
@@ -310,8 +343,19 @@ class TrackingPipeline:
                 payments_log.close()
             if self.alert_sink is not None:
                 stats.alert_summary = self.alert_sink.close()
+            if self.shelves is not None:
+                stats.shelf_summary = self.shelves.summary()
+                if self.shelves.item_log:
+                    path = out_dir / "shelf_items.jsonl"
+                    path.write_text("".join(json.dumps(r) + "\n" for r in self.shelves.item_log), encoding="utf-8")
             if shelf_log is not None:
                 shelf_log.close()
+                if self.risk is not None:
+                    # 최종 행동 목록 — 방문이 끝난 뒤 늦게 도착한 손 뻗기까지 반영한 것
+                    stats.actions = self.risk.all_actions()
+                    stats.actions_path = shelf_log.path.with_name(cfg.output.actions_name)
+                    with ObservationLog(stats.actions_path) as actions_log:
+                        actions_log.write_many(stats.actions)
             if identity_log is not None:
                 identity_log.close()
                 if self.registry.merges:

@@ -300,6 +300,19 @@ class RiskConfig:
     대가: 나가기 직전 이 시간 안에 뒤바뀐 경우는 잡지 못한다.
     """
 
+    payment_mode: str = "feed"
+    """결제를 어떻게 아나.
+    - "feed":  결제 기록(CSV, POS)을 받아 계산대에 있던 손님에게 붙인다.
+    - "dwell": 결제 기록이 없는 매장 — **계산대에 dwell_pay_seconds 이상 서 있으면 그때까지 가진 것을 모두 결제한 것**으로 본다.
+               결제 뒤 다시 상품 쪽(SHELF 구역)으로 가면 **취소**로 보고, 다음 계산대 체류에서 다시 결제한다.
+               (직접 찍은 매장 영상의 규칙, 2026-10-14 사용자 확인)"""
+
+    dwell_pay_seconds: float = 1.5
+    """payment_mode="dwell": 계산대 구역에 이만큼 연속으로 있으면 결제. 정상 영상의 계산대 체류는 2.4~9초였다."""
+
+    cancel_shelf_overlap: float = 0.5
+    """payment_mode="dwell": 결제 뒤 몸이 SHELF 구역과 이 비율 이상 겹치면 '상품 쪽으로 돌아감' = 결제 취소."""
+
     checkout_grace_seconds: float = 3.0
     """결제 순간 계산대 구역에 없더라도, 이 시간 안에 있었던 손님이면 결제자로 본다.
 
@@ -349,10 +362,25 @@ class ShelfConfig:
     """물건 탐지 해상도. 작은 물건용으로 크게 한다. 사람 탐지는 원래 설정(detector.imgsz)대로 따로 한다 —
     1280 으로 사람까지 찾으면 가까운 사람이 조각 상자 여러 개로 잡혔다(Pexels 10566665)."""
 
-    conf: float = 0.15
+    conf: float = 0.05
+    """물건 탐지기 최소 점수. 낮게 잡아 '약한 탐지'까지 받는다 — 지도에는 map_score 이상만 넣고,
+    약한 탐지는 사라짐·생김을 확인하는 데만 쓴다 (ShelfMonitor 설명)."""
+
+    map_score: float = 0.15
+    """선반 지도에 넣는 최소 점수 (예전의 탐지 기준과 같은 값)."""
+
+    weak_presence: float = 0.3
+    """사라짐·생김 확인: 그 자리에 약한 탐지라도 장면의 이 비율 이상 보이면 '계속 있었다'로 본다."""
 
     stable_seconds: float = 0.6
     """선반 지도를 확정하는 데 필요한 연속 관찰 시간. 1초로는 떠난 뒤 확정이 늦었다(Pexels 10566665)."""
+
+    log_items: bool = False
+    """물건 탐지 결과를 shelf_items.jsonl 로 남긴다 (평가용 — 영상 없이 선반 판정을 다시 돌림)."""
+
+    idle_every: int = 3
+    """아무 일 없이 지도가 확정돼 있을 때는 이 장면 수마다 한 번만 물건을 찾는다 (선반을 가린 동안은 아예 안 찾음).
+    누가 다녀간 뒤 비교할 때는 매 장면 찾는다. 1 이면 예전처럼 매 장면."""
 
     ignore: list[str] = field(default_factory=lambda: [
         "person", "dining table", "chair", "bench", "refrigerator", "tv", "couch", "bed",
@@ -379,6 +407,7 @@ class OutputConfig:
     risk_name: str = "risk_events.jsonl"
     payments_name: str = "payments.jsonl"
     shelf_name: str = "shelf_visits.jsonl"
+    actions_name: str = "actions.jsonl"
     alerts_dir: str = "alerts"
     """HIGH_RISK 순간의 장면을 이미지로 저장할 폴더 (결과 폴더 아래)."""
     show_window: bool = False

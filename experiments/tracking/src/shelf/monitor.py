@@ -144,10 +144,12 @@ def match(before: list[Slot], after: list[Slot], gate: float = 0.8,
 class _Consensus:
     """최근 몇 장면의 탐지를 모아, 대부분의 장면에서 보인 물건만 남긴다 (한 장면만 튀는 오탐 제거)."""
 
-    def __init__(self, presence: float, gate: float) -> None:
+    def __init__(self, presence: float, gate: float, map_score: float = 0.0) -> None:
         self.presence = presence
         self.gate = gate
+        self.map_score = map_score
         self.frames: list[list[ShelfItem]] = []
+        """장면마다 탐지된 물건 전부 (약한 것 포함). 지도는 map_score 이상으로만 만든다."""
 
     def clear(self) -> None:
         self.frames = []
@@ -160,6 +162,8 @@ class _Consensus:
         clusters: list[list[ShelfItem]] = []
         for items in self.frames:
             for it in items:
+                if it.score < self.map_score:
+                    continue   # 약한 탐지는 지도에 넣지 않는다 (사라짐/생김 확인용으로만 쓴다)
                 best, best_cost = None, self.gate
                 for cl in clusters:
                     ref = cl[-1]
@@ -183,11 +187,43 @@ class _Consensus:
         return out
 
 
+def _iou(a, b) -> float:
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def weakly_seen(slot: Slot, frames: list[list[ShelfItem]], min_iou: float, presence: float,
+                 min_ratio: float = 0.5) -> bool:
+    """그 자리에 (점수가 낮아졌어도) 같은 물건이 장면들 중 presence 비율 이상 보였는가.
+
+    - 거리가 아니라 상자 겹침(IoU)으로 본다 — 거리로 보면 바로 옆 물건까지 '그 자리에 있다'로 잡혔다.
+    - 원래 점수의 min_ratio 이상이어야 '같은 물건이 조금 약하게 보인 것'이다. 그보다 약한 건 그 자리의
+      다른 것(뒤에 있던 상자 등)이 희미하게 잡힌 것 — Pexels 10566653 에서 병을 가져간 자리 뒤 상자가
+      0.05 언저리로 잡혀 '아직 있다'가 됐다. N11 의 흰 상자는 0.16 -> 0.12 (원래의 75%) 였다.
+    """
+    if not frames:
+        return False
+    need_score = min_ratio * slot.item.score
+    hits = sum(1 for items in frames
+               if any(_iou(slot.item.bbox, it.bbox) >= min_iou and it.score >= need_score for it in items))
+    return hits >= presence * len(frames)
+
+
 class ShelfMonitor:
     """선반 하나를 지켜본다.
 
     shelf_box: 선반 영역 (x1, y1, x2, y2, 화면 픽셀). 중심이 이 안에 있는 물건만 선반 물건으로 본다.
     사람 상자가 이 영역과 겹치면 '가림'으로 본다.
+
+    사라짐·생김은 '약한 탐지'로 한 번 더 확인한다 (map_score 아래, 탐지기 최소 점수 이상):
+        - 사라짐: 그 자리에 약한 탐지조차 거의 없어야 한다
+        - 생김:   그 자리에 이전에 약한 탐지조차 거의 없었어야 한다
+        직접 찍은 매장 영상(N11)에서 작은 흰 상자가 점수 0.11~0.16 으로 지도 기준(0.15) 근처를 오가다 끝에 기준 아래로
+        내려가 '사라졌다'로 잡혔다 — 실제로는 손님이 들었다 제자리에 놓았다. 점수가 낮아졌을 뿐 그 자리에 계속 보였다.
+        고정 점수 기준(예: 0.3 이상만)은 다른 촬영(Pexels 세제 병)의 진짜 물건까지 빼서 쓰지 않았다.
     """
 
     def __init__(
@@ -197,12 +233,15 @@ class ShelfMonitor:
         stable_seconds: float = 1.0,
         presence: float = 0.6,
         match_gate: float = 0.8,
+        map_score: float = 0.0,
+        weak_presence: float = 0.3,
     ) -> None:
         self.name = name
         self.box = shelf_box
         self.stable_ms = stable_seconds * 1000.0
         self.match_gate = match_gate
-        self._cons = _Consensus(presence, gate=0.5)
+        self.weak_presence = weak_presence
+        self._cons = _Consensus(presence, gate=0.5, map_score=map_score)
         self.reset()
 
     def reset(self) -> None:
@@ -210,6 +249,8 @@ class ShelfMonitor:
         """확정된 선반 지도. 처음 확정되기 전에는 None."""
         self.state_ms = 0.0
         self.state_frame = -1
+        self._state_frames: list[list[ShelfItem]] = []
+        """지도를 확정할 때 본 장면들 (약한 탐지 포함) — '생김'을 확인할 때 '이전에도 약하게 보였나'를 본다."""
         self._cons.clear()
         self._clear_since: float | None = None
         self._occluded_since: float | None = None
@@ -218,6 +259,8 @@ class ShelfMonitor:
         self._pending: tuple | None = None
         """바뀐 것 같은 상태와 처음 본 시각. 손이 잠깐 가려 생긴 깜빡임을 거르려고, 바뀐 상태가
         stable_seconds 동안 그대로여야 확정한다."""
+        self.blocking: list[int] = []
+        """이번 장면에 선반을 가린 사람들 (화면 표시용)."""
         self.changes: list[ShelfChange] = []
         self.visits: list[ShelfChange] = []
         """사람이 선반을 가렸다가 떠난 방문 기록. 변화가 확정된 방문과 **아무것도 안 바뀐 방문(구경)** 모두.
@@ -233,14 +276,39 @@ class ShelfMonitor:
         a1, b1, a2, b2 = bbox
         return min(x2, a2) > max(x1, a1) and min(y2, b2) > max(y1, b1)
 
-    def update(self, now_ms: float, items: list[ShelfItem],
+    def blocked_by(self, people: list[tuple[int, tuple]]) -> list[int]:
+        """선반 영역을 가린 사람들. 물건 탐지 없이 사람 상자만으로 안다."""
+        return [pid for pid, bbox in people if self._overlaps(bbox)]
+
+    @property
+    def needs_detection(self) -> bool:
+        """지금 물건을 촘촘히 찾아야 하는가.
+
+        지도가 아직 없거나, 누가 다녀가서 비교해야 하거나(방문이 안 끝남), 바뀐 것 같아 확인 중이면 매 장면.
+        아무 일 없이 지도가 확정된 상태면 가끔만 확인해도 된다 (ShelfWatcher 의 idle_every).
+        """
+        return self.state is None or self._occluded_since is not None or self._pending is not None
+
+    @property
+    def status(self) -> str:
+        """화면 표시용: blocked(가림) / checking(다녀간 뒤 비교 중) / learning(지도 만드는 중) / ok."""
+        if self.blocking:
+            return "blocked"
+        if self._occluded_since is not None or self._pending is not None:
+            return "checking"
+        return "learning" if self.state is None else "ok"
+
+    def update(self, now_ms: float, items: list[ShelfItem] | None,
                people: list[tuple[int, tuple]], frames_per_window: int,
                frame_index: int = -1) -> list[ShelfChange]:
         """한 장면을 넣는다. 확정된 변화가 있으면 돌려준다 (방문 기록은 self.visits 에 쌓인다).
 
         people: (사람 번호, 상자) 목록. frames_per_window: stable_seconds 동안 들어오는 장면 수.
+        items 가 None 이면 이번 장면은 물건을 찾지 않았다는 뜻이다(가림 여부만 반영).
+        가린 동안의 탐지는 어차피 쓰지 않으므로, 물건 탐지를 건너뛰어도 결과는 같다.
         """
-        blocking = [pid for pid, bbox in people if self._overlaps(bbox)]
+        blocking = self.blocked_by(people)
+        self.blocking = blocking
         if blocking:
             # 가려졌다 — 지금 장면으로는 셀 수 없다. 누가 가렸는지만 기록한다.
             if self._occluded_since is None:
@@ -255,6 +323,8 @@ class ShelfMonitor:
 
         if self._clear_since is None:
             self._clear_since = now_ms
+        if items is None:
+            return []   # 이번 장면은 물건을 찾지 않았다
         self._cons.add([it for it in items if self._inside(it)], keep=frames_per_window)
         if now_ms - self._clear_since < self.stable_ms:
             return []   # 아직 충분히 오래 안 봤다
@@ -262,8 +332,18 @@ class ShelfMonitor:
         current = layout(self._cons.result())
         if self.state is None:
             self.state, self.state_ms, self.state_frame = current, now_ms, frame_index
+            self._state_frames = list(self._cons.frames)
             return []
         removed, added = match(self.state, current, gate=self.match_gate)
+        # 점수만 기준 아래로 내려간 것(그 자리에 약하게라도 계속 보임)은 사라짐이 아니다. 생김도 마찬가지.
+        # 이런 물건은 지도에서 빼거나 새로 넣지 않는다 — 지도를 그대로 갱신하면 물건이 조용히 빠져서,
+        # 나중에 진짜로 사라져도 알릴 수 없다.
+        still = [s for s in removed if weakly_seen(s, self._cons.frames, 0.5, self.weak_presence)]
+        ghost = [s for s in added if weakly_seen(s, self._state_frames, 0.5, self.weak_presence)]
+        removed = [s for s in removed if s not in still]
+        added = [s for s in added if s not in ghost]
+        if still or ghost:
+            current = layout([s.item for s in current if s not in ghost] + [s.item for s in still])
         if not removed and not added:
             if self._occluded_since is not None:
                 # 가렸지만 아무것도 안 바뀌었다 (보기만 함). 방문으로 남기고 다음 방문을 위해 비운다.
@@ -275,6 +355,7 @@ class ShelfMonitor:
                 self._occluded_since, self._people = None, []
             self._pending = None
             self.state, self.state_ms, self.state_frame = current, now_ms, frame_index
+            self._state_frames = list(self._cons.frames)
             return []
         signature = (tuple(sorted(s.name for s in removed)), tuple(sorted(s.name for s in added)))
         if self._pending is None or self._pending[0] != signature:
@@ -293,5 +374,6 @@ class ShelfMonitor:
         self.changes.append(change)
         self.visits.append(change)
         self.state, self.state_ms, self.state_frame = current, now_ms, frame_index
+        self._state_frames = list(self._cons.frames)
         self._occluded_since, self._people = None, []
         return [change]

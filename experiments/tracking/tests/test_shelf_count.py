@@ -43,7 +43,7 @@ def test_browsing_cancels_false_take():
     shop(eng, 1, takes=[take(1, start=10)], visits=[visit(1)])
     assert eng.book.customers[1].taken == 0
     events = leave(eng, 1, 5.0)
-    assert levels(events) == [C] and "구경만 1번" in events[0].reason
+    assert levels(events) == [C] and "만지기만 1번" in events[0].reason
 
 
 def test_put_back_is_subtracted():
@@ -54,7 +54,7 @@ def test_put_back_is_subtracted():
     assert eng.book.customers[1].taken == 1
     walk(eng, 1, CHECKOUT, 3.0, 2.0)
     events = leave(eng, 1, 6.0)
-    assert levels(events) == [C] and "1개 되돌려놓음" in events[0].reason
+    assert levels(events) == [C] and "놓음 1개" in events[0].reason
 
 
 def test_take_elsewhere_still_counts():
@@ -62,7 +62,7 @@ def test_take_elsewhere_still_counts():
     eng = engine()
     shop(eng, 1, takes=[take(1, start=100)], visits=[visit(1, removed=1, start=5, end=40)])
     customer = eng.book.customers[1]
-    assert customer.taken == 2 and "선반 밖 집기 동작 1번" in customer.count_detail()
+    assert customer.taken == 2 and "선반으로 확인 못 한 집기 동작 1번" in customer.count_detail()
 
 
 def test_zone_limits_which_takes_are_replaced():
@@ -96,7 +96,7 @@ def test_shelf_count_drives_verdict():
     walk(eng, 1, CHECKOUT, 3.0, 2.0)
     events = leave(eng, 1, 6.0)
     assert levels(events) == [R]
-    assert events[0].taken == 2 and events[0].unpaid == 1 and "선반 확인 2개 가져감" in events[0].reason
+    assert events[0].taken == 2 and events[0].unpaid == 1 and "집음 2개" in events[0].reason
 
 
 def test_no_payment_with_shelf_count_is_high_risk():
@@ -113,6 +113,86 @@ def test_merge_keeps_shelf_visits():
     shop(eng, 2, visits=[visit(2, removed=1, start=50, end=70)], t=2.0)
     eng.update(at(3.0), [person(1, AISLE)], merges=[{"from": 2, "into": 1}])
     assert eng.book.customers[1].taken == 2 and 2 not in eng.book.customers
+
+
+# ---------------------------------------------------------------- 행동 판정 (집음 / 놓음 / 만짐)
+
+def kinds(eng, pid):
+    return [(a.kind, a.count, a.evidence) for a in eng.book.customers[pid].actions]
+
+
+def test_take_with_reach_is_take_backed_by_both():
+    """손 뻗기 + 자리 2개 비움 -> 집음 2개, 근거 '선반+동작'."""
+    eng = engine()
+    shop(eng, 1, takes=[take(1, start=10)], visits=[visit(1, removed=2)])
+    assert kinds(eng, 1) == [("TAKE", 2, "선반+동작")]
+    assert eng.book.customers[1].actions[0].reach_frames == ((10, 30),)
+
+
+def test_reach_without_change_is_touch():
+    """손을 뻗었지만 선반이 그대로 -> 만지기만."""
+    eng = engine()
+    shop(eng, 1, takes=[take(1, start=10)], visits=[visit(1)])
+    assert kinds(eng, 1) == [("TOUCH", 0, "선반+동작")]
+
+
+def test_no_reach_no_change_is_look():
+    """선반을 가렸지만 손 뻗기도 변화도 없음 -> 구경 (개수 변화 없음)."""
+    eng = engine()
+    shop(eng, 1, visits=[visit(1)])
+    assert kinds(eng, 1) == [("LOOK", 0, "선반만")]
+
+
+def test_refilled_slot_is_return():
+    """자리가 다시 참 -> 놓음, 개수 -1."""
+    eng = engine()
+    shop(eng, 1, visits=[visit(1, added=1)])
+    assert kinds(eng, 1) == [("RETURN", -1, "선반만")]
+
+
+def test_removed_and_added_is_move():
+    """한 방문에 한 자리가 비고 다른 자리가 참 -> 자리 바뀜, 순변화 0."""
+    eng = engine()
+    shop(eng, 1, takes=[take(1, start=10)], visits=[visit(1, removed=1, added=1)])
+    assert kinds(eng, 1) == [("MOVE", 0, "선반+동작")] and eng.book.customers[1].taken == 0
+
+
+def test_reach_without_shelf_record_is_unverified():
+    """선반 기록이 없는 손 뻗기 -> 확인 못 함, 지금처럼 1개로 센다."""
+    eng = engine()
+    shop(eng, 1, takes=[take(1, start=100)])
+    assert kinds(eng, 1) == [("UNVERIFIED", 1, "동작만")] and eng.book.customers[1].taken == 1
+
+
+def test_actions_are_in_time_order_and_sum_to_count():
+    """집음 2 -> 놓음 1 -> 확인 못 한 손 뻗기 1: 시간순, 개수 합 = 2."""
+    eng = engine()
+    shop(eng, 1, takes=[take(1, start=10)], visits=[visit(1, removed=2, start=5, end=40)])
+    shop(eng, 1, visits=[visit(1, added=1, start=60, end=80)], t=2.0)
+    shop(eng, 1, takes=[take(1, start=120)], t=3.0)
+    c = eng.book.customers[1]
+    assert [a.kind for a in c.actions] == ["TAKE", "RETURN", "UNVERIFIED"]
+    assert c.taken == 2
+
+
+def test_engine_reports_new_action_when_visit_arrives():
+    """방문이 끝나는 프레임에 행동 판정이 나온다 (화면 표시용)."""
+    eng = engine()
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1, start=10)])
+    eng.update(at(2.0), [person(1, AISLE)], shelf_visits=[visit(1, removed=1)])
+    assert [(a.kind, a.person_id) for a in eng.new_actions] == [("TAKE", 1)]
+    assert "집음 1개" in eng.new_actions[0].describe()
+    eng.update(at(2.1), [person(1, AISLE)])
+    assert eng.new_actions == []
+
+
+def test_merged_identity_action_uses_final_person():
+    """합쳐진 신원의 옛 번호로 온 방문도 최종 번호로 판정한다."""
+    eng = engine()
+    shop(eng, 1, visits=[visit(1)])
+    eng.update(at(2.0), [person(1, AISLE)], merges=[{"from": 2, "into": 1}])
+    eng.update(at(3.0), [person(1, AISLE)], shelf_visits=[visit(2, removed=1, start=50, end=70)])
+    assert eng.new_actions[0].person_id == 1 and eng.book.customers[1].taken == 1
 
 
 # ---------------------------------------------------------------- 파이프라인 연결
@@ -164,3 +244,30 @@ def test_parse_area_rejects_pixels():
     import pytest
     with pytest.raises(ValueError):
         parse_area("120,40,300,200", 0)
+
+
+class CountingItems(FakeItems):
+    def __init__(self, gone_from_ms: float):
+        super().__init__(gone_from_ms)
+        self.calls = []
+
+    def detect(self, frame):
+        self.calls.append(frame.pts_ms)
+        return super().detect(frame)
+
+
+def test_watcher_skips_item_detection_while_shelf_is_blocked():
+    """선반을 가린 동안은 물건을 찾지 않고, 한가할 때는 가끔만 찾는다 — 결과(집음 판정)는 그대로."""
+    detector = CountingItems(3000)
+    watcher = ShelfWatcher(ShelfConfig(areas=[parse_area("0,0,0.5,0.5", 0)], idle_every=3), detector)
+    watcher.resolve(400, 400, fps=10)
+    blocker = IdentityObservation(person_id=7, track_id=7, bbox=(90, 0, 200, 300), frame=0, timestamp="t")
+    visits = []
+    for i in range(80):
+        t = i / 10
+        v, _ = watcher.update(Frame(i, "", t * 1000.0, None), [blocker] if 2.0 <= t < 4.0 else [])
+        visits += v
+    assert [(v.person_id, v.removed) for v in visits] == [(7, 1)]
+    assert not any(2000.0 <= ms < 4000.0 for ms in detector.calls), "가린 동안 물건 탐지를 부르면 안 된다"
+    assert watcher.detect_calls < watcher.frames * 0.7
+    assert "건너뜀" in watcher.summary()

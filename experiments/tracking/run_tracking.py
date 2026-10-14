@@ -22,6 +22,7 @@ from src.risk.engine import RiskEngine
 from src.risk.payments import PaymentFeed
 from src.shelf.watcher import ShelfWatcher, parse_area
 from src.sinks.alert_sink import AlertSink
+from src.viz.live_panel import LivePanel, parse_truth
 from src.identity.registry import IdentityRegistry
 from src.trackers import build_tracker
 from src.zones.zone_map import ZoneMap
@@ -82,7 +83,9 @@ def parse_args() -> argparse.Namespace:
         help="botsort 에서 외형 모델을 끈다. 외형의 기여를 분리 측정하는 대조 실험용",
     )
     parser.add_argument("--out-dir", help="결과 저장 폴더")
-    parser.add_argument("--show", action="store_true", help="실시간 창으로 보기")
+    parser.add_argument("--show", action="store_true", help="실시간 창으로 보기 (상황판 포함)")
+    parser.add_argument("--panel", action="store_true", help="영상 옆에 손님별 상태·최근 사건 상황판을 붙인다 (결과 영상에도)")
+    parser.add_argument("--truth", help="정답 구간(초) — 상황판에 표시. 예: '24-73;76-80'")
     parser.add_argument("--no-video", action="store_true", help="결과 영상 저장 안 함")
     parser.add_argument("--zones", help="구역 정의 파일 경로 (기본 zones.yaml)")
     parser.add_argument("--no-takes", action="store_true", help="TAKE 후보 판정(계층 3)을 끈다")
@@ -95,6 +98,10 @@ def parse_args() -> argparse.Namespace:
         help="지켜볼 선반 영역 [이름=]x1,y1,x2,y2[@SHELF구역] (화면 비율 0~1, 여러 번 가능). "
              "주면 선반에서 물건이 몇 개 줄었는지 세어 손님 기록에 붙인다",
     )
+    parser.add_argument("--pay-by-dwell", action="store_true",
+                        help="결제 기록 없이 '계산대에 서 있으면 결제, 다시 상품 쪽으로 가면 취소'로 본다")
+    parser.add_argument("--shelf-log", action="store_true",
+                        help="물건 탐지 결과를 shelf_items.jsonl 로 남긴다 (가리지 않은 장면은 모두 탐지 — 평가용)")
     parser.add_argument("--dwell", type=float, help="선반 앞 체류 시간 기준(초)")
     parser.add_argument("--max-speed", type=float, help="'멈춤' 기준 속도 (체구 높이/초)")
     parser.add_argument("--no-zones", action="store_true", help="구역을 쓰지 않는다")
@@ -173,6 +180,11 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.risk.payments = args.payments
     if args.shelf:
         config.shelves.areas = [parse_area(text, i) for i, text in enumerate(args.shelf)]
+    if args.pay_by_dwell:
+        config.risk.payment_mode = "dwell"
+    if args.shelf_log:
+        config.shelves.log_items = True
+        config.shelves.idle_every = 1   # 기록이 빠짐없게 (가린 장면은 어차피 안 찾는다)
     if args.no_risk:
         config.risk.enabled = False
     if args.no_takes:
@@ -280,8 +292,12 @@ def main() -> int:
                 f"({scfg.model_path}, 해상도 {scfg.imgsz}, 관찰 {scfg.stable_seconds:g}초)"
             )
 
+    panel = None
+    if args.panel or args.show:
+        panel = LivePanel(Path(str(config.video.source)).name, parse_truth(args.truth))
+
     stats = TrackingPipeline(
-        config, detector, tracker, registry, zone_map, interactions, risk, alert_sink, shelves
+        config, detector, tracker, registry, zone_map, interactions, risk, alert_sink, shelves, panel
     ).run()
     print(stats.summary())
 
