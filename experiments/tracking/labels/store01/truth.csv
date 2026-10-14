@@ -1,5 +1,41 @@
-video,set,person,enter_sec,shelf_sec,taken,item,paid_sec,paid_items,leave_sec,expected
-N01,normal,검은 니트,2,4-7,1,갈색 병 (아래 단),10.0,1,12-14,CLEAR
-N01-1,normal,검은 니트,1,3-6,1,갈색 병 (아래 단),9.0,1,11-13,CLEAR
-T01,theft,검은 후드,1,3-6,1,작은 흰 상자 (아래 단),,0,7-10,HIGH_RISK
-T02,theft,검은 후드,1-2,3-16,1,작은 흰 상자 (아래 단) -> 가방,,0,17-19,HIGH_RISK
+video,set,people,expected,notes
+N01,normal,1,CLEAR,갈색 병 1개 -> 계산대 9~11s -> 오른쪽 출구
+N01-1,normal,1,CLEAR,갈색 병 1개 -> 계산대 8~10s
+N03,normal,1,CLEAR,선반 3~13s -> 계산대 16~18s
+N04,normal,1,CLEAR,선반 3~8s -> 계산대 11~18s (집은 개수 불명 — 2개일 수 있음)
+N05,normal,1,CLEAR,선반 3~7s -> 계산대 8~12s
+N06,normal,1,CLEAR,선반 3~6s -> 계산대 7~12s
+N07,normal,1,CLEAR,계산대 두 번 (9~13s · 17~20s)
+N08,normal,1,CLEAR,선반 -> 계산대 -> 선반 -> 계산대 (두 번 결제로 봄)
+N09,normal,2,CLEAR,검은 옷과 흰 옷 동시에 선반 — 검은 옷이 흰 옷에게 물건을 건넨 것으로 보임 -> 흰 옷만 결제
+N10-1,normal,1,CLEAR,선반 3~11s -> 계산대 12~15s
+N10-2,normal,1,CLEAR,선반 3~9s -> 계산대 10~13s
+N11,normal,1,CLEAR,병·흰 상자를 들어 보고 제자리에 둠 -> 계산대 안 들르고 나감 (집은 것 없음)
+N12,normal,1,CLEAR,오른쪽으로 나갔다 다시 들어와 계산대 12~16s
+T01,theft,1,HIGH_RISK,작은 흰 상자 -> 계산대 안 들름
+T02,theft,1,HIGH_RISK,작은 흰 상자를 가방에
+T03-1,theft,1,HIGH_RISK,후드 — 선반 4~9s -> 나감
+T03-2,theft,1,HIGH_RISK,후드 — 선반 4~9s -> 나감
+T03-2(1),theft,1,HIGH_RISK,니트 — 선반 4~6s 집어 옷 속에 -> 바로 나감 (선반 앞 2.5초)
+T08,theft,1,HIGH_RISK,계산대에 섰지만 결제하지 않음 (위장 결제)
+T09,theft,2,HIGH_RISK,후드(절도)는 왼쪽 화면 밖까지 감 + 니트 손님
+T10-1,theft,1,HIGH_RISK,후드 — 선반 4~10s
+T10-2,theft,1,HIGH_RISK,후드 — 선반 4~9s
+T11,theft,1,HIGH_RISK,후드 — 선반 4~11s 여러 개를 손에
+C01,complex,2+,CLEAR,두 사람 동시, 한 명만 계산대
+C02,complex,2,CLEAR,두 사람 선반 앞 오래, 한 명 계산대 19~21s
+C03,complex,2,CLEAR,두 사람, 한 명 계산대
+C04-1,complex,2,CLEAR,흰 옷 계산대, 검은 옷은 화면 왼쪽 밖
+C04-2,complex,2,CLEAR,흰 옷·검은 옷 동시
+C05,complex,2,CLEAR,흰 옷 계산대 9~12s, 후드는 선반 앞 구경
+C06,complex,2,CLEAR,한 명 계산대
+C07,complex,2,CLEAR,한 명 계산대
+C08,complex,2,CLEAR,한 명 계산대
+C09,complex,2,CLEAR,두 사람 차례로 계산대
+C10,complex,1,CLEAR,왼쪽 화면 밖으로 나갔다 돌아옴 — 계산대 안 들름 (집은 것 없음으로 봄)
+C11,complex,1+,CLEAR,계산대 13~18s
+C12,complex,2,CLEAR,니트 선반 구경 3~13s + 흰 옷 지나감 — 계산대 없음
+C13,complex,2,CLEAR,흰 옷 선반 구경 + 다른 사람 지나감 — 계산대 없음
+C14,complex,2,CLEAR,한 명 화면 밖으로 나갔다 돌아옴 — 계산대 없음
+C15,complex,2+,CLEAR,계산대 없음
+C16,complex,1,CLEAR,선반에 손 뻗음 -> 계산대 없이 나감 (집은 것 없음으로 봄)
