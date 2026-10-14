@@ -22,6 +22,7 @@ from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
 from .sinks.video_writer import VideoWriter
 from .viz.overlay import TrackOverlay, draw_alerts, draw_zones
+from .viz.shelf_overlay import draw_shelves
 from .zones.zone_map import ZoneMap
 
 
@@ -46,6 +47,7 @@ class RunStats:
     alert_summary: str = ""
     risk_path: Path | None = None
     shelf_visits: list = field(default_factory=list)
+    shelf_summary: str = ""
     actions: list = field(default_factory=list)
     actions_path: Path | None = None
 
@@ -74,6 +76,8 @@ class RunStats:
             total = sum(c.duration_sec for c in self.take_candidates)
             lines.append(f"TAKE 후보       : {len(self.take_candidates)}건 / {len(people)}명")
             lines.append(f"  └ 총 체류 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
+        if self.shelf_summary:
+            lines.append(self.shelf_summary)
         if self.shelf_visits and not self.risk_summary:
             changed = sum(1 for v in self.shelf_visits if v.removed or v.added)
             lines.append(f"선반 방문       : {len(self.shelf_visits)}건 (변화 {changed}건)")
@@ -287,15 +291,13 @@ class TrackingPipeline:
                         if self.zone_map and cfg.output.draw_zones:
                             base = draw_zones(base, self.zone_map)
                         if self.shelves is not None and cfg.output.draw_zones:
-                            base = base.copy() if base is frame.image else base
-                            for name, (x1, y1, x2, y2) in self.shelves.boxes:
-                                cv2.rectangle(base, (int(x1), int(y1)), (int(x2), int(y2)), (255, 200, 0), 1)
-                                cv2.putText(base, name, (int(x1) + 4, int(y1) + 16), 0, 0.5, (255, 200, 0), 1)
+                            # 선반 지도: 확정된 물건 자리, 방금 사라진/생긴 자리, 선반 상태(가림/비교 중)
+                            base = draw_shelves(base, self.shelves, frame.pts_ms)
                         canvas = overlay.draw(base, drawable, header)
                         if alert_until and self.risk is not None:
                             canvas = draw_alerts(canvas, self._live_alerts(drawable, frame, alert_until))
                         if self.panel is not None:
-                            canvas = self.panel.render(canvas, frame, self.risk)
+                            canvas = self.panel.render(canvas, frame, self.risk, self.shelves)
                         if writer is not None:
                             writer.write(canvas)
                         if cfg.output.show_window:
@@ -329,6 +331,8 @@ class TrackingPipeline:
                 payments_log.close()
             if self.alert_sink is not None:
                 stats.alert_summary = self.alert_sink.close()
+            if self.shelves is not None:
+                stats.shelf_summary = self.shelves.summary()
             if shelf_log is not None:
                 shelf_log.close()
                 if self.risk is not None:

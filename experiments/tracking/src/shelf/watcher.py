@@ -25,6 +25,9 @@ class ShelfWatcher:
         self.monitors: list[tuple[dict, ShelfMonitor]] = []
         self.per_window = 1
         self._seen: list[int] = []
+        self.frames = 0
+        self.detect_calls = 0
+        """물건을 실제로 찾은 장면 수. 가린 동안·한가한 동안은 건너뛴다."""
 
     def resolve(self, width: int, height: int, fps: float) -> None:
         """화면 비율로 준 선반 영역을 픽셀로 바꾸고 선반마다 지켜보기를 만든다."""
@@ -41,6 +44,14 @@ class ShelfWatcher:
         for _, monitor in self.monitors:
             monitor.reset()
         self._seen = [0] * len(self.monitors)
+        self.frames = self.detect_calls = 0
+
+    def summary(self) -> str:
+        if not self.frames:
+            return ""
+        skipped = 1 - self.detect_calls / self.frames
+        return (f"선반 물건 탐지  : {self.detect_calls}/{self.frames} 장면에서 실행 "
+                f"({skipped:.0%} 건너뜀 — 선반을 가린 동안·변화 없는 동안)")
 
     @property
     def boxes(self) -> list[tuple[str, tuple[float, float, float, float]]]:
@@ -60,15 +71,24 @@ class ShelfWatcher:
         """
         if not self.monitors:
             return [], []
-        items = [ShelfItem(d.class_name, d.bbox, d.score) for d in self.detector.detect(frame)]
         people = [
             ((resolve(o.person_id) if resolve else o.person_id) if o.person_id > 0 else -1, o.bbox)
             for o in identities
         ]
+        # 물건 탐지(1280, 무거움)는 필요할 때만:
+        #   - 선반이 사람에게 가려졌으면 건너뛴다 (가린 동안의 탐지는 어차피 버린다)
+        #   - 아무 일 없이 지도가 확정돼 있으면 idle_every 장면에 한 번만 확인한다
+        self.frames += 1
+        idle = self.frames % max(1, self.config.idle_every) == 0
+        wants = [not m.blocked_by(people) and (m.needs_detection or idle) for _, m in self.monitors]
+        items = None
+        if any(wants):
+            items = [ShelfItem(d.class_name, d.bbox, d.score) for d in self.detector.detect(frame)]
+            self.detect_calls += 1
         visits: list[ShelfVisit] = []
         changes: list[ShelfChange] = []
         for i, (area, monitor) in enumerate(self.monitors):
-            monitor.update(frame.pts_ms, items, people, self.per_window, frame.index)
+            monitor.update(frame.pts_ms, items if wants[i] else None, people, self.per_window, frame.index)
             for change in monitor.visits[self._seen[i]:]:
                 pid = change.person_id
                 visits.append(ShelfVisit(

@@ -1,0 +1,10 @@
+# Pexels 10566654 (960x506) — 가까운 화면, 팔만 들어와 스프레이를 가져감. 선반 개수 검증용
+# 선반 영역(--shelf): shelf1=0.05,0.25,0.70,0.97@spray_shelf
+normalized: true
+zones:
+  - name: spray_shelf
+    type: SHELF
+    polygon: [[0.00, 0.00], [1.00, 0.00], [1.00, 1.00], [0.00, 1.00]]
+  - name: exit_right
+    type: EXIT
+    polygon: [[0.95, 0.00], [1.00, 0.00], [1.00, 1.00], [0.95, 1.00]]

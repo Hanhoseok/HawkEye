@@ -67,7 +67,7 @@ class LivePanel:
             self.note(e.time_sec, f"손님 {e.person_id} {e.level.value} · 물건 {e.taken} 결제 {e.paid}",
                       COLORS.get(e.level, (220, 220, 220)))
 
-    def render(self, canvas: np.ndarray, frame, risk=None) -> np.ndarray:
+    def render(self, canvas: np.ndarray, frame, risk=None, shelves=None) -> np.ndarray:
         from PIL import Image, ImageDraw
 
         h, w = canvas.shape[:2]
@@ -124,6 +124,14 @@ class LivePanel:
             if not shown:
                 d.text((10, y), "(아직 없음)", font=small, fill=(120, 120, 120))
                 y += 21
+        if shelves is not None and shelves.monitors:
+            from .shelf_overlay import shelf_lines
+            y += 6
+            d.text((10, y), "선반", font=mid, fill=(150, 200, 255))
+            y += 22
+            for line in shelf_lines(shelves):
+                d.text((10, y), line[:34], font=small, fill=(220, 220, 220))
+                y += 19
         y += 10
         d.line((10, y, WIDTH - 10, y), fill=(60, 64, 70))
         y += 8

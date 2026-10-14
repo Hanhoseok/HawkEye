@@ -244,3 +244,30 @@ def test_parse_area_rejects_pixels():
     import pytest
     with pytest.raises(ValueError):
         parse_area("120,40,300,200", 0)
+
+
+class CountingItems(FakeItems):
+    def __init__(self, gone_from_ms: float):
+        super().__init__(gone_from_ms)
+        self.calls = []
+
+    def detect(self, frame):
+        self.calls.append(frame.pts_ms)
+        return super().detect(frame)
+
+
+def test_watcher_skips_item_detection_while_shelf_is_blocked():
+    """선반을 가린 동안은 물건을 찾지 않고, 한가할 때는 가끔만 찾는다 — 결과(집음 판정)는 그대로."""
+    detector = CountingItems(3000)
+    watcher = ShelfWatcher(ShelfConfig(areas=[parse_area("0,0,0.5,0.5", 0)], idle_every=3), detector)
+    watcher.resolve(400, 400, fps=10)
+    blocker = IdentityObservation(person_id=7, track_id=7, bbox=(90, 0, 200, 300), frame=0, timestamp="t")
+    visits = []
+    for i in range(80):
+        t = i / 10
+        v, _ = watcher.update(Frame(i, "", t * 1000.0, None), [blocker] if 2.0 <= t < 4.0 else [])
+        visits += v
+    assert [(v.person_id, v.removed) for v in visits] == [(7, 1)]
+    assert not any(2000.0 <= ms < 4000.0 for ms in detector.calls), "가린 동안 물건 탐지를 부르면 안 된다"
+    assert watcher.detect_calls < watcher.frames * 0.7
+    assert "건너뜀" in watcher.summary()

@@ -1,0 +1,10 @@
+# Pexels 10566653 (960x506) — 바구니를 든 남성이 큰 통을 들었다 놓고 병을 바구니에 넣음. 선반 개수 검증용
+# 선반 영역(--shelf): shelf1=0.45,0.62,0.72,0.95@detergent_shelf
+normalized: true
+zones:
+  - name: detergent_shelf
+    type: SHELF
+    polygon: [[0.35, 0.20], [0.80, 0.20], [0.80, 1.00], [0.35, 1.00]]
+  - name: exit_left
+    type: EXIT
+    polygon: [[0.00, 0.00], [0.03, 0.00], [0.03, 1.00], [0.00, 1.00]]

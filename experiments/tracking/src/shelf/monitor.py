@@ -218,6 +218,8 @@ class ShelfMonitor:
         self._pending: tuple | None = None
         """바뀐 것 같은 상태와 처음 본 시각. 손이 잠깐 가려 생긴 깜빡임을 거르려고, 바뀐 상태가
         stable_seconds 동안 그대로여야 확정한다."""
+        self.blocking: list[int] = []
+        """이번 장면에 선반을 가린 사람들 (화면 표시용)."""
         self.changes: list[ShelfChange] = []
         self.visits: list[ShelfChange] = []
         """사람이 선반을 가렸다가 떠난 방문 기록. 변화가 확정된 방문과 **아무것도 안 바뀐 방문(구경)** 모두.
@@ -233,14 +235,39 @@ class ShelfMonitor:
         a1, b1, a2, b2 = bbox
         return min(x2, a2) > max(x1, a1) and min(y2, b2) > max(y1, b1)
 
-    def update(self, now_ms: float, items: list[ShelfItem],
+    def blocked_by(self, people: list[tuple[int, tuple]]) -> list[int]:
+        """선반 영역을 가린 사람들. 물건 탐지 없이 사람 상자만으로 안다."""
+        return [pid for pid, bbox in people if self._overlaps(bbox)]
+
+    @property
+    def needs_detection(self) -> bool:
+        """지금 물건을 촘촘히 찾아야 하는가.
+
+        지도가 아직 없거나, 누가 다녀가서 비교해야 하거나(방문이 안 끝남), 바뀐 것 같아 확인 중이면 매 장면.
+        아무 일 없이 지도가 확정된 상태면 가끔만 확인해도 된다 (ShelfWatcher 의 idle_every).
+        """
+        return self.state is None or self._occluded_since is not None or self._pending is not None
+
+    @property
+    def status(self) -> str:
+        """화면 표시용: blocked(가림) / checking(다녀간 뒤 비교 중) / learning(지도 만드는 중) / ok."""
+        if self.blocking:
+            return "blocked"
+        if self._occluded_since is not None or self._pending is not None:
+            return "checking"
+        return "learning" if self.state is None else "ok"
+
+    def update(self, now_ms: float, items: list[ShelfItem] | None,
                people: list[tuple[int, tuple]], frames_per_window: int,
                frame_index: int = -1) -> list[ShelfChange]:
         """한 장면을 넣는다. 확정된 변화가 있으면 돌려준다 (방문 기록은 self.visits 에 쌓인다).
 
         people: (사람 번호, 상자) 목록. frames_per_window: stable_seconds 동안 들어오는 장면 수.
+        items 가 None 이면 이번 장면은 물건을 찾지 않았다는 뜻이다(가림 여부만 반영).
+        가린 동안의 탐지는 어차피 쓰지 않으므로, 물건 탐지를 건너뛰어도 결과는 같다.
         """
-        blocking = [pid for pid, bbox in people if self._overlaps(bbox)]
+        blocking = self.blocked_by(people)
+        self.blocking = blocking
         if blocking:
             # 가려졌다 — 지금 장면으로는 셀 수 없다. 누가 가렸는지만 기록한다.
             if self._occluded_since is None:
@@ -255,6 +282,8 @@ class ShelfMonitor:
 
         if self._clear_since is None:
             self._clear_since = now_ms
+        if items is None:
+            return []   # 이번 장면은 물건을 찾지 않았다
         self._cons.add([it for it in items if self._inside(it)], keep=frames_per_window)
         if now_ms - self._clear_since < self.stable_ms:
             return []   # 아직 충분히 오래 안 봤다

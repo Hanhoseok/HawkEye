@@ -354,6 +354,10 @@ class ShelfConfig:
     stable_seconds: float = 0.6
     """선반 지도를 확정하는 데 필요한 연속 관찰 시간. 1초로는 떠난 뒤 확정이 늦었다(Pexels 10566665)."""
 
+    idle_every: int = 3
+    """아무 일 없이 지도가 확정돼 있을 때는 이 장면 수마다 한 번만 물건을 찾는다 (선반을 가린 동안은 아예 안 찾음).
+    누가 다녀간 뒤 비교할 때는 매 장면 찾는다. 1 이면 예전처럼 매 장면."""
+
     ignore: list[str] = field(default_factory=lambda: [
         "person", "dining table", "chair", "bench", "refrigerator", "tv", "couch", "bed",
     ])
