@@ -376,3 +376,32 @@ def test_persistent_drop_inside_is_still_caught():
     value["v"] = 0.6                                 # 뒤바뀜: 이후 계속 낮음
     walk(eng, 1, AISLE, 3.1, 6.0)
     assert levels(leave(eng, 1, 10.0)) == [W, R]
+
+
+
+# ---------------------------------------------------------------- 영상 끝
+
+def test_video_end_confirms_customer_who_just_left_by_exit():
+    """출구로 사라지고 1초 만에 영상이 끝나도(3초를 못 채움) 나간 것으로 확정한다 — 직접 찍은 짧은 영상."""
+    eng = engine()
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    events = walk(eng, 1, EXIT, 5.0, 1.0) + nobody(eng, 6.0, 1.0)
+    assert levels(events) == [W]                       # 아직 3초가 안 지나 최종 판정 없음
+    final = eng.finish(at(7.0))
+    assert levels(final) == [H] and "영상 끝" in final[0].reason
+
+
+def test_video_end_does_not_judge_customer_still_visible():
+    """마지막 장면에도 출구에 서 있으면 아직 안 나간 것이다."""
+    eng = engine()
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    walk(eng, 1, EXIT, 5.0, 2.0)
+    assert eng.finish(at(6.9)) == []
+
+
+def test_video_end_ignores_vanishing_away_from_exit():
+    """통로에서 사라진 손님(가려짐)은 영상이 끝나도 판정하지 않는다."""
+    eng = engine()
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    nobody(eng, 1.1, 2.0)
+    assert eng.finish(at(3.5)) == []

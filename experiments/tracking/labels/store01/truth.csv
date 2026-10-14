@@ -1,0 +1,5 @@
+video,set,person,enter_sec,shelf_sec,taken,item,paid_sec,paid_items,leave_sec,expected
+N01,normal,검은 니트,2,4-7,1,갈색 병 (아래 단),10.0,1,12-14,CLEAR
+N01-1,normal,검은 니트,1,3-6,1,갈색 병 (아래 단),9.0,1,11-13,CLEAR
+T01,theft,검은 후드,1,3-6,1,작은 흰 상자 (아래 단),,0,7-10,HIGH_RISK
+T02,theft,검은 후드,1-2,3-16,1,작은 흰 상자 (아래 단) -> 가방,,0,17-19,HIGH_RISK

@@ -1,0 +1,38 @@
+# zones_store01_N.yaml 를 T02.mp4 에 맞춰 옮김 (scripts/transfer_zones.py)
+# 카메라 이동 x -91px y -4px 회전 -0.77° — 배경 특징점으로 잼, 정답은 보지 않음
+# 선반 영역(--shelf): 0.000,0.692,0.414,0.885
+normalized: true
+zones:
+- name: shelf
+  type: SHELF
+  polygon:
+  - - 0.0
+    - 0.2488
+  - - 0.409
+    - 0.2379
+  - - 0.4147
+    - 1.0
+  - - 0.0
+    - 1.0
+- name: counter
+  type: CHECKOUT
+  polygon:
+  - - 0.5148
+    - 0.8718
+  - - 0.7471
+    - 0.8662
+  - - 0.7481
+    - 1.0
+  - - 0.5157
+    - 1.0
+- name: door_right
+  type: EXIT
+  polygon:
+  - - 0.7673
+    - 0.8658
+  - - 1.0
+    - 0.8609
+  - - 1.0
+    - 1.0
+  - - 0.7683
+    - 1.0

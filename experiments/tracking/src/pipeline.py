@@ -147,6 +147,7 @@ class TrackingPipeline:
             self.shelves.reset()
         alert_until: dict[int, tuple[float, str]] = {}  # 손님 -> (표시 종료 시각, 문구)
         last_pts_ms = 0.0
+        last_frame = None
 
         writer: VideoWriter | None = None
         log: ObservationLog | None = None
@@ -276,6 +277,7 @@ class TrackingPipeline:
                                 if self.alert_sink is not None:
                                     self._send_alert(event, frame)
                         last_pts_ms = frame.pts_ms
+                        last_frame = frame
 
                     if writer is not None or cfg.output.show_window or on_frame is not None:
                         header = (
@@ -323,6 +325,14 @@ class TrackingPipeline:
                         takes_log.write_many(remaining)
                     if self.risk is not None:
                         self.risk.add_late_takes(remaining, last_pts_ms)
+            if self.risk is not None and last_frame is not None:
+                # 영상이 끝났다: 출구 쪽에서 막 사라진 손님은 더 돌아올 수 없으므로 나간 것으로 확정
+                for event in self.risk.finish(last_frame):
+                    self._report(event, last_frame, out_dir, {})
+                    if risk_log is not None:
+                        risk_log.write_many([event])
+                    if self.alert_sink is not None:
+                        self._send_alert(event, last_frame)
             if self.risk is not None:
                 stats.risk_events = list(self.risk.events)
                 stats.risk_summary = self.risk.summary()
