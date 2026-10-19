@@ -101,6 +101,7 @@ python run_tracking.py --source ../../source/T01.mp4 --zones zones_store01_T01.y
 
 | 알고 싶은 것 | 문서 |
 |---|---|
+| 프로그램이 어떻게 돌아가나 (구조·모델·판단 규칙) | `docs/architecture.md` |
 | 왜 이런 구조인가 (처음부터) | `docs/진행경과-정리.md` |
 | 무엇이 안 되나 (한계 80여 개, 상태별) | `docs/limitations.md` |
 | 매장 영상 평가 자세히 | `docs/store-test.md` (1차·2차·3차) |

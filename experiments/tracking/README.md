@@ -12,6 +12,7 @@
 ## 현재 상태
 
 > **최신 결과 종합: [`docs/results-summary.md`](docs/results-summary.md)** — 기능별 결과(직접 찍은 매장 영상 40편)와 다음 단계를 한 장에.
+> **구현 설명: [`docs/architecture.md`](docs/architecture.md)** — 프로그램이 어떻게 돌아가는지 (구조·모델·판단 규칙).
 
 | 계층 | 상태 | 문서 |
 |---|---|---|
@@ -133,39 +134,28 @@ python run_tracking.py --source data/videos/store-aisle-detection.mp4   --start-
 
 ---
 
-## 2. 계층 구조 — 왜 이렇게 나눴는가
+## 2. 구조 — 한 장면이 6개 층을 지난다
+
+> **자세한 구현 설명: [`docs/architecture.md`](docs/architecture.md)** — 모델을 어떻게 쓰는지, 층별 판단 규칙과 실제 기준값, 설정·실행, 파일 지도.
 
 ```
-[의존 계층: 외부 라이브러리를 아는 곳]        [로직 계층: 라이브러리를 몰라도 되는 곳]
-
- inputs/video_source.py   (cv2)
- detectors/yolo_detector.py (ultralytics)  ──┐
- trackers/bytetrack_tracker.py (supervision) ─┴─→  TrackObservation  ──→  (향후) TAKE/RETURN
-                                                                          상태 관리 / POS / Risk
+영상 한 장면
+ ├─ ① 사람 찾기·잇기   YOLO(사람) → BoT-SORT                   → TrackObservation (추적 번호)
+ ├─ ② 매장 단위 신원   끊겨도·번호가 바뀌어도 같은 손님          → IdentityObservation (손님 번호)
+ ├─ ③ 손 뻗기          선반 구역 앞 멈춤 / 손목-선반 거리        → TakeCandidate
+ └─ ④ 선반 지도        YOLO(물건) → 지도 → 가림 → 떠난 뒤 비교   → ShelfVisit (사라짐·생김·변화 없음)
+      ⑤ 손님 장부      ③+④ → 집음/놓음/만지기만, 물건 수, 결제(기록 또는 계산대 체류)
+      ⑥ 위험 판정      출구 접근 WARNING → 나감 확정 → HIGH_RISK / REVIEW / CLEAR → RiskEvent
+      출력             기록 파일 · 결과 영상 · 상황판(--show) · 관리자 앱 경보(app-pos)
 ```
 
-핵심 규칙 세 가지 (05 아키텍처 §3~4):
+핵심 규칙 세 가지:
 
-1. **tracker 뒤의 로직은 ByteTrack 내부 객체를 절대 직접 쓰지 않는다.** 경계는 `src/core/types.py` 의 `TrackObservation` 하나뿐이다.
-2. **`src/core/` 는 cv2·torch·ultralytics·supervision 을 import 하지 않는다.** 이 규칙은 `tests/test_contract.py` 가 자동으로 검사한다.
-3. **임계값과 모델 경로는 `config.yaml` 에만 있다.** 코드에 하드코딩하지 않는다.
-
-그래서 ByteTrack → BoT-SORT 로 바꿔도 `build_tracker()` 한 곳만 고치면 되고, 뒤쪽 로직은 원칙적으로 그대로다.
-
-### 표준 출력 계약
-
-```jsonc
-{
-  "track_id": 3,
-  "bbox": [412.0, 188.5, 498.2, 402.1],   // [x1, y1, x2, y2]
-  "frame": 128,
-  "timestamp": "2026-09-20T14:02:11.400000+09:00",
-  "score": 0.91,          // 선택적 확장 필드
-  "class_name": "person"  // 선택적 확장 필드
-}
-```
-
-문서에 고정된 필드는 앞의 네 개다. 뒤 두 개는 디버깅용 확장이며, 없어도 뒤쪽 로직이 동작해야 한다.
+1. **층 사이에는 `src/core/types.py` 의 정해진 형식만 오간다.** 그래서 한 층을 갈아 끼워도 나머지는 그대로다
+   (추적기 ByteTrack → BoT-SORT 교체 때 다른 층은 손대지 않음, 일반 YOLO → 상품 모델도 ④의 탐지기만 바꾸면 됨). 형식을 바꾸면 팀에 공유한다.
+2. **`src/core/` 와 판단 층 `src/risk/` 는 cv2·torch·ultralytics 를 import 하지 않는다** (`tests/test_contract.py` 가 검사).
+   그래서 판단 규칙은 영상 없이 테스트하고, 저장된 기록으로 다시 돌릴 수 있다.
+3. **기준값과 모델 경로는 `config.yaml` 에만 있다.** 모델은 공개 사전학습 모델 그대로 쓰고, 판단은 규칙이다.
 
 ---
 
@@ -173,37 +163,28 @@ python run_tracking.py --source data/videos/store-aisle-detection.mp4   --start-
 
 ```
 run_tracking.py            진입점 (config.yaml + 명령행 인자)
-config.yaml                임계값 / 모델 경로 / 출력 설정
-zones.yaml                 구역 정의 (store-aisle, 비스듬한 각도)
-zones_merl.yaml            구역 정의 (MERL, 수직 천장)
+config.yaml                모든 설정값
+zones_*.yaml               카메라별 구역 (SHELF / CHECKOUT / EXIT / OUTSIDE)
 src/
-  core/types.py            Frame, Detection, TrackObservation  ← 계약
-  core/protocols.py        Detector / Tracker 인터페이스
-  core/config.py           config.yaml 로더
-  inputs/video_source.py   Phase 0 — 프레임 + frame index + ISO8601 timestamp
-  detectors/yolo_detector.py   Phase 1 — pretrained YOLO person detection
-  trackers/factory.py      tracker 교체 지점 (여기 한 곳만 고치면 됨)
-  trackers/bytetrack_tracker.py Phase 2 — ByteTrack 어댑터 (움직임만)
-  trackers/botsort_tracker.py   BoT-SORT + ReID 어댑터 (외형 포함)
-  identity/registry.py     계층 2 — 매장 단위 신원 (numpy 만 사용, tracker 를 모름)
-  identity/embedder.py     ReID 백본 어댑터
-  zones/geometry.py        다각형 기하 (외부 라이브러리 없음)
-  zones/zone_map.py        구역 로드 + 사람과의 관계 판정
-  interaction/detector.py  계층 3 — TAKE 후보 (signal: dwell / hand / raise)
-  interaction/pose_features.py  손 높이·팔 뻗음 등 자세 특징
-  risk/customers.py        손님 장부 — 집기 행동 · 결제 · 신원 합침 반영
-  risk/payments.py         결제(POS) 입력 — 지금은 CSV
-  risk/engine.py           출구 판정 — HIGH_RISK / REVIEW / CLEAR
-  detectors/yolo_pose_detector.py  bbox + 17 keypoint 를 한 번에
-  sinks/video_writer.py    결과 영상 저장
-  sinks/observation_log.py TrackObservation JSONL 저장/읽기
-  viz/overlay.py           bbox + track_id + 궤적 오버레이
+  core/                    types.py(층 사이 형식) · config.py(설정) · protocols.py(인터페이스)
+  inputs/                  영상 읽기
+  detectors/               ① 사람 탐지(YOLO / YOLO-pose), 선반 물건 탐지기
+  trackers/                ① BoT-SORT / ByteTrack 어댑터, 교체 지점 factory.py
+  identity/                ② 매장 단위 신원, 외형 모델 어댑터
+  zones/                   구역 읽기, 사람-구역 관계
+  interaction/             ③ 손 뻗기, 자세 특징
+  shelf/                   ④ 선반 지도(monitor.py), 파이프라인 연결(watcher.py)
+  risk/                    ⑤ 손님 장부·결제(customers.py, payments.py), ⑥ 위험 판정(engine.py)
+  sinks/                   기록 파일, 결과 영상, 경보 전송(alert_sink.py)
+  viz/                     사람 상자, 선반 지도, 상황판
   pipeline.py              전체 조립
-scripts/make_sample_video.py  Phase 0 검증용 합성 영상 (사람 없음)
-tests/test_contract.py     계층 분리 규칙 자동 검사
-data/videos/               입력 영상 (git 제외)
-outputs/                   결과물 (git 제외)
+scripts/                   평가·실험 도구 (store_eval, merl_eval, retailaction_*, screen_videos, transfer_zones …)
+tests/                     층별 규칙 테스트
+labels/                    정답표
+data/videos/, outputs/     입력 영상·결과물 (git 제외)
 ```
+
+파일별 설명은 `docs/architecture.md` 5절.
 
 ---
 
@@ -212,6 +193,7 @@ outputs/                   결과물 (git 제외)
 | 문서 | 내용 |
 |---|---|
 | **`docs/진행경과-정리.md`** | **팀원 공유용 전체 정리.** 왜 ByteTrack에서 BoT-SORT로 갔는지, 수치 포함 |
+| **`docs/architecture.md`** | **구현 설명 — 구조, 모델 사용, 판단 규칙과 기준값, 설정·실행, 파일 지도** |
 | **`docs/results-summary.md`** | **결과 종합 — 팀원 공유용 한 장** |
 | **`docs/limitations.md`** | **한계 총정리 — 부딪힌 한계·실패와 현재 상태. 해결돼도 지우지 않는다** |
 | **`docs/store-test.md`** | **직접 찍은 무인매장 영상 첫 시험 — 정상 2편으로 설정, 절도 2편으로 시험** |
