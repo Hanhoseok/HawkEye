@@ -196,7 +196,7 @@ python run_tracking.py --source <영상> --zones <구역 파일> \
 | `--shelf-log` | 물건 탐지 결과 저장 (평가에서 영상 없이 선반 판정 재실행) |
 | `--truth 24-76` | 상황판에 정답 구간 표시 (검증용) |
 
-- **구역 파일** (`zones_*.yaml`): 카메라마다 한 번 그린다. 화면 비율 좌표, 구역 종류 `SHELF / CHECKOUT / EXIT / OUTSIDE`.
+- **구역 파일** (`zones/*.yaml`): 카메라마다 한 번 그린다. 화면 비율 좌표, 구역 종류 `SHELF / CHECKOUT / EXIT / OUTSIDE`.
   같은 매장을 다시 찍었는데 카메라가 조금 움직였으면 `scripts/transfer_zones.py` 로 배경을 맞춰 옮긴다.
 - **설정값**은 모두 `config.yaml` (코드에 숫자를 박지 않는다).
 
@@ -217,7 +217,7 @@ python run_tracking.py --source <영상> --zones <구역 파일> \
 ```
 run_tracking.py                진입점 (config.yaml + 명령행)
 config.yaml                    모든 설정값
-zones_*.yaml                   카메라별 구역 (store-aisle, MERL, Pexels, 매장 store01 …)
+zones/                         카메라별 구역 파일 (store-aisle, merl, pexels_*, store01_* …)
 src/
   core/types.py                층 사이 데이터 형식 (팀 공통 계약 — 바꾸면 팀에 공유)
   core/config.py               설정 로더 (기본값과 근거 주석)

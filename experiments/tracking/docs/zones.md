@@ -34,7 +34,7 @@
 
 ## 2. 좌표는 코드가 아니라 파일에 둔다
 
-구역 좌표는 **카메라 설치 위치에 100% 종속**이다. 매장이 바뀌면 `zones.yaml` 만 새로 쓴다.
+구역 좌표는 **카메라 설치 위치에 100% 종속**이다. 매장이 바뀌면 구역 파일(`zones/<카메라>.yaml`)만 새로 쓴다.
 
 ```yaml
 normalized: true            # 0~1 상대 좌표 (권장)
@@ -131,7 +131,7 @@ TAKE 판정에는 근접 외에 최소한 하나가 더 필요하다.
 ```yaml
 zones:
   enabled: true
-  path: zones.yaml
+  path: zones/store-aisle.yaml
 
 output:
   draw_zones: true    # 결과 영상에 구역을 반투명하게 그린다

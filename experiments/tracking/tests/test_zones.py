@@ -83,8 +83,8 @@ def test_shelf_uses_overlap_exit_uses_foot():
 
 
 def test_loads_project_zone_file():
-    """실제 zones.yaml 이 읽히고 타입이 제대로 붙는지."""
-    path = Path(__file__).resolve().parents[1] / "zones.yaml"
+    """실제 zones/store-aisle.yaml 이 읽히고 타입이 제대로 붙는지."""
+    path = Path(__file__).resolve().parents[1] / "zones" / "store-aisle.yaml"
     if not path.exists():
         return
     zm = ZoneMap.load(path)

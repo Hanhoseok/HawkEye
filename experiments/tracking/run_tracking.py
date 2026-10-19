@@ -87,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--panel", action="store_true", help="영상 옆에 손님별 상태·최근 사건 상황판을 붙인다 (결과 영상에도)")
     parser.add_argument("--truth", help="정답 구간(초) — 상황판에 표시. 예: '24-73;76-80'")
     parser.add_argument("--no-video", action="store_true", help="결과 영상 저장 안 함")
-    parser.add_argument("--zones", help="구역 정의 파일 경로 (기본 zones.yaml)")
+    parser.add_argument("--zones", help="구역 정의 파일 경로 (기본 zones/store-aisle.yaml)")
     parser.add_argument("--no-takes", action="store_true", help="TAKE 후보 판정(계층 3)을 끈다")
     parser.add_argument("--payments", help="결제 기록 CSV (src/risk/payments.py 형식)")
     parser.add_argument("--no-risk", action="store_true", help="손님 상태·결제·출구 판정을 끈다")

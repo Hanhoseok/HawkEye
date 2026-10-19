@@ -164,7 +164,7 @@ python run_tracking.py --source data/videos/store-aisle-detection.mp4   --start-
 ```
 run_tracking.py            진입점 (config.yaml + 명령행 인자)
 config.yaml                모든 설정값
-zones_*.yaml               카메라별 구역 (SHELF / CHECKOUT / EXIT / OUTSIDE)
+zones/                     카메라별 구역 파일 (SHELF / CHECKOUT / EXIT / OUTSIDE)
 src/
   core/                    types.py(층 사이 형식) · config.py(설정) · protocols.py(인터페이스)
   inputs/                  영상 읽기

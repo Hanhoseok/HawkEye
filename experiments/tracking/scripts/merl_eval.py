@@ -108,7 +108,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", nargs="+", required=True)
     parser.add_argument("--test", nargs="+", required=True)
-    parser.add_argument("--zones", default="zones_merl.yaml")
+    parser.add_argument("--zones", default="zones/merl.yaml")
     parser.add_argument("--take-span", choices=["reach", "interaction"], default="reach")
     parser.add_argument("--runs", default="outputs/merl", help="train 의 identities.jsonl 상위 폴더")
     parser.add_argument("--test-runs", default=None, help="test 쪽 폴더 (기본: --runs 와 같음)")

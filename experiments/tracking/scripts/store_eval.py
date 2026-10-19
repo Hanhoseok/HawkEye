@@ -1,8 +1,8 @@
 """직접 찍은 매장 영상 일괄 평가 — 정상(N)·절도(T)·복합 정상(C).
 
     1) run    영상마다 구역을 배경으로 옮기고(N01 기준) 전체 프로그램을 결제 없이 돌려 기록을 남긴다 (느림, 한 번)
-    2) pay    정상(N·C) 영상마다 계산대 체류 구간을 찾아 결제 기록 후보와 확인용 장면표를 만든다
-              -> 사람이 장면표로 계산대에 실제로 있었는지 확인한 뒤 labels/store01/payments_<영상>.csv 로 쓴다
+    2) pay    정상(N·C) 영상마다 계산대 체류 구간과 확인용 장면표를 만든다 (결제 판정이 맞는지 눈으로 확인용).
+              결제 자체는 judge 가 '계산대 체류 = 결제, 선반으로 돌아가면 취소' 규칙(payment_mode: dwell)으로 정한다.
     3) judge  저장된 기록(신원·손 뻗기·선반 방문) + 결제로 판정만 다시 돌려 정답과 비교 (몇 초)
 
     python scripts/store_eval.py run --only "N*"        # 영상 묶음별로 나눠서 (CPU 로 영상당 1분 남짓)
@@ -46,7 +46,7 @@ SOURCE = ROOT.parent.parent / "source"
 OUT = ROOT / "outputs" / "store_eval"
 LABELS = ROOT / "labels" / "store01"
 REF = "N01"
-REF_ZONES = ROOT / "zones_store01_N.yaml"
+REF_ZONES = ROOT / "zones/store01_N.yaml"
 REF_SHELF = (0.02, 0.70, 0.45, 0.88)
 SKIP = {"N01(1)"}   # N01 과 같은 파일
 FPS = 30.0
@@ -146,13 +146,7 @@ def pay(pattern: str | None) -> None:
             i += 1
         if tiles:
             cv2.imwrite(str(OUT / name / "counter_check.jpg"), cv2.hconcat(tiles))
-        target = LABELS / f"payments_{name}.csv"
-        if not target.exists():
-            proposal = OUT / name / "payments_proposed.csv"
-            with proposal.open("w", encoding="utf-8", newline="") as f:
-                f.write("time_sec,items,person_id\n")
-                for _, a, b in stays:
-                    f.write(f"{(a + b) / 2:.1f},1,\n")
+
 
 
 # ---------------------------------------------------------------- 3) judge

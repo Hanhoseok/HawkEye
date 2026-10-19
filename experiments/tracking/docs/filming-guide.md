@@ -179,7 +179,7 @@ python scripts/screen_videos.py <시험영상>.mp4 --out outputs/screening/store
    ```
 3. 실행 — 상황판으로 보면서
    ```bash
-   python run_tracking.py --source data/videos/store/c05_1_A.mp4 --zones zones_store.yaml \
+   python run_tracking.py --source data/videos/store/c05_1_A.mp4 --zones zones/store.yaml \
        --shelf "shelf1=x1,y1,x2,y2@test_shelf" --payments payments_c05_1_A.csv --show
    ```
 4. 채점 — 정답표와 결과(`risk_events.jsonl`, `actions.jsonl`, `shelf_visits.jsonl`)를 비교하는 스크립트(영상이 오면 정답표 양식에 맞춰 작성):

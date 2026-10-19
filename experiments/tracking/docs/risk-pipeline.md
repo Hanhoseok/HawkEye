@@ -301,11 +301,11 @@ python scripts/replay_risk.py --identities <identities.jsonl> --video <영상> -
 
 ```bash
 # 전체 파이프라인 (구역 파일에 EXIT, 계산대가 있으면 CHECKOUT 필요)
-python run_tracking.py --source data/videos/store.mp4 --zones zones_store.yaml --payments payments.csv
+python run_tracking.py --source data/videos/store.mp4 --zones zones/store.yaml --payments payments.csv
 
 # 이미 돌린 결과로 결제·구역·기준만 바꿔 다시 보기 (몇 초)
 python scripts/replay_risk.py --identities outputs/store/identities.jsonl \
-    --video data/videos/store.mp4 --zones zones_store.yaml --payments payments.csv \
+    --video data/videos/store.mp4 --zones zones/store.yaml --payments payments.csv \
     --merges outputs/store/identity_merges.jsonl
 ```
 

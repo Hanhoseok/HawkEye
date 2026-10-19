@@ -59,7 +59,7 @@ tracker:
 # 새로 정할 때: python scripts/export_frame.py <영상> --frame <번호>
 zones:
   enabled: true
-  path: zones.yaml
+  path: zones/store-aisle.yaml
 
 # 계층 2 · 매장 단위 신원 레지스트리
 # tracker 는 초 단위 짧은 공백만 메운다. 고객이 매장을 나갈 때까지 추적하려면 이 계층이 필요하다.

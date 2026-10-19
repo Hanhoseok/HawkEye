@@ -110,7 +110,7 @@ def main() -> None:
     parser.add_argument("labels")
     parser.add_argument("--takes", help="평가할 take_candidates.jsonl")
     parser.add_argument("--identities", help="스윕할 때 재생할 identities.jsonl")
-    parser.add_argument("--zones", default="zones.yaml")
+    parser.add_argument("--zones", default="zones/store-aisle.yaml")
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--width", type=int, default=720)
     parser.add_argument("--height", type=int, default=404)

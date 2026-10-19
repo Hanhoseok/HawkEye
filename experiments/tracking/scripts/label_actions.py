@@ -289,7 +289,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source")
     parser.add_argument("--identities", help="person_id 박스를 함께 표시할 identities.jsonl")
-    parser.add_argument("--zones", default="zones.yaml")
+    parser.add_argument("--zones", default="zones/store-aisle.yaml")
     parser.add_argument("--out", default="labels/labels.csv")
     parser.add_argument("--start-frame", type=int, default=0)
     parser.add_argument("--tolerance", type=int, default=3, help="관측을 찾을 때 허용할 프레임 오차")
