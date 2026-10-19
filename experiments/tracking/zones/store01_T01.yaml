@@ -1,4 +1,4 @@
-# zones_store01_N.yaml 를 T01.mp4 에 맞춰 옮김 (scripts/transfer_zones.py)
+# zones/store01_N.yaml 를 T01.mp4 에 맞춰 옮김 (scripts/transfer_zones.py)
 # 카메라 이동 x -91px y +6px 회전 -0.81° — 배경 특징점으로 잼, 정답은 보지 않음
 # 선반 영역(--shelf): 0.000,0.698,0.412,0.890
 normalized: true

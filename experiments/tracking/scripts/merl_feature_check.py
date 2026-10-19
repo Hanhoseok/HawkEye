@@ -119,7 +119,7 @@ def main() -> None:
     from src.zones.zone_map import ZoneMap
 
     global ZONE_MAP
-    ZONE_MAP = ZoneMap.load("zones_merl.yaml")
+    ZONE_MAP = ZoneMap.load("zones/merl.yaml")
     ZONE_MAP.resolve(920, 680)
 
     model = YOLO("yolov8n-pose.pt")

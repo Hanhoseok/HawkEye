@@ -93,7 +93,7 @@ python scripts/store_eval.py run          # 영상마다 실행·기록 (CPU 로
 python scripts/store_eval.py judge        # 저장된 기록으로 판정만 (몇 초)
 python scripts/store_eval.py judge --no-shelf   # 진단: 선반 판단 없이
 # 한 편을 상황판으로 보기
-python run_tracking.py --source ../../source/T01.mp4 --zones zones_store01_T01.yaml \
+python run_tracking.py --source ../../source/T01.mp4 --zones zones/store01_T01.yaml \
     --shelf "shelf1=0.000,0.698,0.412,0.890@shelf" --pay-by-dwell --show
 ```
 

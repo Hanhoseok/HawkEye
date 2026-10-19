@@ -36,7 +36,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--identities", required=True)
     parser.add_argument("--video", required=True, help="fps·해상도 확인용")
-    parser.add_argument("--zones", default="zones.yaml")
+    parser.add_argument("--zones", default="zones/store-aisle.yaml")
     parser.add_argument("--payments", help="결제 기록 CSV")
     parser.add_argument("--merges", help="identity_merges.jsonl (파이프라인 출력일 때)")
     parser.add_argument("--interaction", help="TAKE 판정 설정 JSON (기본: config.yaml)")

@@ -13,7 +13,7 @@ CCTV 영상으로 고객이 상품을 집고 돌려놓는 과정을 기록하고
 
 | 폴더 | 담당 | 내용 |
 |---|---|---|
-| [`experiments/tracking/`](experiments/tracking/) | 왕규원 | YOLO 탐지 + ByteTrack / BoT-SORT + ReID 추적, 입장~출구 판정 파이프라인 |
+| [`experiments/tracking/`](experiments/tracking/) | 왕규원 | 사람 추적(YOLO + BoT-SORT + 매장 단위 신원) · 손 뻗기 · 선반 지도(물건 사라짐) · 집음/놓음 · 결제 대조 · 출구 위험 판정 — [구현 설명](experiments/tracking/docs/architecture.md) · [결과 종합](experiments/tracking/docs/results-summary.md) |
 | [`experiments/behavior-model/`](experiments/behavior-model/) | 정준우 | AI-Hub 무인매장 정상·이상 행동 데이터로 모델 학습·테스트 |
 | [`experiments/app-pos/`](experiments/app-pos/) | 한호석 | 모바일 관리자 앱, 모의 결제 시스템, 테스트 기록 |
 | [`final/`](final/) | 공동 | 실험에서 선택된 방법을 통합한 최종 시스템 |

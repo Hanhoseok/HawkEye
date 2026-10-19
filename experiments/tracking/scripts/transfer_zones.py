@@ -4,7 +4,7 @@
 구역 꼭짓점과 선반 영역을 그만큼 옮긴다. 정답(행동)은 전혀 보지 않는다 — 배경만 쓴다.
 
     python scripts/transfer_zones.py --ref ../../source/N01.mp4 --target ../../source/T01.mp4 \\
-        --zones zones_store01_N.yaml --shelf 0.02,0.70,0.45,0.88 --out zones_store01_T01.yaml
+        --zones zones/store01_N.yaml --shelf 0.02,0.70,0.45,0.88 --out zones/store01_T01.yaml
 
 직접 찍은 영상에서 실제로 필요했다: 정상 영상(N)과 절도 영상(T) 사이에 카메라가 91px 옮겨지고 0.8° 돌아가 있었다.
 """

@@ -188,7 +188,7 @@ train 20개 영상에서 `Reach To Shelf` / `Hand In Shelf` 구간의 손목 위
 그 칸들은 **y 0.33~0.52 의 가로 띠**에 모여 있었고, 구경은 그 아래(y 0.52~0.80)였다.
 근거 이미지: `outputs/frames/merl_reach_vs_browse.png` (빨강=손뻗기, 파랑=구경)
 
-이 분포로 구역을 다시 그렸다(`zones_merl.yaml`). **test subject 는 쓰지 않았다.**
+이 분포로 구역을 다시 그렸다(`zones/merl.yaml`). **test subject 는 쓰지 않았다.**
 
 | 구역 정의 | test F1 | test 국소화 |
 |---|---|---|
@@ -432,7 +432,7 @@ curl -O https://www.merl.com/pub/tmarks/MERL_Shopping_Dataset/Videos_MERL_Shoppi
 
 # 영상 처리 (pose + 구역)
 python run_tracking.py --source data/merl/Videos_MERL_Shopping_Dataset/27_1_crop.mp4 \
-    --detector yolo-pose --tracker bytetrack --zones zones_merl.yaml \
+    --detector yolo-pose --tracker bytetrack --zones zones/merl.yaml \
     --tracker-fps 30 --stride 2 --no-video --no-takes --out-dir outputs/merl/27_1
 
 # train 에서 고르고 test 에서 평가

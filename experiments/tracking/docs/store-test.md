@@ -22,7 +22,7 @@
 - 대신 **좌우 위치가 뚜렷이 갈린다** (정상 영상 실측 상자 가운데 x): 선반 앞 0.25~0.36 / 계산대 0.63~0.69 / 들어오고 나가는 곳 = 오른쪽 끝 0.82 이상.
 - 선반 물건: 갈색 병은 일반 YOLO 가 bottle 0.78 로 잡음, 작은 흰 상자는 cup 0.50(N01) — 하나씩 보이는 건 아래 단의 이 두 개 정도.
 
-**설정** (`zones_store01_N.yaml`): 선반 = 왼쪽, 계산대 = 아래 띠 x 0.55~0.78, 출구 = 아래 띠 x 0.80~1.0,
+**설정** (`zones/store01_N.yaml`): 선반 = 왼쪽, 계산대 = 아래 띠 x 0.55~0.78, 출구 = 아래 띠 x 0.80~1.0,
 선반 영역 = 아래 단 `0.02,0.70,0.45,0.88`. 나머지(손 뻗기 3초, 선반 관찰 0.6초, 물건 점수 0.15 등)는 기본값 그대로.
 
 **새로 넣은 규칙 — 영상 끝**: 영상이 손님이 나가고 1초 남짓 뒤에 끝나서, '출구 쪽에서 사라져 3초' 규칙으로는 판정이 하나도
@@ -79,12 +79,12 @@
 
 ```bash
 # 정상 영상 (설정)
-python run_tracking.py --source ../../source/N01.mp4 --zones zones_store01_N.yaml \
-    --shelf "shelf1=0.02,0.70,0.45,0.88@shelf" --payments labels/store01/payments_N01.csv --panel
+python run_tracking.py --source ../../source/N01.mp4 --zones zones/store01_N.yaml \
+    --shelf "shelf1=0.02,0.70,0.45,0.88@shelf" --pay-by-dwell --panel   # (1차 때는 결제 CSV 를 썼다 — 지금은 계산대 체류 규칙)
 # 절도 영상 (시험) — 구역은 배경으로 옮김
 python scripts/transfer_zones.py --ref ../../source/N01.mp4 --target ../../source/T01.mp4 \
-    --zones zones_store01_N.yaml --shelf 0.02,0.70,0.45,0.88 --out zones_store01_T01.yaml
-python run_tracking.py --source ../../source/T01.mp4 --zones zones_store01_T01.yaml \
+    --zones zones/store01_N.yaml --shelf 0.02,0.70,0.45,0.88 --out zones/store01_T01.yaml
+python run_tracking.py --source ../../source/T01.mp4 --zones zones/store01_T01.yaml \
     --shelf "shelf1=0.000,0.698,0.412,0.890@shelf" --panel
 ```
 

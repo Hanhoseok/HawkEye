@@ -72,7 +72,7 @@ def main() -> None:
             "--source", str(VIDEO_DIR / f"{name}_crop.mp4"),
             "--detector", "yolo-pose",
             "--tracker", "bytetrack",   # MERL 은 쇼핑객 1명이라 ReID 불필요. 약 30% 빠르다
-            "--zones", str(ROOT / "zones_merl.yaml"),
+            "--zones", str(ROOT / "zones/merl.yaml"),
             "--tracker-fps", "30",
             "--stride", str(args.stride),
             "--no-video", "--no-takes",

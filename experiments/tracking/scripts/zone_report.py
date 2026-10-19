@@ -23,7 +23,7 @@ from src.zones.zone_map import ZoneMap  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("identities", help="identities.jsonl 경로")
-    parser.add_argument("--zones", default="zones.yaml")
+    parser.add_argument("--zones", default="zones/store-aisle.yaml")
     parser.add_argument("--width", type=int, default=720)
     parser.add_argument("--height", type=int, default=404)
     parser.add_argument(

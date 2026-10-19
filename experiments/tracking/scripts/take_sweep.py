@@ -38,7 +38,7 @@ def replay(observations, zone_map, fps: float, **cfg) -> list:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("identities")
-    parser.add_argument("--zones", default="zones.yaml")
+    parser.add_argument("--zones", default="zones/store-aisle.yaml")
     parser.add_argument("--fps", type=float, required=True, help="원본 영상 fps")
     parser.add_argument("--width", type=int, default=720)
     parser.add_argument("--height", type=int, default=404)

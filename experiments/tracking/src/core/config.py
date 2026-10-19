@@ -70,7 +70,7 @@ class TrackerConfig:
 class ZonesConfig:
     """구역 정의 파일 경로. 좌표는 카메라 설치 위치에 종속이므로 코드가 아니라 파일에 둔다."""
 
-    path: str = "zones.yaml"
+    path: str = "zones/store-aisle.yaml"
     enabled: bool = True
 
 
