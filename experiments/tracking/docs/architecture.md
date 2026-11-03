@@ -10,6 +10,8 @@
 ## 1. 전체 흐름 — 한 장면이 6개 층을 지난다
 
 실행 파일은 `run_tracking.py` 하나, 장면마다 순서는 `src/pipeline.py` 가 정한다. 영상 한 장면이 들어오면 위에서 아래로 차례로 지나가고, 이것을 장면마다 반복한다.
+①~④(관찰)는 **카메라 작업자**(`src/camera_worker.py`)가 맡고, `pipeline.py` 는 ⑤⑥(판단)과 출력을 맡는다 (2026-11-03, 카메라 2대 준비 1-1).
+지금은 카메라 한 대라 작업자도 하나다. 모든 장면·관측에는 카메라 이름(`camera_id`, 기본 `cam0`)이 붙는다.
 
 ```
 영상 한 장면 (Frame: 번호, 재생 시각, 이미지)
@@ -223,13 +225,15 @@ src/
   core/types.py                층 사이 데이터 형식 (팀 공통 계약 — 바꾸면 팀에 공유)
   core/config.py               설정 로더 (기본값과 근거 주석)
   core/protocols.py            Detector / Tracker 인터페이스
-  inputs/video_source.py       영상 읽기 (장면 번호·재생 시각, 깨진 시각 정보 처리)
+  inputs/video_source.py       영상 읽기 (장면 번호·재생 시각, 깨진 시각 정보 처리, 카메라 이름·시차·실제 시각, rtsp 주소)
+  inputs/sync.py               두 카메라 시차 표(sync.csv)와 자동 추정 (카메라 2대 준비)
+  camera_worker.py             카메라 한 대 몫의 ①~④ (탐지·추적·신원·손 뻗기·선반)
   detectors/yolo_detector.py   ① 사람 탐지 + 선반 물건 탐지기(build_item_detector)
   detectors/yolo_pose_detector.py  ① 사람 + 관절 17개
   trackers/                    ① BoT-SORT / ByteTrack 어댑터, 교체 지점(factory.py)
   identity/registry.py         ② 매장 단위 신원 (즉시 판정 + 나중에 합치기 + 가장자리 규칙)
   identity/embedder.py         ② 외형 모델(OSNet) 어댑터
-  zones/                       구역 읽기, 사람-구역 관계 (겹침 비율·발 위치)
+  zones/                       구역 읽기, 사람-구역 관계 (겹침 비율·발 위치), floor.py 바닥 지도(호모그래피, 카메라 2대 준비)
   interaction/detector.py      ③ 손 뻗기 (dwell / reach …)
   interaction/pose_features.py ③ 손목-선반 거리, 손 높이
   shelf/monitor.py             ④ 선반 지도 (확정·가림·비교·약한 탐지 확인)
@@ -239,9 +243,10 @@ src/
   risk/engine.py               ⑥ 위험 판정 (두 단계 경보, 나감 확정, 신원 확인, 영상 끝)
   sinks/                       기록 파일, 결과 영상, 경보 전송(alert_sink.py → app-pos)
   viz/                         화면 표시 (사람 상자, 선반 지도 shelf_overlay, 상황판 live_panel)
-  pipeline.py                  전체 조립 (장면마다 ①→⑥ 순서)
-scripts/                       평가·실험 도구 (store_eval, merl_eval, retailaction_*, screen_videos, transfer_zones, replay_risk …)
-tests/                         층별 규칙 테스트 (127개)
+  pipeline.py                  전체 조립 (장면마다 작업자 ①~④ → ⑤⑥ → 출력)
+scripts/                       평가·실험 도구 (store_eval, merl_eval, retailaction_*, screen_videos, transfer_zones, replay_risk,
+                               calibrate_floor 바닥 보정, sync_pair 두 각도 시차 맞추기 …)
+tests/                         층별 규칙 테스트 (137개)
 labels/                        정답표 (store01 매장 영상 등)
 docs/                          설계·실험 문서
 ```

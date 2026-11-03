@@ -222,6 +222,7 @@ class IdentityRegistry:
             score=obs.score,
             class_name=obs.class_name,
             keypoints=obs.keypoints,
+            camera_id=obs.camera_id,
             **extra,
         )
 

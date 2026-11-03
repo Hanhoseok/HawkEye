@@ -36,10 +36,18 @@ class Frame:
     """ISO8601 문자열. 영상 시작 시각 + 프레임 재생 위치."""
 
     pts_ms: float
-    """영상 시작 기준 재생 위치(ms). 디버깅·동기화용."""
+    """재생 위치(ms). 모든 층의 시간 비교는 이 값으로 한다.
+    카메라가 둘 이상이면 기준 카메라의 시간축으로 맞춘 값이다 (그 카메라의 재생 위치 + 시차, src/inputs/sync.py)."""
 
     image: Any
     """BGR ndarray. 타입 힌트에 numpy 를 노출하지 않기 위해 Any 로 둔다."""
+
+    camera_id: str = "cam0"
+    """어느 카메라의 장면인지. 카메라가 한 대면 기본값 그대로 (docs/multiview-design.md §7)."""
+
+    wall_ms: float | None = None
+    """실제 시각 (1970-01-01 UTC 기준 ms) = 영상 시작 시각 + pts_ms. 카메라·센서 기록을 맞출 때 쓴다.
+    직접 만든 장면(테스트·재실행 스크립트)에서는 None 일 수 있다."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +77,8 @@ class TrackObservation:
     score: float | None = None
     class_name: str | None = None
     keypoints: Keypoints | None = None
+    camera_id: str = "cam0"
+    """어느 카메라의 관측인지. track_id 는 카메라마다 따로 매겨진다."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -105,6 +115,10 @@ class IdentityObservation:
     stitched: bool = False
     """생김새만으로는 기준에 못 미쳤지만, 위치·시간이 맞아서 이어붙였는지.
     디버깅과 오병합 추적용. 신규 등록이거나 생김새만으로 이어붙였으면 False."""
+
+    camera_id: str = "cam0"
+    """어느 카메라의 관측인지. 카메라가 둘 이상이면 person_id 는 그 카메라 안의 '화면 신원'이고,
+    매장 신원은 카메라 사이를 잇는 층(⑦, 설계 M-5)이 정한다."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

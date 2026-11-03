@@ -484,6 +484,12 @@ angle1 전체 카메라 ─▶ ①w 사람 탐지·추적 (사람 아님 영역 
 
 ### 1단계 — 학습 없이 (공개 모델 그대로)
 
+**진행 (2026-11-03)**
+- **1-0 도구 완료**: `scripts/calibrate_floor.py`(바닥 보정 + 확인 격자 그림), `scripts/sync_pair.py`(두 화면 보며 시차 확정, 자동 추정은 시작값), `src/zones/floor.py`, `src/inputs/sync.py`. 2차 촬영 38쌍 이름 짝짓기 확인.
+  실제 바닥 보정점·구역 파일(`zones/store01_dual/`)과 38쌍 시차(`labels/store01_dual/sync.csv`)는 **아직 만들지 않음** — 바닥 실측(타일 크기)과 사람 확인이 필요하다.
+- **1-1 완료**: 카메라 작업자(`src/camera_worker.py`), `Frame.camera_id`·`wall_ms`, 관측의 `camera_id`, 영상 입력의 시차(`offset_ms`)·rtsp 주소.
+  회귀 확인: 1차 촬영 4편(N01·T01·C03·T08)을 바꾸기 전/후로 돌려 관측·신원·손 뻗기·선반·행동·결제·판정 기록이 **실행 시각과 새 필드를 빼고 모두 같음**. 테스트 137개 통과.
+
 | # | 할 일 | 끝났다고 보는 기준 | 근거 |
 |---|---|---|---|
 | 1-0 | 도구: `sync_pair.py`, `calibrate_floor.py`, 2차 촬영 구역(`floor.yaml`·`angle0.yaml`) | 38쌍 시차 기록, angle1 바닥 투영 오차를 바닥 타일로 확인 | M-3, M-9 |

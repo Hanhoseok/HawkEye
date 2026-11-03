@@ -1,7 +1,8 @@
-"""파이프라인 조립: 영상 입력 -> 탐지 -> 추적 -> 표준 출력 -> 시각화/저장.
+"""파이프라인 조립: 영상 입력 -> 카메라 작업자(①~④ 관찰) -> 손님 장부·위험 판정(⑤⑥) -> 시각화/저장.
 
 이 모듈은 구체 라이브러리가 아니라 core.protocols 의 인터페이스에만 의존한다.
-1차 구현의 범위가 여기서 한눈에 보인다.
+관찰(탐지·추적·신원·손 뻗기·선반)은 카메라 작업자(src/camera_worker.py)가 하고, 여기서는 판단과 출력을 맡는다.
+지금은 카메라 한 대 — 작업자 하나. 카메라를 늘릴 때 작업자를 늘리고 그 사이를 잇는 층을 더한다 (docs/multiview-design.md).
 근거: 05 아키텍처 §1 파이프라인
 """
 
@@ -15,9 +16,10 @@ from pathlib import Path
 
 import cv2
 
+from .camera_worker import CameraWorker
 from .core.config import AppConfig
 from .core.protocols import Detector, Tracker
-from .core.types import IdentityObservation, RiskLevel, TakeCandidate, TrackObservation
+from .core.types import RiskLevel
 from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
 from .sinks.video_writer import VideoWriter
@@ -122,7 +124,9 @@ class TrackingPipeline:
         self.shelves = shelves
         self.panel = panel
         """실시간 상황판 (src/viz/live_panel.py). 있으면 영상 옆에 손님별 상태와 최근 사건을 붙인다."""
-        """선반 지켜보기 (src/shelf/watcher.py). 손님이 다녀간 선반에서 물건이 몇 개 줄었는지 센다."""
+        self.worker = CameraWorker("cam0", detector, tracker, registry, self.zone_map, interactions, shelves)
+        """카메라 한 대 몫의 관찰 층 ①~④. shelves 는 선반 지켜보기 (src/shelf/watcher.py) —
+        손님이 다녀간 선반에서 물건이 몇 개 줄었는지 센다."""
         self._recent: deque = deque()
         """(재생 시각 ms, 줄인 장면, 줄인 비율) — 경보 사진용 최근 장면."""
 
@@ -136,15 +140,9 @@ class TrackingPipeline:
 
         stats = RunStats()
         overlay = TrackOverlay(cfg.output.draw_trail, cfg.output.trail_length)
-        self.tracker.reset()
-        if self.registry is not None:
-            self.registry.reset()
-        if self.interactions is not None:
-            self.interactions.reset()
+        self.worker.reset()
         if self.risk is not None:
             self.risk.reset()
-        if self.shelves is not None:
-            self.shelves.reset()
         alert_until: dict[int, tuple[float, str]] = {}  # 손님 -> (표시 종료 시각, 문구)
         last_pts_ms = 0.0
         last_frame = None
@@ -188,15 +186,14 @@ class TrackingPipeline:
                     risk_log = ObservationLog(out_dir / cfg.output.risk_name)
                     payments_log = ObservationLog(out_dir / cfg.output.payments_name)
                     stats.risk_path = risk_log.path
-                if self.shelves is not None and self.registry is not None:
-                    self.shelves.resolve(source.width, source.height, effective_fps)
+                self.worker.resolve(source.width, source.height, effective_fps)
+                if self.worker.watches_shelves:
                     shelf_log = ObservationLog(out_dir / cfg.output.shelf_name)
                     print("선반: " + ", ".join(
                         f"{name} {tuple(int(v) for v in box)}" for name, box in self.shelves.boxes))
 
                 frame_size = (source.width, source.height)
                 if self.zone_map:
-                    self.zone_map.resolve(source.width, source.height)
                     print(f"구역: {self.zone_map.summary()}")
 
                 print(
@@ -206,8 +203,9 @@ class TrackingPipeline:
                 )
 
                 for frame in source:
-                    detections = self.detector.detect(frame)
-                    observations: list[TrackObservation] = self.tracker.update(frame, detections)
+                    # ①~④ 관찰: 사람 찾기·잇기 → 신원 → 손 뻗기 → 선반 (카메라 작업자)
+                    step = self.worker.step(frame)
+                    detections, observations = step.detections, step.observations
 
                     stats.frames += 1
                     stats.detections += len(detections)
@@ -217,37 +215,28 @@ class TrackingPipeline:
                     if log is not None:
                         log.write_many(observations)
 
-                    # 계층 2: 매장 단위 신원 배정. 이후 로직은 track_id 가 아니라 person_id 를 쓴다.
-                    drawable = observations
-                    if self.registry is not None:
-                        identities: list[IdentityObservation] = self.registry.assign(
-                            frame, observations
-                        )
+                    drawable = step.drawable
+                    if step.identities is not None:
+                        identities = step.identities
                         stats.unique_person_ids.update(
                             o.person_id for o in identities if o.person_id > 0
                         )
                         stats.unassigned += sum(1 for o in identities if o.person_id == -1)
                         if identity_log is not None:
                             identity_log.write_many(identities)
-                        drawable = identities
 
-                        # 계층 3: 선반 앞 '멈춤' 구간 -> TAKE 후보
-                        done: list[TakeCandidate] = []
-                        if self.interactions is not None:
-                            done = self.interactions.update(frame, identities)
-                            if done:
-                                stats.take_candidates.extend(done)
-                                if takes_log is not None:
-                                    takes_log.write_many(done)
+                        done = step.takes
+                        if done:
+                            stats.take_candidates.extend(done)
+                            if takes_log is not None:
+                                takes_log.write_many(done)
 
-                        # 선반 지도: 손님이 다녀간 선반에서 몇 개가 비었/다시 찼는지
-                        visits = []
+                        visits = step.visits
                         if self.shelves is not None:
-                            visits, changes = self.shelves.update(frame, identities, self.registry.resolve)
                             stats.shelf_visits.extend(visits)
                             if shelf_log is not None:
                                 shelf_log.write_many(visits)
-                            for visit, change in zip(visits, changes):
+                            for visit, change in zip(visits, step.changes):
                                 # 손님 장부가 있으면 아래에서 행동(집음/놓음...)으로 알린다. 주인을 못 정한 변화만 여기서.
                                 if (visit.removed or visit.added) and (self.risk is None or visit.person_id <= 0):
                                     print(f"  [선반] {change.start_ms / 1000:6.1f}s ~ {change.end_ms / 1000:6.1f}s  "
@@ -320,7 +309,7 @@ class TrackingPipeline:
             if log is not None:
                 log.close()
             if self.interactions is not None:
-                remaining = self.interactions.flush()
+                remaining = self.worker.flush()
                 if remaining:
                     stats.take_candidates.extend(remaining)
                     if takes_log is not None:
