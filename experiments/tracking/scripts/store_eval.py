@@ -42,7 +42,10 @@ from src.sinks.observation_log import read_identities  # noqa: E402
 from src.zones.zone_map import ZoneMap  # noqa: E402
 from transfer_zones import camera_motion, first_frame, move  # noqa: E402
 
-SOURCE = ROOT.parent.parent / "source"
+SOURCE = ROOT.parent.parent / "source" / "0"
+"""1차 촬영 40편. 2차 촬영(두 각도)이 들어오면서 source/0 으로 옮겨졌다 (2차는 source/1(angle0)·1(angle1))."""
+if not SOURCE.exists():
+    SOURCE = SOURCE.parent   # 예전 배치 (source/ 바로 아래)
 OUT = ROOT / "outputs" / "store_eval"
 LABELS = ROOT / "labels" / "store01"
 REF = "N01"

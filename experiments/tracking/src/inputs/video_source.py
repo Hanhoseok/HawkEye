@@ -6,7 +6,7 @@ OpenCV 로 영상을 프레임 단위로 읽으면서 frame index 와 ISO8601 ti
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -18,9 +18,24 @@ from ..core.types import Frame
 # POS_MSEC 가 이 값을 넘으면 코덱이 쓰레기값을 준 것으로 본다(일주일 분량).
 _MAX_PTS_MS = 7 * 24 * 3600 * 1000.0
 
+_STREAM_PREFIXES = ("rtsp://", "rtsps://", "rtmp://", "http://", "https://")
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _is_stream(source: str) -> bool:
+    return source.lower().startswith(_STREAM_PREFIXES)
+
+
+def _epoch_ms(moment: datetime) -> float:
+    """실제 시각(ms). datetime.timestamp() 는 Windows 에서 1970 년 근처 날짜에 실패해서 뺄셈으로 구한다.
+    시간대가 없는 시각은 UTC 로 본다."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (moment - _EPOCH).total_seconds() * 1000.0
+
 
 class VideoSource:
-    """mp4 파일 또는 카메라 인덱스를 프레임 스트림으로 바꾼다.
+    """mp4 파일, 카메라 인덱스, 실시간 카메라 주소(rtsp:// 등)를 프레임 스트림으로 바꾼다.
 
     with 문으로 쓰면 capture 가 확실히 닫힌다.
 
@@ -39,12 +54,20 @@ class VideoSource:
         scale: float = 1.0,
         scale_mode: str = "shrink",
         blackout: str | None = None,
+        camera_id: str = "cam0",
+        offset_ms: float = 0.0,
     ) -> None:
-        if isinstance(source, str) and not source.isdigit():
+        """camera_id: 장면에 붙일 카메라 이름. offset_ms: 기준 카메라 시간축으로 밀 양 (src/inputs/sync.py 정의)."""
+        if isinstance(source, str) and _is_stream(source):
+            pass  # 실시간 카메라 주소 (rtsp:// 등) — 파일 검사를 하지 않는다 (limitations F-5)
+        elif isinstance(source, str) and not source.isdigit():
             if not Path(source).exists():
                 raise FileNotFoundError(f"영상 파일을 찾을 수 없습니다: {source}")
         elif isinstance(source, str):
             source = int(source)
+
+        self.camera_id = camera_id
+        self.offset_ms = float(offset_ms)
 
         self.source = source
         self.start_frame = max(0, start_frame)
@@ -59,6 +82,7 @@ class VideoSource:
         self._start_time = (
             datetime.fromisoformat(start_time) if start_time else datetime.now().astimezone()
         )
+        self._start_epoch_ms = _epoch_ms(self._start_time)
 
         self._cap = cv2.VideoCapture(source)
         if not self._cap.isOpened():
@@ -143,8 +167,10 @@ class VideoSource:
                     self._use_pts = False
                 if not self._use_pts or (pts_ms == 0.0 and read_index > 0):
                     pts_ms = expected_ms
+                pts_ms += self.offset_ms   # 기준 카메라 시간축으로 (카메라 한 대면 0)
                 timestamp = (self._start_time + timedelta(milliseconds=pts_ms)).isoformat()
-                yield Frame(index=read_index, timestamp=timestamp, pts_ms=pts_ms, image=image)
+                yield Frame(index=read_index, timestamp=timestamp, pts_ms=pts_ms, image=image,
+                            camera_id=self.camera_id, wall_ms=self._start_epoch_ms + pts_ms)
                 emitted += 1
                 if self.max_frames is not None and emitted >= self.max_frames:
                     break

@@ -99,6 +99,7 @@ class BotSortTracker:
                     score=conf,
                     class_name=class_name,
                     keypoints=source.keypoints if source else None,
+                    camera_id=frame.camera_id,
                 )
             )
         return observations

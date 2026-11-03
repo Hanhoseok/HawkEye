@@ -97,6 +97,7 @@ class ByteTrackTracker:
                         if det_index is not None and 0 <= int(det_index[i]) < len(detections)
                         else None
                     ),
+                    camera_id=frame.camera_id,
                 )
             )
         return observations
