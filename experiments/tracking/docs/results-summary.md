@@ -108,4 +108,5 @@ python run_tracking.py --source ../../source/T01.mp4 --zones zones/store01_T01.y
 | 선반 지도·집음/놓음 판정 | `docs/shelf-map.md` |
 | 출구 판정·경보 | `docs/risk-pipeline.md` |
 | 촬영 설계 | `docs/filming-guide.md` |
+| 카메라 2대·실시간·센서 새 구조 (설계, 논문 6편 근거) | `docs/multiview-design.md`, `docs/multiview-papers.md` |
 | 검증 영상 고르기 | `docs/validation-set.md` |

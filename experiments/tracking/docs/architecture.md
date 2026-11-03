@@ -3,6 +3,7 @@
 팀원 공유용. **구조 → 모델을 어떻게 쓰나 → 판단 로직 → 설정·실행 → 파일 지도** 순서.
 결과는 `docs/results-summary.md`, 안 되는 것은 `docs/limitations.md`, 각 층의 설계 이유·실험은 층별 문서(아래 표)에 있다.
 숫자는 2026-10-19 코드 기준 실제 설정값이다 (`config.yaml`, `src/core/config.py`).
+카메라 2대·실시간·선반 센서로 가는 새 구조 설계(아직 구현 전)는 `docs/multiview-design.md`, 그 근거 논문 정리는 `docs/multiview-papers.md`.
 
 ---
 
