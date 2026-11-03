@@ -29,6 +29,8 @@ class CameraStep:
     """이 장면에서 끝난 선반 방문 (ShelfVisit)."""
     changes: list = field(default_factory=list)
     """visits 와 짝을 이루는 선반 변화 (ShelfChange)."""
+    slot_changes: list = field(default_factory=list)
+    """칸 그림 비교로 확정된 칸 변화 (SlotChange, 설계 M-7 보조). 칸을 지정한 선반 카메라에서만."""
 
     @property
     def drawable(self) -> list:
@@ -90,6 +92,7 @@ class CameraWorker:
         # ④ 손님이 다녀간 선반에서 몇 개가 비었/다시 찼는지
         if self.shelves is not None:
             step.visits, step.changes = self.shelves.update(frame, step.identities, self.registry.resolve)
+            step.slot_changes = list(getattr(self.shelves, "new_slot_changes", []))
         return step
 
     def flush(self) -> list[TakeCandidate]:

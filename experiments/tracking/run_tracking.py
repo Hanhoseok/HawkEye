@@ -116,7 +116,42 @@ def parse_args() -> argparse.Namespace:
         type=float,
         help="이 초 동안 '연속으로' 안 보이면 매장을 나간 것으로 본다 (체류 시간 상한이 아님)",
     )
+    parser.add_argument(
+        "--dual-config",
+        help="카메라 2대 설정 파일 (cameras·fusion·detail_interaction, 예: configs/store01_dual.yaml). "
+             "주면 전체 카메라 + 선반 카메라를 함께 돌린다 (docs/multiview-design.md)",
+    )
+    parser.add_argument(
+        "--camera", action="append", metavar="이름=입력",
+        help="카메라 2대 실행에서 그 카메라의 입력 (영상 파일, rtsp:// 주소, USB 번호). 예: --camera angle1=rtsp://...",
+    )
     return parser.parse_args()
+
+
+def apply_dual(config: AppConfig, args: argparse.Namespace) -> AppConfig:
+    """카메라 2대 설정 파일을 기본 설정 위에 얹는다. risk 는 적힌 칸만 바꾼다."""
+    import yaml
+    from src.core.config import CameraConfig, FusionConfig, InteractionConfig
+
+    raw = yaml.safe_load(Path(args.dual_config).read_text(encoding="utf-8")) or {}
+    config.cameras = [CameraConfig(**c) for c in raw.get("cameras") or []]
+    if raw.get("fusion"):
+        config.fusion = FusionConfig(**raw["fusion"])
+    if raw.get("detail_interaction"):
+        config.detail_interaction = InteractionConfig(**{**config.interaction.__dict__, **raw["detail_interaction"]})
+    for key, value in (raw.get("risk") or {}).items():
+        setattr(config.risk, key, value)
+    for spec in args.camera or []:
+        name, _, source = spec.partition("=")
+        for cam in config.cameras:
+            if cam.name == name:
+                cam.source = source
+                if source.isdigit() or "://" in source:
+                    cam.offset_ms = 0.0   # 실시간 카메라는 같은 시계 — 녹화본 시차를 쓰지 않는다
+    missing = [c.name for c in config.cameras if not c.source]
+    if missing:
+        raise SystemExit(f"카메라 입력이 없습니다: {missing} (--camera 이름=입력)")
+    return config
 
 
 def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
@@ -214,6 +249,8 @@ def main() -> int:
         print(f"[warn] 설정 파일이 없어 기본값으로 실행합니다: {config_path}")
         config = AppConfig()
     config = apply_overrides(config, args)
+    if args.dual_config:
+        return run_dual(apply_dual(config, args), args)
 
     print(f"detector : {config.detector.name} ({config.detector.model_path}, {config.detector.device})")
     print(
@@ -305,6 +342,21 @@ def main() -> int:
         print("[error] 처리된 프레임이 없습니다. 입력 영상을 확인하세요.")
         return 1
     return 0
+
+
+def run_dual(config: AppConfig, args: argparse.Namespace) -> int:
+    """전체 카메라 + 선반 카메라 (docs/multiview-design.md §4)."""
+    from src.multicam import build_multicam
+    from src.risk.engine import RiskEngine as _Risk
+
+    pipe = build_multicam(config, args.out_dir or config.output.dir, build_detector=build_detector,
+                          build_tracker=build_tracker, build_embedder=build_embedder,
+                          build_item_detector=build_item_detector, IdentityRegistry=IdentityRegistry,
+                          InteractionDetector=InteractionDetector, ShelfWatcher=ShelfWatcher, RiskEngine=_Risk,
+                          PaymentFeed=PaymentFeed)
+    stats = pipe.run()
+    print(stats.summary())
+    return 0 if sum(stats.frames.values()) else 1
 
 
 if __name__ == "__main__":

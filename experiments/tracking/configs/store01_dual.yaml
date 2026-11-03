@@ -1,0 +1,27 @@
+# 카메라 2대 실행 설정 (docs/multiview-design.md §4) — 기본 config.yaml 위에 얹는다.
+#   python run_tracking.py --dual-config configs/store01_dual.yaml \
+#       --camera "angle1=../../source/1(angle1)/N01.mp4" --camera "angle0=../../source/1(angle0)/20261028_N1.mp4" \
+#       --out-dir outputs/dual_N1
+#   실시간: --camera angle1=rtsp://... --camera angle0=rtsp://...  (같은 시계라 시차를 쓰지 않음)
+# 녹화본의 시차(angle0 의 offset_ms)는 labels/store01_dual/sync.csv 의 그 짝 값을 넣는다.
+cameras:
+  - name: angle1
+    role: overview          # 전체 카메라: 매장 신원·동선·결제·출구
+    source: ""
+    zones: zones/store01_dual/floor.yaml
+    stride: 4               # 60FPS → 15FPS
+    detector: yolo
+  - name: angle0
+    role: detail            # 선반 카메라: 손·선반 물건
+    source: ""
+    zones: zones/store01_dual/angle0.yaml
+    offset_ms: 0
+    stride: 2               # 30FPS → 15FPS
+    detector: yolo-pose
+detail_interaction:         # 선반 카메라 손 뻗기 = 손목이 칸 안에 0.3초 이상 (설계 M-6)
+  signal: hand
+  dwell_seconds: 0.3
+  hand_conf: 0.3
+risk:
+  payment_mode: dwell       # 결제 기록 없음: 계산대 체류 = 결제
+fusion: {}                  # 기본값 (src/core/config.py FusionConfig)

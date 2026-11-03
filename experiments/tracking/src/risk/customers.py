@@ -70,6 +70,11 @@ class ShelfVisit:
     """이 선반에 해당하는 SHELF 구역 이름. 주면 그 구역의 집기 동작만 대신한다."""
     detail: str = ""
     """사람이 읽는 설명 (예: '사라짐: 1단 2번째 bottle')."""
+    slot_change: str | None = None
+    """칸 그림 비교 결과 (설계 M-7 보조): '줄어듦' / '늘어남' / '바뀜'(방향 모름) / None(칸 그대로 또는 비교 안 함).
+    물건 탐지가 못 보는 물건도 칸이 비었는지는 알 수 있다."""
+    source: str = "vision"
+    """근거 출처: vision (카메라) / sensor (선반 센서만) / sensor+vision (둘 다, 개수는 센서)."""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -122,21 +127,31 @@ class ShelfAction:
 def classify_visit(visit: ShelfVisit, takes: list[TakeCandidate]) -> ShelfAction:
     """선반 방문 하나를 행동으로. 같은 시간·같은 선반의 손 뻗기를 근거로 붙인다."""
     covered = [t for t in takes if visit.covers(t)]
+    count = visit.removed - visit.added
+    shelf_word = "센서" if visit.source == "sensor" else ("센서+선반" if visit.source == "sensor+vision" else "선반")
     if visit.removed and visit.added:
         kind = "MOVE"
     elif visit.removed:
         kind = "TAKE"
     elif visit.added:
         kind = "RETURN"
+    elif visit.slot_change == "줄어듦":
+        # 물건 탐지는 '변화 없음'인데 칸 그림은 비었다 — 모델이 못 보는 물건 (설계 M-7 보조 표)
+        kind, count, shelf_word = "TAKE", 1, "칸 변화"
+    elif visit.slot_change == "늘어남":
+        kind, count, shelf_word = "RETURN", -1, "칸 변화"
+    elif visit.slot_change == "바뀜" and covered:
+        # 칸은 바뀌었는데 방향을 모른다 — 손 뻗기를 지우지 않고 '확인 못 함'(+1)으로 남긴다 (D-17)
+        kind, count, shelf_word = "UNVERIFIED", 1, "칸 변화"
     else:
         kind = "TOUCH" if covered else "LOOK"
     detail = visit.detail.split("] ", 1)[-1].split(" -> ", 1)[0] if visit.detail else ""
     if detail == "변화 없음":
         detail = ""
     return ShelfAction(
-        person_id=visit.person_id, kind=kind, count=visit.removed - visit.added,
+        person_id=visit.person_id, kind=kind, count=count,
         start_frame=visit.start_frame, end_frame=visit.end_frame,
-        evidence="선반+동작" if covered else "선반만", shelf=visit.shelf,
+        evidence=f"{shelf_word}+동작" if covered else f"{shelf_word}만", shelf=visit.shelf,
         reach_frames=tuple((t.start_frame, t.end_frame) for t in covered), detail=detail,
     )
 

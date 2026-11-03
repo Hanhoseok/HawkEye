@@ -3,7 +3,7 @@
 팀원 공유용. **구조 → 모델을 어떻게 쓰나 → 판단 로직 → 설정·실행 → 파일 지도** 순서.
 결과는 `docs/results-summary.md`, 안 되는 것은 `docs/limitations.md`, 각 층의 설계 이유·실험은 층별 문서(아래 표)에 있다.
 숫자는 2026-10-19 코드 기준 실제 설정값이다 (`config.yaml`, `src/core/config.py`).
-카메라 2대·실시간·선반 센서로 가는 새 구조 설계(아직 구현 전)는 `docs/multiview-design.md`, 그 근거 논문 정리는 `docs/multiview-papers.md`.
+카메라 2대·실시간·선반 센서 구조는 §6 (2026-11-03 1단계 구현), 설계는 `docs/multiview-design.md`, 근거 논문은 `docs/multiview-papers.md`, 구현 중 생긴 일은 `docs/multiview-progress.md`.
 
 ---
 
@@ -246,7 +246,41 @@ src/
   pipeline.py                  전체 조립 (장면마다 작업자 ①~④ → ⑤⑥ → 출력)
 scripts/                       평가·실험 도구 (store_eval, merl_eval, retailaction_*, screen_videos, transfer_zones, replay_risk,
                                calibrate_floor 바닥 보정, sync_pair 두 각도 시차 맞추기 …)
-tests/                         층별 규칙 테스트 (137개)
+tests/                         층별 규칙 테스트 (148개)
 labels/                        정답표 (store01 매장 영상 등)
 docs/                          설계·실험 문서
 ```
+
+## 6. 카메라 2대 실행 (2026-11-03, 1단계)
+
+전체 카메라(angle1, 높은 구석)와 선반 카메라(angle0, 선반 높이)를 함께 돌린다. 설계는 `docs/multiview-design.md`.
+
+```
+angle1 전체 카메라 → 작업자: 사람(사람 아님 영역 제외) → 화면 신원 → 바닥 좌표(FloorZoneMap) → 선반 앞 머묾 ─┐
+angle0 선반 카메라 → 작업자: 사람+관절 → 화면 신원 → 손-칸 접촉(손목이 칸 안) / 선반 지도 + 칸 그림 비교 ─┼→ ⑦ DualJudge
+선반 센서(있으면) ─────────────────────────────────────────────────────────────────────────────┘
+⑦ 교차 화면 연결(위치 1순위 + 외형) → 매장 신원 = 전체 카메라 신원
+   선반 사건 묶기(가린 사람의 짝 → 손-칸 접촉 → 선반 앞 한 명) → 전체 카메라 손님의 집기·방문으로
+→ ⑤ 손님 장부 → ⑥ 위험 판정 (구역은 모두 바닥 좌표)
+```
+
+| 무엇 | 코드 | 설정 |
+|---|---|---|
+| 두 영상을 공통 시각 순서로 섞어 처리 | `src/multicam.py` (`MultiCameraPipeline`, `build_multicam`) | `configs/store01_dual.yaml` |
+| 녹화본 시차 / 실시간 카메라 | `src/inputs/video_source.py` (offset_ms) / `src/inputs/live_source.py` (최신 장면만, 재연결) | 카메라 `source` 가 rtsp·http·숫자면 실시간 |
+| 바닥 지도·바닥 구역 | `src/zones/floor.py` (`FloorMap`, `FloorZoneMap`) | `zones/store01_dual/floor.yaml` |
+| 칸·선반 지도·띠 축 | `zones/store01_dual/angle0.yaml` | `band_map` 은 `dual_eval.py calibrate` 가 채움 |
+| 교차 화면 연결 | `src/fusion/cross_view.py` | `fusion.*` (`FusionConfig`) |
+| 선반 사건 묶기·센서 | `src/fusion/shelf_events.py` | `fusion.sensor_path`, `sensor_unit_g` |
+| 합치기 + 판정 (실시간·재실행 공용) | `src/fusion/judge.py` (`DualJudge`) | |
+| 칸 그림 비교 | `src/shelf/slot_diff.py` | |
+| 사람 아님 영역 | `src/detectors/masked.py` | `floor.yaml` 의 `ignore_image` |
+| 평가 | `scripts/dual_eval.py` (run / sync / calibrate / judge) | `labels/store01_dual/` (정답·시차·가짜 센서) |
+
+```bash
+python run_tracking.py --dual-config configs/store01_dual.yaml \
+    --camera "angle1=../../source/1(angle1)/N01.mp4" --camera "angle0=../../source/1(angle0)/20261028_N1.mp4"
+python run_tracking.py --dual-config configs/store01_dual.yaml --camera angle1=rtsp://... --camera angle0=rtsp://...
+```
+
+출력(`<out>/`): 카메라별 `angle1/`·`angle0/`(identities, take_candidates, 선반 방문, 칸 변화) + 가운데 `cross_view_links`, `shelf_events`(주인을 어떻게 정했나), `actions`, `payments`, `risk_events`, `appearance`.

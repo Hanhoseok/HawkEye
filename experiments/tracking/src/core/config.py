@@ -417,6 +417,58 @@ class OutputConfig:
 
 
 @dataclass
+class CameraConfig:
+    """카메라 2대 실행에서 카메라 하나 (docs/multiview-design.md M-1).
+
+    role:
+      overview — 전체 카메라 (angle1). 매장 신원·동선·결제·출구. zones 는 바닥 지도 파일(floor.yaml).
+      detail   — 선반 카메라 (angle0). 손·선반 물건. zones 는 화면 구역 파일(선반 칸 = SHELF 구역).
+    """
+
+    name: str = "cam0"
+    source: str = ""
+    role: str = "overview"
+    zones: str | None = None
+    offset_ms: float = 0.0
+    """기준(전체) 카메라 시간축으로 밀 양. 녹화본은 labels/<촬영>/sync.csv 에서 채운다."""
+    stride: int = 1
+    """N 장면에 1장 처리. 60FPS 전체 카메라는 4 (= 15FPS)."""
+    detector: str = "yolo"
+    """yolo / yolo-pose. 선반 카메라는 손목이 필요해 yolo-pose."""
+
+
+@dataclass
+class FusionConfig:
+    """⑦ 합치기 — 교차 화면 연결과 선반 사건 묶기 (설계 M-4·M-5·M-7·M-8). 기준값은 정상(N) 영상으로 정한다."""
+
+    window_seconds: float = 0.5
+    """짝을 다시 정하는 조각 길이 (Complementary-View MHT 의 짧은 조각 단위 연결)."""
+    position_weight: float = 0.7
+    """점수 = w × 위치 + (1 − w) × 외형. 위치가 1순위 (위치를 빼면 화면 사이 맞히기 84.0 → 15.5)."""
+    min_score: float = 0.5
+    """이보다 낮으면 짝 없음 — 한쪽 화면에만 있는 사람."""
+    keep_bonus: float = 0.1
+    """지금 짝에 더해 주는 점수. 한 조각의 흔들림으로 짝을 바꾸지 않게."""
+    max_band_gap: float = 0.25
+    """선반 앞 띠 위치 차이가 이만큼이면 위치 점수 0."""
+    pair_tolerance_seconds: float = 0.15
+    """두 화면 표본을 '같은 때'로 보는 시간 차 — 시차 추정 오차(설계 §2-3)를 견디게."""
+    event_tolerance_seconds: float = 1.0
+    """같은 칸의 선반 변화·센서·손 접촉을 한 사건으로 묶는 시간 차 (M-8)."""
+    shelf_zone: str = "shelf"
+    """두 카메라의 집기 동작·선반 방문을 손님 장부에서 맞출 공통 구역 이름."""
+    release_delay_seconds: float = 1.5
+    """선반 카메라의 손 접촉·선반 방문을 끝나고 이만큼 기다렸다 주인을 정한다 — 짝 기록·칸 그림 결과가 쌓이게.
+    (처음엔 손 접촉 1.0초였는데 2차 C1 에서 손 접촉과 방문의 주인이 갈려 1.5초로 맞췄다)"""
+    unchanged_clears_all: bool = True
+    """물건 탐지·칸 그림이 모두 '그대로'인 방문이면 그때 선반 앞 띠의 다른 손님 손 뻗기도 '만지기만'으로 (2차 C12 를 보고 추가)."""
+    sensor_path: str | None = None
+    """선반 센서 기록 (CSV: time_sec, slot, delta_g, confidence). 없으면 센서 없이."""
+    sensor_unit_g: dict = field(default_factory=dict)
+    """칸별 물건 하나 무게(g). 무게 변화를 개수로 바꾼다."""
+
+
+@dataclass
 class AppConfig:
     video: VideoConfig = field(default_factory=VideoConfig)
     detector: DetectorConfig = field(default_factory=DetectorConfig)
@@ -428,6 +480,11 @@ class AppConfig:
     alerts: AlertConfig = field(default_factory=AlertConfig)
     shelves: ShelfConfig = field(default_factory=ShelfConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    cameras: list[CameraConfig] = field(default_factory=list)
+    """비어 있으면 카메라 한 대(video.source) — 지금까지와 같다."""
+    fusion: FusionConfig = field(default_factory=FusionConfig)
+    detail_interaction: InteractionConfig | None = None
+    """선반 카메라의 손 뻗기 설정 (손목이 칸 안). 없으면 interaction 을 그대로 쓴다."""
 
     @classmethod
     def load(cls, path: str | Path) -> "AppConfig":
@@ -443,6 +500,10 @@ class AppConfig:
             alerts=AlertConfig(**(raw.get("alerts") or {})),
             shelves=ShelfConfig(**(raw.get("shelves") or {})),
             output=OutputConfig(**(raw.get("output") or {})),
+            cameras=[CameraConfig(**c) for c in raw.get("cameras") or []],
+            fusion=FusionConfig(**(raw.get("fusion") or {})),
+            detail_interaction=(InteractionConfig(**raw["detail_interaction"])
+                                if raw.get("detail_interaction") else None),
         )
 
 

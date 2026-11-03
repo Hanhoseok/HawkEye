@@ -153,6 +153,11 @@ class IdentityRegistry:
             person_id = self._alias[person_id]
         return person_id
 
+    def appearance(self, person_id: int) -> np.ndarray | None:
+        """그 손님의 외형 평균(단위 벡터). 카메라 사이 연결의 보조 근거 (설계 M-4). 사진이 없으면 None."""
+        person = self._people.get(self.resolve(person_id))
+        return person.mean if person is not None else None
+
     def recent_consistency(self, person_id: int) -> float | None:
         """최근 사진 몇 장의 평균과 그 이전 평균의 유사도.
 

@@ -19,9 +19,14 @@ from .monitor import ShelfChange, ShelfItem, ShelfMonitor
 
 
 class ShelfWatcher:
-    def __init__(self, config: ShelfConfig, detector) -> None:
+    def __init__(self, config: ShelfConfig, detector, slots: list | None = None) -> None:
+        """slots: (칸 이름, 화면 비율 다각형) — 주면 칸 그림 비교(설계 M-7 보조)도 함께 돌린다."""
         self.config = config
         self.detector = detector
+        self.slots = slots or []
+        self.slot_diff = None
+        self.new_slot_changes: list = []
+        """이번 장면에서 확정된 칸 변화 (SlotChange)."""
         self.monitors: list[tuple[dict, ShelfMonitor]] = []
         self.per_window = 1
         self._seen: list[int] = []
@@ -43,11 +48,22 @@ class ShelfWatcher:
                                                      weak_presence=self.config.weak_presence)))
         self.per_window = max(1, int(round(self.config.stable_seconds * fps)))
         self._seen = [0] * len(self.monitors)
+        if self.slots:
+            from .slot_diff import SlotDiff, SlotDiffConfig
+            boxes = []
+            for name, polygon in self.slots:
+                xs = [x * width for x, _ in polygon]
+                ys = [y * height for _, y in polygon]
+                boxes.append((name, (min(xs), min(ys), max(xs), max(ys))))
+            self.slot_diff = SlotDiff(boxes, SlotDiffConfig(stable_seconds=self.config.stable_seconds))
 
     def reset(self) -> None:
         for _, monitor in self.monitors:
             monitor.reset()
         self._seen = [0] * len(self.monitors)
+        if self.slot_diff is not None:
+            self.slot_diff.reset()
+        self.new_slot_changes = []
         self.frames = self.detect_calls = 0
 
     def summary(self) -> str:
@@ -79,6 +95,8 @@ class ShelfWatcher:
             ((resolve(o.person_id) if resolve else o.person_id) if o.person_id > 0 else -1, o.bbox)
             for o in identities
         ]
+        if self.slot_diff is not None:
+            self.new_slot_changes = self.slot_diff.update(frame.pts_ms, frame.image, [b for _, b in people])
         # 물건 탐지(1280, 무거움)는 필요할 때만:
         #   - 선반이 사람에게 가려졌으면 건너뛴다 (가린 동안의 탐지는 어차피 버린다)
         #   - 아무 일 없이 지도가 확정돼 있으면 idle_every 장면에 한 번만 확인한다

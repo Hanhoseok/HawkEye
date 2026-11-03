@@ -1,0 +1,162 @@
+"""카메라 2대의 관찰을 합쳐 손님 장부·위험 판정(⑤⑥)에 넘긴다 — 실시간 파이프라인과 기록 재실행이 같이 쓴다.
+
+    선반 카메라 장면  → detail_step   : 사람 위치(띠 축)·외형을 교차 화면 연결에, 손 접촉·선반 방문은 대기열에
+    전체 카메라 장면  → overview_step : 바닥 위치를 연결에, 짝을 갱신하고, 대기열에서 주인이 정해진 사건을 꺼내
+                                        전체 카메라 손님의 기록으로 위험 판정에 넣는다
+
+판단(⑤⑥)은 전체 카메라의 장면 시계로 돈다. 선반 카메라의 사건은 짝이 그 시간을 덮을 때까지(조각 2개) 기다렸다 넘긴다.
+영상·모델 라이브러리를 모른다 — 저장된 기록만으로 다시 돌릴 수 있다 (scripts/dual_eval.py judge).
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import Callable
+
+import numpy as np
+
+from ..core.config import FusionConfig
+from ..core.types import Frame, IdentityObservation, RiskEvent, TakeCandidate
+from ..risk.customers import ShelfVisit
+from ..zones.floor import FloorMap
+from .cross_view import CrossViewLinker
+from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
+
+
+class DualJudge:
+    def __init__(
+        self,
+        config: FusionConfig,
+        risk,
+        floor: FloorMap,
+        band_map: tuple[float, float],
+        detail_axis: TimeAxis,
+        overview_axis: TimeAxis,
+        detail_width: int,
+        overview_size: tuple[int, int],
+        slot_shelf: dict[str, str] | None = None,
+        sensors: list[SensorEvent] | None = None,
+    ) -> None:
+        self.config = config
+        self.risk = risk
+        self.floor = floor
+        self.band_map = band_map
+        """선반 카메라 사람 상자 가운데 x(화면 비율) → 띠 위치: band = a·x + b. 정상 영상으로 맞춘다."""
+        self.detail_width = detail_width
+        self.overview_size = overview_size
+        self.linker = CrossViewLinker(config)
+        self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors)
+        self.reset()
+
+    def reset(self) -> None:
+        self.linker.reset()
+        self.fuser.reset()
+        self.risk.reset()
+        self._pending_takes: list[tuple[float, TakeCandidate]] = []
+        self._pending_visits: list[tuple[float, ShelfVisit, float, float]] = []
+        self.events: list[RiskEvent] = []
+        self.unowned_takes = 0
+
+    # ------------------------------------------------------------------
+
+    def detail_band(self, bbox) -> float:
+        a, b = self.band_map
+        return a * ((bbox[0] + bbox[2]) / 2.0 / self.detail_width) + b
+
+    def detail_step(
+        self,
+        pts_ms: float,
+        identities: list[IdentityObservation],
+        takes: list[TakeCandidate],
+        visits: list[tuple[ShelfVisit, float, float]],
+        appearance: Callable[[int], np.ndarray | None] | None = None,
+        resolve: Callable[[int], int] | None = None,
+        slot_changes: list | None = None,
+    ) -> None:
+        for sc in slot_changes or []:
+            self.fuser.note_slot_change(sc)
+        for obs in identities:
+            if obs.person_id <= 0:
+                continue
+            pid = resolve(obs.person_id) if resolve else obs.person_id
+            self.linker.observe("detail", pid, pts_ms, self.detail_band(obs.bbox),
+                                appearance(pid) if appearance else None)
+        for t in takes:
+            pid = resolve(t.person_id) if resolve and t.person_id > 0 else t.person_id
+            self._pending_takes.append((self.fuser.detail_axis.to_ms(t.end_frame), replace(t, person_id=pid)))
+        for visit, start_ms, end_ms in visits:
+            self._pending_visits.append((end_ms, visit, start_ms, end_ms))
+
+    def overview_step(
+        self,
+        frame: Frame,
+        identities: list[IdentityObservation],
+        takes: list[TakeCandidate],
+        merges: list[dict],
+        appearance: Callable[[int], np.ndarray | None] | None = None,
+        resolve: Callable[[int], int] | None = None,
+    ):
+        w, h = self.overview_size
+        for obs in identities:
+            if obs.person_id <= 0:
+                continue
+            pid = resolve(obs.person_id) if resolve else obs.person_id
+            point = self.floor.foot_on_floor(obs.bbox, w, h)
+            band = self.floor.band_position(point)
+            in_band = any(z.name == self.config.shelf_zone for z in self.floor.zones_at(point))
+            if band is not None and not (-0.3 <= band <= 1.3):
+                band = None
+            self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None)
+            if in_band:
+                self.fuser.note_band(frame.pts_ms, pid)
+        self.linker.update(frame.pts_ms)
+        # 손 접촉도 방문과 같이 기다렸다 넘긴다 — 그 시간을 덮는 짝 기록이 쌓인 뒤에 주인을 정해야
+        # 손 접촉과 방문이 같은 손님으로 해석된다 (2차 C1: 일찍 정하면 손 접촉과 방문의 주인이 갈렸다)
+        delay = self.config.release_delay_seconds * 1000.0
+        fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.VISIT_DELAY_MS)
+        fused_visits += self.fuser.sensor_only(frame.pts_ms)
+        events, records = self.risk.update(frame, identities, list(takes) + fused_takes, merges, fused_visits)
+        self.events.extend(events)
+        return events, records
+
+    def finish(self, frame: Frame) -> list[RiskEvent]:
+        fused_takes, fused_visits = self._release(float("inf"), float("inf"))
+        fused_visits += self.fuser.sensor_only(float("inf"))
+        if fused_takes or fused_visits:
+            events, _ = self.risk.update(frame, [], fused_takes, [], fused_visits)
+            self.events.extend(events)
+        done = self.risk.finish(frame, self.overview_size)
+        self.events.extend(done)
+        return done
+
+    VISIT_DELAY_MS = 1500.0
+    """선반 방문은 끝나고 이만큼 기다렸다 넘긴다 — 칸 그림 비교 결과(같은 무렵 확정)를 함께 붙이려고."""
+
+    def _release(self, until_ms: float, visits_until_ms: float | None = None) -> tuple[list[TakeCandidate], list[ShelfVisit]]:
+        visits_until_ms = until_ms if visits_until_ms is None else visits_until_ms
+        takes, keep = [], []
+        for end_ms, take in self._pending_takes:
+            if end_ms <= until_ms:
+                fused = self.fuser.detail_take(take)
+                if fused is None:
+                    self.unowned_takes += 1
+                else:
+                    takes.append(fused)
+            else:
+                keep.append((end_ms, take))
+        self._pending_takes = keep
+        visits, keepv = [], []
+        for item in self._pending_visits:
+            end_ms, visit, start_ms, stop_ms = item
+            if end_ms <= visits_until_ms:
+                fused = self.fuser.detail_visit(visit, start_ms, stop_ms)
+                visits.append(fused)
+                if self.config.unchanged_clears_all and fused.removed == 0 and fused.added == 0                         and fused.slot_change is None:
+                    # 물건 탐지도 칸 그림도 '그대로'인 방문: 그 시간 선반 앞에 있던 다른 손님의 손 뻗기도
+                    # 아무것도 안 가져간 것이다 (설계 M-7 — 둘 다 그대로일 때만 집기를 지운다)
+                    for other in self.fuser.present(start_ms, stop_ms) - {fused.person_id}:
+                        visits.append(replace(fused, person_id=other, detail=fused.detail + " (함께 있던 손님)"))
+            else:
+                keepv.append(item)
+        self._pending_visits = keepv
+        return takes, visits
