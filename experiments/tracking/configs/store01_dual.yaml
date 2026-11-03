@@ -24,4 +24,6 @@ detail_interaction:         # 선반 카메라 손 뻗기 = 손목이 칸 안에
   hand_conf: 0.3
 risk:
   payment_mode: dwell       # 결제 기록 없음: 계산대 체류 = 결제
+  inside_zones: [shelf, counter, aisle]   # 이 바닥 구역에 1초 이상 들어온 사람만 손님 (문 앞·창밖 행인 제외)
+  inside_seconds: 1.0
 fusion: {}                  # 기본값 (src/core/config.py FusionConfig)

@@ -70,6 +70,8 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     cfg.detail_interaction = InteractionConfig(**{**cfg.interaction.__dict__, "signal": "hand",
                                                   "dwell_seconds": 0.3, "hand_conf": 0.3})
     cfg.risk.payment_mode = "dwell"   # 결제 기록 없음: 계산대 체류 = 결제 (사용자 확인 규칙)
+    # 매장 안 바닥(선반 앞·계산대·통로)에 1초 이상 들어온 사람만 손님 — 문 앞·창밖 행인·입장 순간 겹친 상자 제외 (C-20)
+    cfg.risk.inside_zones, cfg.risk.inside_seconds = ["shelf", "counter", "aisle"], 1.0
     cfg.output.write_video = False
     cfg.shelves.log_items = True
     from fake_sensor import UNIT_G
@@ -240,7 +242,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     return {
         "pair": pair, "kind": kind(pair), "verdicts": levels, "correct": correct,
         "reasons": [f"P{e.person_id} {e.level.value}: {e.reason}" for e in finals],
-        "people": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
+        "people": sum(1 for c in risk.book.customers.values() if c.seen_inside),
+        "identities": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
         "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes,
         "actions": [a.describe() for a in risk.all_actions() if a.kind != "LOOK"],
         "payments": sum(1 for p in risk.book.payments if p.method == "dwell"),

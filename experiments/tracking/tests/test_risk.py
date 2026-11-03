@@ -416,3 +416,39 @@ def test_video_end_judges_customer_half_out_at_exit_edge():
         eng.update(at(5.0 + i * 0.1), [person(1, EXIT, x=360.0)])   # 상자 x 360~410: 화면(400) 오른쪽 끝에 걸침
     final = eng.finish(at(5.95), frame_size=(400, 400))
     assert levels(final) == [H]
+
+
+def test_only_people_who_came_inside_are_judged_when_inside_zones_are_set():
+    """카메라 2대(2차 촬영): 문 앞에만 서 있던 사람·잠깐 잡힌 조각은 손님이 아니다 (limitations C-20).
+
+    '매장 안' = counter·aisle 구역에 1초 이상. 출구 구역에만 있다 사라진 사람에게는 판정을 내지 않는다.
+    """
+    zm = ZoneMap([
+        Zone("aisle", ZoneType.OTHER, ((0, 100), (400, 100), (400, 330), (0, 330))),
+        Zone("counter", ZoneType.CHECKOUT, ((0, 250), (400, 250), (400, 320), (0, 320))),
+        Zone("door", ZoneType.EXIT, ((0, 340), (400, 340), (400, 400), (0, 400))),
+    ])
+    zm.resolve(400, 400)
+    eng = RiskEngine(RiskConfig(inside_zones=["aisle", "counter"], inside_seconds=1.0), zm, PaymentFeed([]))
+    # 1번: 문 앞에만 2초 서 있다 사라짐 (문 앞 행인) — 집기 동작이 붙어도 판정 없음
+    events = walk(eng, 1, EXIT, 0.0, 2.0, takes=[take(1)])
+    # 2번: 통로에 0.5초만 잡혔다 사라진 조각 → 손님 아님
+    events += walk(eng, 2, AISLE, 2.0, 0.5)
+    # 3번: 통로에 2초 → 출구로 나감 (집음 1, 결제 없음) → HIGH_RISK
+    eng.update(at(4.0), [person(3, AISLE)], takes=[take(3, 40)])
+    events += walk(eng, 3, AISLE, 4.0, 2.0)
+    events += walk(eng, 3, EXIT, 6.0, 1.0)
+    for i in range(40):
+        ev, _ = eng.update(at(7.0 + i * 0.1), [])
+        events += ev
+    finals = [(e.person_id, e.level) for e in events if e.level != W]
+    assert finals == [(3, H)]
+    assert not eng.book.customers[1].seen_inside and not eng.book.customers[2].seen_inside
+    assert eng.book.customers[3].seen_inside
+
+
+def test_default_inside_rule_is_unchanged():
+    # inside_zones 를 비우면 지금까지처럼 '문 밖이 아니면 매장 안' — 출구에만 있던 사람도 손님
+    eng = engine()
+    walk(eng, 1, EXIT, 0.0, 1.0)
+    assert eng.book.customers[1].seen_inside

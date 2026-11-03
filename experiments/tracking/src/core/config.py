@@ -256,6 +256,15 @@ class RiskConfig:
     payments: str | None = None
     """결제 기록 CSV 경로 (src/risk/payments.py). 없으면 아무도 결제하지 않은 것으로 본다."""
 
+    inside_zones: list[str] = field(default_factory=list)
+    """'매장 안'으로 칠 구역 이름 (예: shelf, counter, aisle). 발이 이 구역에 inside_seconds 이상 있어야 손님으로 판정한다.
+    비어 있으면 지금까지처럼 '문 밖 구역이 아니면 매장 안'.
+    2차 촬영(카메라 2대)에서 문 앞에 서 있는 사람·유리창 밖 행인·입장 순간 외투와 겹친 상자가 모두 손님이 되어
+    손님 수가 38쌍 중 26쌍에서 많게 나왔다 (limitations C-20)."""
+
+    inside_seconds: float = 0.0
+    """inside_zones 안에 이만큼 연속으로 있어야 '매장 안에 들어온 손님'."""
+
     exit_min_seconds: float = 0.5
     """발이 출구 구역 안에 이만큼 연속으로 있어야 '출구에 들어섰다'고 본다.
 
