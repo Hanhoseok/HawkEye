@@ -489,6 +489,13 @@ angle1 전체 카메라 ─▶ ①w 사람 탐지·추적 (사람 아님 영역 
   실제 바닥 보정점·구역 파일(`zones/store01_dual/`)과 38쌍 시차(`labels/store01_dual/sync.csv`)는 **아직 만들지 않음** — 바닥 실측(타일 크기)과 사람 확인이 필요하다.
 - **1-1 완료**: 카메라 작업자(`src/camera_worker.py`), `Frame.camera_id`·`wall_ms`, 관측의 `camera_id`, 영상 입력의 시차(`offset_ms`)·rtsp 주소.
   회귀 확인: 1차 촬영 4편(N01·T01·C03·T08)을 바꾸기 전/후로 돌려 관측·신원·손 뻗기·선반·행동·결제·판정 기록이 **실행 시각과 새 필드를 빼고 모두 같음**. 테스트 137개 통과.
+- **1-2 ~ 1-7 구현 (2026-11-03)** — 자세한 과정·판단·결과는 `docs/multiview-progress.md`.
+  - 1-2 바닥 구역(`FloorZoneMap`, `zones/store01_dual/floor.yaml`, 보정점은 추정값) / 1-3 교차 화면 연결(`fusion/cross_view.py`) /
+    1-4 손-칸 접촉(`signal: hand` 를 칸 구역에) + 칸 그림 비교(`shelf/slot_diff.py`) / 1-5 선반 사건 묶기 + 판정(`fusion/shelf_events.py`, `fusion/judge.py`) /
+    1-6 가짜 센서(`scripts/fake_sensor.py`) / 1-7 실시간 입력(`inputs/live_source.py`, 실시간 흉내 `scripts/live_sim.py`).
+  - 2차 촬영 38쌍: 정상 11/12 · 절도 6/9 · 복합 정상 15/17 (전체 카메라만: 10/12 · 6/9 · 16/17).
+    놓친 절도 3편은 결제 기록이 없어 '계산대에 서 있기만 한' 경우(E-13) — 카메라는 집은 물건을 맞게 잡았다.
+  - **기준을 못 채운 것**: 1-3 의 CVIDF1(프레임 단위 정답 없음), 1-7 의 실제 rtsp 카메라 10분 시험(카메라 없음, 녹화본 흉내로 대신), 속도(카메라당 4~5장, G-9).
 
 | # | 할 일 | 끝났다고 보는 기준 | 근거 |
 |---|---|---|---|

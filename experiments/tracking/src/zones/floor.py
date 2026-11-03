@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from ..core.types import ZoneType
+from ..core.types import Zone, ZoneHit, ZoneType
 from .geometry import contains_point
 
 Point = tuple[float, float]
@@ -82,12 +82,16 @@ class FloorMap:
     """한 카메라의 화면 ↔ 바닥 대응과 바닥 구역."""
 
     def __init__(self, camera: str, image_points: list[Point], floor_points: list[Point],
-                 zones: list[FloorZone] | None = None) -> None:
+                 zones: list[FloorZone] | None = None, band: tuple[float, float] | None = None,
+                 note: str = "") -> None:
         self.camera = camera
         self.image_points = [tuple(map(float, p)) for p in image_points]
         """화면 비율 0~1 — 처리 해상도가 바뀌어도 그대로 쓰려고."""
         self.floor_points = [tuple(map(float, p)) for p in floor_points]
         self.zones = list(zones or [])
+        self.band = band
+        """선반 앞 띠 축: 바닥 y(통로 방향)의 (시작, 끝) cm. 교차 화면 연결의 공통 축 (src/fusion/cross_view.py)."""
+        self.note = note
         self._h = fit_homography(self.image_points, self.floor_points)
         self._h_inv = np.linalg.inv(self._h)
 
@@ -103,11 +107,17 @@ class FloorMap:
             if len(polygon) < 3:
                 raise ValueError(f"바닥 구역 '{item.get('name')}' 의 꼭짓점이 3개 미만입니다")
             zones.append(FloorZone(item["name"], ZoneType(item.get("type", "OTHER")), polygon))
-        return cls(raw.get("camera", "cam0"), cal.get("image") or [], cal.get("floor") or [], zones)
+        band = raw.get("band")
+        return cls(raw.get("camera", "cam0"), cal.get("image") or [], cal.get("floor") or [], zones,
+                   (float(band["start"]), float(band["end"])) if band else None, raw.get("note", ""))
 
     def to_dict(self) -> dict:
-        return {
-            "camera": self.camera,
+        out = {"camera": self.camera}
+        if self.note:
+            out["note"] = self.note
+        if self.band:
+            out["band"] = {"start": self.band[0], "end": self.band[1]}
+        return out | {
             "calibration": {
                 "image": [[round(x, 5), round(y, 5)] for x, y in self.image_points],
                 "floor": [[round(x, 1), round(y, 1)] for x, y in self.floor_points],
@@ -135,11 +145,74 @@ class FloorMap:
         x1, _, x2, y2 = bbox
         return self.to_floor((x1 + x2) / 2.0 / width, y2 / height)
 
+    def band_position(self, point: Point) -> float | None:
+        """바닥 점의 선반 앞 띠 위치 (0 = 시작, 1 = 끝). 띠 축이 없으면 None."""
+        if not self.band:
+            return None
+        start, end = self.band
+        return (point[1] - start) / (end - start)
+
     def zones_at(self, point: Point) -> list[FloorZone]:
         return [z for z in self.zones if contains_point(z.polygon, point[0], point[1])]
+
+    def image_polygon(self, zone: FloorZone, width: int, height: int) -> tuple[Point, ...]:
+        """바닥 구역을 화면 픽셀 다각형으로 (그리기·자세 계산용)."""
+        pts = []
+        for fx, fy in zone.polygon:
+            u, v = self.to_image(fx, fy)
+            pts.append((u * width, v * height))
+        return tuple(pts)
 
     def reprojection_error_cm(self) -> float:
         """보정점을 행렬로 옮겼을 때 실제 위치와의 평균 거리 (cm). 4점이면 0 에 가깝고, 점이 많을수록 의미가 있다."""
         errors = [np.hypot(*(np.subtract(self.to_floor(*img), flr)))
                   for img, flr in zip(self.image_points, self.floor_points)]
         return float(np.mean(errors))
+
+
+class FloorZoneMap:
+    """바닥 구역을 화면 구역(ZoneMap)과 같은 방식으로 쓰게 하는 어댑터.
+
+    손 뻗기·손님 장부·위험 판정은 `evaluate(bbox)` 가 돌려주는 ZoneHit 만 본다. 그래서 이 어댑터를 끼우면
+    판단 규칙을 바꾸지 않고 구역 판단만 '화면 좌표'에서 '발의 바닥 좌표'로 바뀐다 (design M-3, 1-2).
+
+    - 발 위치(상자 아래 가운데)를 바닥으로 옮겨, 그 점을 품은 바닥 구역마다 ZoneHit 를 낸다.
+    - 바닥 구역에는 '겹침 비율'이 없다. 발이 구역 안이면 overlap 1.0, 밖이면 내지 않는다.
+      선반 구역도 '선반 앞 띠'(바닥)로 정의하므로, 발이 띠 안 = 선반 앞에 섰다.
+    """
+
+    def __init__(self, floor: FloorMap) -> None:
+        self.floor = floor
+        self.zones = [Zone(z.name, z.type, z.polygon, normalized=False) for z in floor.zones]
+        self._size: tuple[int, int] | None = None
+        self._image: dict[str, tuple[Point, ...]] = {}
+
+    def __len__(self) -> int:
+        return len(self.zones)
+
+    def __bool__(self) -> bool:
+        return bool(self.zones)
+
+    def resolve(self, width: int, height: int) -> None:
+        if self._size == (width, height):
+            return
+        self._size = (width, height)
+        self._image = {z.name: self.floor.image_polygon(z, width, height) for z in self.floor.zones}
+
+    def polygon_of(self, name: str) -> tuple[Point, ...]:
+        return self._image.get(name, ())
+
+    def resolved_polygons(self):
+        return [(z, self._image.get(z.name, ())) for z in self.zones]
+
+    def evaluate(self, bbox: tuple[float, float, float, float]) -> list[ZoneHit]:
+        if self._size is None:
+            return []
+        point = self.floor.foot_on_floor(bbox, *self._size)
+        return [ZoneHit(zone=z.name, zone_type=z.type, overlap=1.0, contains_foot=True)
+                for z in self.floor.zones_at(point)]
+
+    def summary(self) -> str:
+        if not self.zones:
+            return "바닥 구역 없음"
+        return "바닥 " + " / ".join(f"{z.type.value} {z.name}" for z in self.zones)
