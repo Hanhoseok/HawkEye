@@ -91,6 +91,8 @@ class ShelfEventFuser:
         self._sensor_used: set[int] = set()
         self._slot_changes: list = []
         """선반 카메라의 칸 그림 비교 결과 (SlotChange, 공통 시각)."""
+        self._reaches: list[tuple[float, float, int]] = []
+        """전체 카메라 팔 뻗기: (시작 ms, 끝 ms, 전체 카메라 손님)."""
         self.records: list[FusedRecord] = []
 
     # ------------------------------------------------------------------ 입력
@@ -99,6 +101,11 @@ class ShelfEventFuser:
         self._band.append((ms, overview_id))
         if len(self._band) > 20000:
             self._band = self._band[-10000:]
+
+    def note_reach(self, start_ms: float, end_ms: float, overview_id: int) -> None:
+        self._reaches.append((start_ms, end_ms, overview_id))
+        self.records.append(FusedRecord("reach", start_ms, end_ms, overview_id, "전체 카메라 팔 뻗기",
+                                        "손목이 화면의 선반 영역 안"))
 
     def note_slot_change(self, change) -> None:
         self._slot_changes.append(change)
@@ -121,7 +128,11 @@ class ShelfEventFuser:
         owner = self.linker.owner(take.person_id, start, end)
         how = "짝"
         if owner is None:
-            owner, how = self._band_owner(start, end), "선반 앞 한 명"
+            reach = self._reach_owners(start, end)
+            if len(reach) == 1:
+                owner, how = reach.pop(), "전체 카메라 팔 뻗기"
+            else:
+                owner, how = self._band_owner(start, end), "선반 앞 한 명"
         self.records.append(FusedRecord("take", start, end, owner if owner is not None else -1, how,
                                         f"선반 카메라 {take.person_id} 손-칸 접촉 {take.zone}"))
         if owner is None:
@@ -132,14 +143,23 @@ class ShelfEventFuser:
     def detail_visit(self, visit: ShelfVisit, start_ms: float, end_ms: float) -> ShelfVisit:
         """선반 카메라의 선반 방문 → 전체 카메라 손님의 방문 (센서가 있으면 함께 묶음)."""
         owner, how = None, ""
-        if visit.person_id > 0:
+        reach = self._reach_owners(start_ms, end_ms)
+        if len(reach) == 1:
+            # 전체 카메라에서 그 시각 선반으로 팔을 뻗은 사람이 한 명 — 카메라 사이 짝(선반 앞 띠 한 줄 좌표, B-14)을
+            # 거치지 않는 직접 근거라 먼저 쓴다 (C2: 비슷한 옷 2명이 앞뒤로 서면 띠 위치로는 못 가름)
+            owner, how = next(iter(reach)), "전체 카메라 팔 뻗기"
+        if owner is None and visit.person_id > 0:
             owner, how = self.linker.owner(visit.person_id, start_ms, end_ms), "가린 사람의 짝"
         if owner is None:
             owners = self._touch_owners(start_ms, end_ms, visit.shelf)
             if len(owners) == 1:
                 owner, how = owners.pop(), "손-칸 접촉"
             elif len(owners) > 1:
-                how = f"손 접촉 {len(owners)}명 — 모름"
+                both = owners & reach
+                if len(both) == 1:
+                    owner, how = both.pop(), "손 접촉 여럿 중 전체 카메라 팔 뻗기"
+                else:
+                    how = f"손 접촉 {len(owners)}명 — 모름"
         if owner is None and not how:
             owner = self._band_owner(start_ms, end_ms)
             how = "선반 앞 한 명" if owner is not None else "선반 앞 여러 명 또는 없음 — 모름"
@@ -196,6 +216,10 @@ class ShelfEventFuser:
                 if o is not None:
                     owners.add(o)
         return owners
+
+    def _reach_owners(self, start: float, end: float) -> set[int]:
+        tol = self.config.event_tolerance_seconds * 1000.0
+        return {o for s, e, o in self._reaches if e >= start - tol and s <= end + tol}
 
     def present(self, start: float, end: float) -> set[int]:
         """그 시간 바닥의 선반 앞 띠에 서 있던 전체 카메라 손님들."""

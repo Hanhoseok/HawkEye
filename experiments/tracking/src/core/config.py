@@ -498,6 +498,13 @@ class FusionConfig:
     """선반 센서 기록 (CSV: time_sec, slot, delta_g, confidence). 없으면 센서 없이."""
     sensor_unit_g: dict = field(default_factory=dict)
     """칸별 물건 하나 무게(g). 무게 변화를 개수로 바꾼다."""
+    overview_reach_seconds: float = 0.0
+    """전체 카메라 팔 뻗기: 손목이 전체 카메라 화면의 선반 영역(floor.yaml `shelf_image`)에 이 시간 이상 들어가면 한 번.
+    0 이면 끔. 전체 카메라를 yolo-pose 로 돌려야 손목이 있다 (2026-11-04 사용자 제안 — 위에서 보면 팔 뻗기가 잘 보인다).
+    쓰임: 선반 변화의 주인 정하기(그 시각 팔을 뻗은 사람이 한 명이면 그 사람)와 손 뻗기의 두 번째 출처.
+    """
+    overview_reach_conf: float = 0.3
+    """전체 카메라 손목 신뢰도 하한."""
 
 
 @dataclass

@@ -15,10 +15,12 @@ from typing import Callable
 
 import numpy as np
 
-from ..core.config import FusionConfig
+from ..core.config import FusionConfig, InteractionConfig
 from ..core.types import Frame, IdentityObservation, RiskEvent, TakeCandidate
+from ..interaction.detector import InteractionDetector
 from ..risk.customers import ShelfVisit
 from ..zones.floor import FloorMap
+from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
 
@@ -36,6 +38,7 @@ class DualJudge:
         overview_size: tuple[int, int],
         slot_shelf: dict[str, str] | None = None,
         sensors: list[SensorEvent] | None = None,
+        shelf_image: ZoneMap | None = None,
     ) -> None:
         self.config = config
         self.risk = risk
@@ -46,12 +49,21 @@ class DualJudge:
         self.overview_size = overview_size
         self.linker = CrossViewLinker(config)
         self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors)
+        self.reach = None
+        """전체 카메라 팔 뻗기 (손목이 화면의 선반 영역 안). 손목 기록만 있으면 되므로 기록 재실행에서도 같이 돈다."""
+        if config.overview_reach_seconds > 0 and shelf_image:
+            shelf_image.resolve(*overview_size)
+            self.reach = InteractionDetector(
+                InteractionConfig(signal="hand", dwell_seconds=config.overview_reach_seconds,
+                                  hand_conf=config.overview_reach_conf), shelf_image)
         self.reset()
 
     def reset(self) -> None:
         self.linker.reset()
         self.fuser.reset()
         self.risk.reset()
+        if self.reach is not None:
+            self.reach.reset()
         self._pending_takes: list[tuple[float, TakeCandidate]] = []
         self._pending_visits: list[tuple[float, ShelfVisit, float, float]] = []
         self.events: list[RiskEvent] = []
@@ -110,17 +122,21 @@ class DualJudge:
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
         self.linker.update(frame.pts_ms)
+        reach_takes = self._reach_takes(self.reach.update(frame, identities), resolve) if self.reach else []
         # 손 접촉도 방문과 같이 기다렸다 넘긴다 — 그 시간을 덮는 짝 기록이 쌓인 뒤에 주인을 정해야
         # 손 접촉과 방문이 같은 손님으로 해석된다 (2차 C1: 일찍 정하면 손 접촉과 방문의 주인이 갈렸다)
         delay = self.config.release_delay_seconds * 1000.0
         fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.VISIT_DELAY_MS)
         fused_visits += self.fuser.sensor_only(frame.pts_ms)
-        events, records = self.risk.update(frame, identities, list(takes) + fused_takes, merges, fused_visits)
+        events, records = self.risk.update(frame, identities, list(takes) + reach_takes + fused_takes, merges,
+                                           fused_visits)
         self.events.extend(events)
         return events, records
 
-    def finish(self, frame: Frame) -> list[RiskEvent]:
+    def finish(self, frame: Frame, resolve: Callable[[int], int] | None = None) -> list[RiskEvent]:
+        reach_takes = self._reach_takes(self.reach.flush(), resolve) if self.reach else []
         fused_takes, fused_visits = self._release(float("inf"), float("inf"))
+        fused_takes = reach_takes + fused_takes
         fused_visits += self.fuser.sensor_only(float("inf"))
         if fused_takes or fused_visits:
             events, _ = self.risk.update(frame, [], fused_takes, [], fused_visits)
@@ -128,6 +144,16 @@ class DualJudge:
         done = self.risk.finish(frame, self.overview_size)
         self.events.extend(done)
         return done
+
+    def _reach_takes(self, reaches: list[TakeCandidate], resolve) -> list[TakeCandidate]:
+        """전체 카메라 팔 뻗기 → 주인 정하기 근거로 적고, 그 손님의 손 뻗기로도 넘긴다."""
+        out = []
+        axis = self.fuser.overview_axis
+        for t in reaches:
+            pid = resolve(t.person_id) if resolve else t.person_id
+            self.fuser.note_reach(axis.to_ms(t.start_frame), axis.to_ms(t.end_frame), pid)
+            out.append(replace(t, person_id=pid, zone=self.config.shelf_zone))
+        return out
 
     VISIT_DELAY_MS = 1500.0
     """선반 방문은 끝나고 이만큼 기다렸다 넘긴다 — 칸 그림 비교 결과(같은 무렵 확정)를 함께 붙이려고."""

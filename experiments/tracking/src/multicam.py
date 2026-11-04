@@ -26,7 +26,7 @@ from .fusion.judge import DualJudge
 from .fusion.shelf_events import TimeAxis, load_sensor_events
 from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
-from .zones.floor import FloorMap, FloorZoneMap
+from .zones.floor import FloorMap, FloorZoneMap, shelf_image_zones
 from .zones.zone_map import ZoneMap
 
 
@@ -191,7 +191,8 @@ class MultiCameraPipeline:
         if last_overview is not None:
             if rest:
                 self.judge.risk.add_late_takes(rest, last_overview.pts_ms)
-            for e in self.judge.finish(last_overview):
+            resolve = self.overview.registry.resolve if self.overview.registry is not None else None
+            for e in self.judge.finish(last_overview, resolve):
                 self._report(e)
                 risk_log.write_many([e])
         risk_log.close()
@@ -242,7 +243,11 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
 
     # 전체 카메라: 사람 상자만, 바닥 구역, 선반 앞 띠에서 머묾(보조)
     floor_zones = FloorZoneMap(floor)
-    ov_detector = build_detector(config.detector)
+    ocfg = deepcopy(config.detector)
+    if overview_cam.detector == "yolo-pose":
+        # 위에서 보면 팔 뻗기가 잘 보인다 — 손목으로 '전체 카메라 팔 뻗기'(fusion.overview_reach_seconds)
+        ocfg.name, ocfg.model_path = "yolo-pose", "yolov8n-pose.pt"
+    ov_detector = build_detector(ocfg)
     ignore = [tuple(map(float, r)) for r in floor_raw.get("ignore_image") or []]
     if ignore:
         ov_detector = MaskedDetector(ov_detector, ignore)
@@ -285,5 +290,5 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
         d_fps, d_size = 30.0, (1920, 1080)
     judge = DualJudge(config.fusion, risk, floor, setup.band_map if setup else (1.0, 0.0),
                       TimeAxis(d_fps, detail_cam.offset_ms if detail_cam else 0.0), TimeAxis(ov_fps, overview_cam.offset_ms),
-                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors)
+                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors, shelf_image_zones(floor_raw))
     return MultiCameraPipeline(config, overview, detail, overview_cam, detail_cam, judge, out_dir)
