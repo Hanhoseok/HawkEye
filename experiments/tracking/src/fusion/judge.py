@@ -130,6 +130,8 @@ class DualJudge:
         delay = self.config.release_delay_seconds * 1000.0
         fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.VISIT_DELAY_MS)
         fused_visits += self.fuser.sensor_only(frame.pts_ms)
+        if not self.config.overview_reach_takes:
+            reach_takes = []   # 주인 정하기 근거로만 (note_reach 는 위에서 이미 적음)
         events, records = self.risk.update(frame, identities, list(takes) + reach_takes + fused_takes, merges,
                                            fused_visits)
         self.events.extend(events)
@@ -138,7 +140,8 @@ class DualJudge:
     def finish(self, frame: Frame, resolve: Callable[[int], int] | None = None) -> list[RiskEvent]:
         reach_takes = self._reach_takes(self.reach.flush(), resolve) if self.reach else []
         fused_takes, fused_visits = self._release(float("inf"), float("inf"))
-        fused_takes = reach_takes + fused_takes
+        if self.config.overview_reach_takes:
+            fused_takes = reach_takes + fused_takes
         fused_visits += self.fuser.sensor_only(float("inf"))
         if fused_takes or fused_visits:
             events, _ = self.risk.update(frame, [], fused_takes, [], fused_visits)
@@ -161,7 +164,7 @@ class DualJudge:
         return out
 
     def _reach_takes(self, reaches: list[TakeCandidate], resolve) -> list[TakeCandidate]:
-        """전체 카메라 팔 뻗기 → 주인 정하기 근거로 적고, 그 손님의 손 뻗기로도 넘긴다."""
+        """전체 카메라 팔 뻗기 → 주인 정하기 근거로 적는다. overview_reach_takes 면 그 손님의 손 뻗기로도 넘긴다."""
         out = []
         axis = self.fuser.overview_axis
         for t in reaches:

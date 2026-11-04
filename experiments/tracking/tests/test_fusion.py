@@ -206,9 +206,10 @@ def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
     w, h = 1920, 1080
     bbox = (0.30 * w, 0.20 * h, 0.45 * w, 0.85 * h)
 
-    def run(reach_seconds, wrist):
+    def run(reach_seconds, wrist, as_take=True):
         risk = RecordingRisk()
-        judge = DualJudge(FusionConfig(overview_reach_seconds=reach_seconds), risk, floor, (1.0, 0.0),
+        judge = DualJudge(FusionConfig(overview_reach_seconds=reach_seconds, overview_reach_takes=as_take), risk,
+                          floor, (1.0, 0.0),
                           TimeAxis(30.0), TimeAxis(60.0), w, (w, h), {}, None, shelf_image_zones(raw))
         judge.reset()
         last = None
@@ -228,6 +229,8 @@ def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
     assert any(r.kind == "reach" for r in judge.fuser.records)
     assert run(0.3, 0.40 * w)[0] == []                  # 손목이 선반 앞 모서리(0.375) 밖 — 몸 옆
     assert run(0.0, 0.33 * w)[0] == []                  # 기본은 꺼짐 (전체 카메라에 손목이 없던 예전 실행과 같음)
+    takes, judge = run(0.3, 0.33 * w, as_take=False)    # 기본: 주인 정하기 근거로만 — 집기 행동으로 넘기지 않음
+    assert takes == [] and any(r.kind == "reach" for r in judge.fuser.records)
 
 
 def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
@@ -242,8 +245,8 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
     floor = FloorMap.load(root / "zones" / "store01_dual" / "floor.yaml")
     w, h = 1920, 1080
     risk = RecordingRisk()
-    judge = DualJudge(FusionConfig(overview_reach_seconds=0.3), risk, floor, (1.0, 0.0), TimeAxis(30.0),
-                      TimeAxis(60.0), w, (w, h), {}, None, shelf_image_zones(raw))
+    judge = DualJudge(FusionConfig(overview_reach_seconds=0.3, overview_reach_takes=True), risk, floor, (1.0, 0.0),
+                      TimeAxis(30.0), TimeAxis(60.0), w, (w, h), {}, None, shelf_image_zones(raw))
     judge.reset()
     ghost = (0.15 * w, 0.40 * h, 0.25 * w, 0.70 * h)          # 선반 한가운데 작은 '사람'
     for i in range(0, 120, 4):
@@ -253,4 +256,4 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
         judge.overview_step(frame, [obs], [], [])
         last = frame
     judge.finish(last)
-    assert risk.takes == []
+    assert risk.takes == [] and not any(r.kind == "reach" for r in judge.fuser.records)

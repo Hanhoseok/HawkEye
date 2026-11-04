@@ -66,6 +66,9 @@ def pairs(pattern: str | None) -> list[str]:
 
 def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig:
     cfg = deepcopy(base)
+    # 끊겼다 되살아난 추적 번호는 다시 판정 (C-22) — 가장자리 변과 함께 켜면 손님 수 36→38/38, 판정 변화 없음
+    # (2026-11-04 3차 비교). --set identity.track_gap_recheck_seconds=0 으로 끌 수 있다.
+    cfg.identity.track_gap_recheck_seconds = 1.0
     for item in OVERRIDES:
         key, value = item.split("=", 1)
         section, name = key.split(".")

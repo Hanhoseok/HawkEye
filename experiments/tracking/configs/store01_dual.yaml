@@ -30,4 +30,6 @@ risk:
   payment_mode: dwell       # 결제 기록 없음: 계산대 체류 = 결제
   inside_zones: [shelf, counter, aisle]   # 이 바닥 구역에 1초 이상 들어온 사람만 손님 (문 앞·창밖 행인 제외)
   inside_seconds: 1.0
-fusion: {}                  # 기본값 (src/core/config.py FusionConfig)
+identity:
+  track_gap_recheck_seconds: 1.0   # 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정 (C-22) — 가장자리 변과 함께 손님 수 38/38
+fusion: {}                  # 기본값 (src/core/config.py FusionConfig). 전체 카메라 팔 뻗기는 끔 (D-19, 3차 비교)
