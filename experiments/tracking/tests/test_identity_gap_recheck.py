@@ -89,3 +89,81 @@ def test_revival_of_a_stranger_becomes_a_new_person():
     assert show(reg, 0.5, [(1, A_SPOT)])[1].person_id == a
     revived = show(reg, 3.0, [(1, stranger)])[1]
     assert revived.person_id != a and revived.is_new
+
+
+def weak(look: np.ndarray, other: int, cos: float) -> np.ndarray:
+    """look 과 코사인 cos 인 사진 (같은 사람인데 한 장 비교로는 기준 0.65 에 못 미침)."""
+    v = cos * look + (1 - cos**2) ** 0.5 * axis(other)
+    return v.astype(np.float32)
+
+
+def test_revival_of_the_same_person_keeps_identity_with_weak_photo():
+    # C21: tracker 가 맞게 이어 붙였는데 되살아난 순간 사진이 덜 닮음(0.5) — 원래 신원 우대로 유지
+    spot = (300.0, 300.0, 380.0, 500.0)
+    SpotEmbedder.looks[spot] = weak(axis(0), 7, 0.5)
+    reg = registry(track_gap_recheck_seconds=1.0)
+    a = show(reg, 0.0, [(1, A_SPOT)])[1].person_id
+    revived = show(reg, 3.0, [(1, spot)])[1]
+    assert revived.person_id == a and revived.stitched
+
+
+def test_recheck_waits_until_body_is_off_the_edge():
+    edge = (0.0, 300.0, 80.0, 500.0)          # 왼쪽 가장자리에 걸림
+    SpotEmbedder.looks[edge] = axis(9)
+    reg = registry(track_gap_recheck_seconds=1.0, edge_margin=0.02)
+    a = show(reg, 0.0, [(2, B_SPOT)])[2].person_id
+    assert show(reg, 3.0, [(2, edge)])[2].person_id == a      # 잘린 동안은 원래 신원
+    show(reg, 2.0 + 1.5, [(1, A_SPOT)])                         # (다른 손님 A 등장)
+    moved = show(reg, 3.6, [(2, A_LATER)])[2]                   # 몸이 다 보이자 다시 판정 → 외형 A
+    assert moved.person_id != a
+
+
+def test_too_small_to_recheck_is_held_not_inherited():
+    # C12: 되살아난 번호가 너무 작은 사람(창밖 행인)에게 붙음 → 신원 보류(-1), 원래 신원은 비어 있게 됨
+    tiny = (600.0, 300.0, 620.0, 330.0)
+    SpotEmbedder.looks[tiny] = axis(0)
+    reg = registry(track_gap_recheck_seconds=1.0, min_tensor_height=100)
+    a = show(reg, 0.0, [(1, A_SPOT)])[1].person_id
+    assert show(reg, 3.0, [(1, tiny)])[1].person_id == -1
+    back = show(reg, 3.1, [(2, A_LATER)])[2]          # 진짜 주인이 다른 번호로 돌아옴
+    assert back.person_id == a
+    assert show(reg, 3.2, [(1, A_SPOT), (2, A_LATER)])[1].person_id != a   # 커지면 다시 판정 (a 는 점유 중)
+
+
+def test_edge_sides_skip_a_side_the_camera_always_cuts():
+    # 전체 카메라는 머리가 위쪽 끝에 늘 잘린다 — 위쪽에 닿은 새 track 도 즉시 대조해야 재입장을 잇는다 (C-18)
+    top_cut = (400.0, 0.0, 480.0, 200.0)
+    SpotEmbedder.looks[top_cut] = axis(0)
+    for sides, linked in [(("left", "top", "right", "bottom"), False), (("left", "right", "bottom"), True)]:
+        reg = registry(edge_margin=0.02, edge_sides=sides)
+        a = show(reg, 0.0, [(1, A_SPOT)])[1].person_id
+        again = show(reg, 5.0, [(2, top_cut)])[2]
+        assert (again.person_id == a) is linked
+
+
+def test_camera_identity_overrides_reach_the_registry(tmp_path):
+    from src.core.config import AppConfig, CameraConfig
+    from src.multicam import build_multicam
+
+    made = []
+
+    class Reg:
+        def __init__(self, cfg, *a, **k):
+            made.append(cfg)
+            self.recent_consistency = None
+
+    class Dummy:
+        def __init__(self, *a, **k):
+            pass
+
+    floor = Path(__file__).resolve().parents[1] / "zones" / "store01_dual" / "floor.yaml"
+    cfg = AppConfig()
+    cfg.cameras = [CameraConfig("angle1", "없음.mp4", "overview", str(floor), identity={"edge_sides": ["left", "right"]})]
+    try:
+        build_multicam(cfg, tmp_path, build_detector=lambda c: None, build_tracker=lambda c: None,
+                       build_embedder=lambda c: None, build_item_detector=None, IdentityRegistry=Reg,
+                       InteractionDetector=Dummy, ShelfWatcher=None, RiskEngine=Dummy, PaymentFeed=None)
+    except Exception:
+        pass  # 영상이 없어 뒤 단계에서 멈춰도 된다 — 신원 계층이 만들어졌는지만 본다
+    assert made and made[0].edge_sides == ("left", "right")
+    assert cfg.identity.edge_sides == ("left", "top", "right", "bottom")   # 기본 설정은 그대로

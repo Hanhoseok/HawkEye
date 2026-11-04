@@ -14,7 +14,7 @@ import heapq
 import json
 import time
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -235,8 +235,10 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
     floor_raw = yaml.safe_load(Path(overview_cam.zones).read_text(encoding="utf-8")) or {}
     embedder = build_embedder(config.tracker.reid)
 
-    def registry():
-        return IdentityRegistry(config.identity, embedder, imgsz=config.detector.imgsz)
+    def registry(cam: CameraConfig):
+        # 카메라마다 화각이 달라 신원 계층 값 일부(예: 늘 잘리는 변)를 따로 준다
+        ident = replace(config.identity, **{k: tuple(v) if isinstance(v, list) else v for k, v in cam.identity.items()})
+        return IdentityRegistry(ident, embedder, imgsz=config.detector.imgsz)
 
     # 전체 카메라: 사람 상자만, 바닥 구역, 선반 앞 띠에서 머묾(보조)
     floor_zones = FloorZoneMap(floor)
@@ -244,7 +246,7 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
     ignore = [tuple(map(float, r)) for r in floor_raw.get("ignore_image") or []]
     if ignore:
         ov_detector = MaskedDetector(ov_detector, ignore)
-    ov_registry = registry()
+    ov_registry = registry(overview_cam)
     overview = CameraWorker(overview_cam.name, ov_detector, build_tracker(config.tracker), ov_registry, floor_zones,
                             InteractionDetector(config.interaction, floor_zones))
 
@@ -260,7 +262,7 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
         shelves = ShelfWatcher(scfg, build_item_detector(scfg.model_path, scfg.imgsz, scfg.conf,
                                                          config.detector.device, scfg.ignore),
                                slots=[(z.name, z.polygon) for z in setup.zone_map.zones]) if setup.shelves else None
-        detail = CameraWorker(detail_cam.name, build_detector(dcfg), build_tracker(config.tracker), registry(),
+        detail = CameraWorker(detail_cam.name, build_detector(dcfg), build_tracker(config.tracker), registry(detail_cam),
                               setup.zone_map, InteractionDetector(icfg, setup.zone_map), shelves)
 
     payments = PaymentFeed.load(config.risk.payments) if config.risk.payments else PaymentFeed.empty()

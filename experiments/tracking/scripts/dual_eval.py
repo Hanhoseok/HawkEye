@@ -45,6 +45,8 @@ ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
 OVERRIDES: list[str] = []
+EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "right"]}
+"""가장자리 규칙을 적용할 변 — 화각 때문에 늘 잘리는 변(전체 카메라 위쪽 머리, 선반 카메라 아래쪽 발)은 뺀다 (C-18)."""
 """60FPS 전체 카메라는 4장에 1장, 30FPS 선반 카메라는 2장에 1장 — 둘 다 초당 15장."""
 
 
@@ -68,8 +70,10 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
         setattr(getattr(cfg, section), name, yaml.safe_load(value))
     video, ref = sync_pair.pair_files(pair)
     cfg.cameras = [
-        CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"], "yolo"),
-        CameraConfig("angle0", str(video), "detail", str(ZONES / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose"),
+        CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"], "yolo",
+                     {"edge_sides": EDGE_SIDES["angle1"]}),
+        CameraConfig("angle0", str(video), "detail", str(ZONES / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
+                     {"edge_sides": EDGE_SIDES["angle0"]}),
     ]
     # 선반 카메라 손 뻗기 = 손목이 칸(SHELF 구역) 안에 0.3초 이상 (설계 M-6). 기준값은 N 으로 다시 본다.
     cfg.detail_interaction = InteractionConfig(**{**cfg.interaction.__dict__, "signal": "hand",
@@ -408,8 +412,13 @@ def main() -> int:
     ap.add_argument("--out", help="기록 폴더 이름 (outputs/ 아래, 기본 dual_eval) — 설정을 바꿔 따로 돌려 비교할 때")
     ap.add_argument("--set", action="append", default=[], metavar="절.키=값",
                     help="config.yaml 값을 이번 실행만 바꿈, 예: identity.track_gap_recheck_seconds=1.0")
+    ap.add_argument("--all-edges", action="store_true",
+                    help="가장자리 규칙을 네 변 모두에 (늘 잘리는 변을 빼기 전, C-18 비교용)")
     args = ap.parse_args()
     global OUT, OVERRIDES
+    if args.all_edges:
+        for cam in EDGE_SIDES:
+            EDGE_SIDES[cam] = ["left", "top", "right", "bottom"]
     if args.out:
         OUT = ROOT / "outputs" / args.out
     OVERRIDES = args.set

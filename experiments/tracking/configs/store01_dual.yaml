@@ -11,6 +11,8 @@ cameras:
     zones: zones/store01_dual/floor.yaml
     stride: 4               # 60FPS → 15FPS
     detector: yolo
+    identity:
+      edge_sides: [left, right, bottom]   # 위쪽은 화각 때문에 늘 머리가 잘림 — 가장자리 규칙에서 뺌 (C-18)
   - name: angle0
     role: detail            # 선반 카메라: 손·선반 물건
     source: ""
@@ -18,6 +20,8 @@ cameras:
     offset_ms: 0
     stride: 2               # 30FPS → 15FPS
     detector: yolo-pose
+    identity:
+      edge_sides: [left, top, right]      # 아래쪽은 늘 발이 잘림
 detail_interaction:         # 선반 카메라 손 뻗기 = 손목이 칸 안에 0.3초 이상 (설계 M-6)
   signal: hand
   dwell_seconds: 0.3

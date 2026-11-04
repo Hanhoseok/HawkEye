@@ -161,6 +161,18 @@ class IdentityConfig:
     맞으면(appearance_threshold 0.5) 되살린다. 되살린 상대가 다른 사람이어도 신원 계층은 그 번호의 신원을 그대로
     물려줬다. 2차 촬영 C12: 입장 순간 0.2초 잡힌 조각 번호가 3초 뒤 선반 앞에서 겹친 두 손님 상자에 되살아나
     니트 손님이 그 조각의 신원으로 넘어가 한 사람이 두 손님이 됐다 (C-18, docs/multiview-progress.md).
+
+    다시 판정할 때 그 번호의 원래 신원은 '방금 근처에서 사라진 사람'처럼 완화 기준(stitch_threshold)을 쓴다 —
+    가산점 없이는 맞게 이어진 번호까지 쪼갰다(C21). 가장자리에 걸린 동안은 판정을 미룬다.
+    """
+
+    edge_sides: tuple[str, ...] = ("left", "top", "right", "bottom")
+    """가장자리 규칙을 적용할 변. 화각 때문에 늘 잘리는 변은 빼야 한다.
+
+    2차 촬영 전체 카메라(angle1)는 머리가 위쪽 끝에 잘리는 화각이라 관측의 71% 가 위쪽 가장자리에 닿았고,
+    새 신원 81개 중 78개가 '가장자리라 즉시 판정 건너뜀'으로 생겼다 — 입장 순간뿐 아니라 매장 안쪽 전체에서
+    재입장·조각이 기존 손님과 대조되지 않았다 (C-18). 선반 카메라(angle0)는 발이 아래쪽 끝에 98% 잘린다.
+    늘 잘리는 변은 모든 사진이 똑같이 잘려 있어 서로 비교해도 된다.
     """
 
     late_merge_samples: tuple[int, ...] = (10, 20, 40)
@@ -453,6 +465,8 @@ class CameraConfig:
     """N 장면에 1장 처리. 60FPS 전체 카메라는 4 (= 15FPS)."""
     detector: str = "yolo"
     """yolo / yolo-pose. 선반 카메라는 손목이 필요해 yolo-pose."""
+    identity: dict = field(default_factory=dict)
+    """이 카메라의 신원 계층만 바꿀 값 (IdentityConfig 칸 이름 → 값). 예: 화각 때문에 늘 잘리는 변을 가장자리에서 빼기."""
 
 
 @dataclass
