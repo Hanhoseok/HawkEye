@@ -44,6 +44,7 @@ OUT = ROOT / "outputs" / "dual_eval"
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
+OVERRIDES: list[str] = []
 """60FPS 전체 카메라는 4장에 1장, 30FPS 선반 카메라는 2장에 1장 — 둘 다 초당 15장."""
 
 
@@ -61,6 +62,10 @@ def pairs(pattern: str | None) -> list[str]:
 
 def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig:
     cfg = deepcopy(base)
+    for item in OVERRIDES:
+        key, value = item.split("=", 1)
+        section, name = key.split(".")
+        setattr(getattr(cfg, section), name, yaml.safe_load(value))
     video, ref = sync_pair.pair_files(pair)
     cfg.cameras = [
         CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"], "yolo"),
@@ -400,7 +405,14 @@ def main() -> int:
     ap.add_argument("--label", default="")
     ap.add_argument("--before", action="store_true",
                     help="C1·C12 를 보고 고치기 전 규칙으로 (손 접촉 1.0초 뒤 주인 결정, 다른 손님 손 뻗기는 안 지움)")
+    ap.add_argument("--out", help="기록 폴더 이름 (outputs/ 아래, 기본 dual_eval) — 설정을 바꿔 따로 돌려 비교할 때")
+    ap.add_argument("--set", action="append", default=[], metavar="절.키=값",
+                    help="config.yaml 값을 이번 실행만 바꿈, 예: identity.track_gap_recheck_seconds=1.0")
     args = ap.parse_args()
+    global OUT, OVERRIDES
+    if args.out:
+        OUT = ROOT / "outputs" / args.out
+    OVERRIDES = args.set
     if args.stage == "run":
         run(args.only)
     elif args.stage == "sync":

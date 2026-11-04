@@ -141,6 +141,7 @@ class IdentityRegistry:
     def reset(self) -> None:
         self._people: dict[int, _Person] = {}
         self._track_to_person: dict[int, int] = {}
+        self._track_last_ms: dict[int, float] = {}
         self._alias: dict[int, int] = {}
         self.merges: list[dict] = []
         """나중에 합친 기록. {"from": 없어진 신원, "into": 남은 신원, "frame", "similarity"}"""
@@ -246,8 +247,16 @@ class IdentityRegistry:
         refresh: list[TrackObservation] = []  # 템플릿만 갱신할 관측
 
         refresh_ms = cfg.template_refresh_seconds * 1000.0
+        recheck_ms = cfg.track_gap_recheck_seconds * 1000.0
         for obs in observations:
             person_id = self._track_to_person.get(obs.track_id)
+            last_ms = self._track_last_ms.get(obs.track_id)
+            self._track_last_ms[obs.track_id] = frame.pts_ms
+            if person_id is not None and recheck_ms > 0 and last_ms is not None and frame.pts_ms - last_ms > recheck_ms:
+                # 오래 끊겼다 되살아난 track 은 tracker 가 다른 사람에게 번호를 붙였을 수 있다.
+                # 번호의 신원을 물려주지 않고 새 track 처럼 다시 판정한다. 같은 사람이면 다시 그 신원으로 이어진다.
+                del self._track_to_person[obs.track_id]
+                person_id = None
             if person_id is None:
                 pending.append(obs)
                 continue

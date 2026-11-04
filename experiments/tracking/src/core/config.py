@@ -154,6 +154,15 @@ class IdentityConfig:
     몸이 다 보인 뒤 '나중에 합치기'가 판단하게 한다. 0 이면 끈다.
     """
 
+    track_gap_recheck_seconds: float = 0.0
+    """track 이 이 시간보다 오래 끊겼다가 같은 번호로 되살아나면, 신원을 새 track 처럼 다시 판정한다. 0 이면 끈다.
+
+    BoT-SORT 는 사라진 track 을 lost_track_buffer(90 장, 초당 15장이면 6초) 동안 기억했다가 외형이 느슨하게
+    맞으면(appearance_threshold 0.5) 되살린다. 되살린 상대가 다른 사람이어도 신원 계층은 그 번호의 신원을 그대로
+    물려줬다. 2차 촬영 C12: 입장 순간 0.2초 잡힌 조각 번호가 3초 뒤 선반 앞에서 겹친 두 손님 상자에 되살아나
+    니트 손님이 그 조각의 신원으로 넘어가 한 사람이 두 손님이 됐다 (C-18, docs/multiview-progress.md).
+    """
+
     late_merge_samples: tuple[int, ...] = (10, 20, 40)
     """새 신원의 사진 수가 이 값에 도달할 때마다 재확인한다. 0.5초 간격이면 5초·10초·20초.
 
