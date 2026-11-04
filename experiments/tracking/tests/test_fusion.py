@@ -228,3 +228,29 @@ def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
     assert any(r.kind == "reach" for r in judge.fuser.records)
     assert run(0.3, 0.40 * w)[0] == []                  # 손목이 선반 앞 모서리(0.375) 밖 — 몸 옆
     assert run(0.0, 0.33 * w)[0] == []                  # 기본은 꺼짐 (전체 카메라에 손목이 없던 예전 실행과 같음)
+
+
+def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
+    # 상품 포장의 사람 그림에 관절이 잡히면 '발'도 선반 영역 안에 있다 — 바닥에 선 사람이 아니므로 팔 뻗기로 안 봄
+    from src.core.types import Frame, IdentityObservation
+    from src.fusion.judge import DualJudge
+    from src.zones.floor import shelf_image_zones
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    raw = yaml.safe_load((root / "zones" / "store01_dual" / "floor.yaml").read_text(encoding="utf-8"))
+    floor = FloorMap.load(root / "zones" / "store01_dual" / "floor.yaml")
+    w, h = 1920, 1080
+    risk = RecordingRisk()
+    judge = DualJudge(FusionConfig(overview_reach_seconds=0.3), risk, floor, (1.0, 0.0), TimeAxis(30.0),
+                      TimeAxis(60.0), w, (w, h), {}, None, shelf_image_zones(raw))
+    judge.reset()
+    ghost = (0.15 * w, 0.40 * h, 0.25 * w, 0.70 * h)          # 선반 한가운데 작은 '사람'
+    for i in range(0, 120, 4):
+        frame = Frame(index=i, timestamp="", pts_ms=i * 1000.0 / 60, image=None, camera_id="angle1")
+        obs = IdentityObservation(person_id=9, track_id=9, bbox=ghost, frame=i, timestamp="",
+                                  keypoints=kp_with_wrist(0.2 * w, 0.55 * h))
+        judge.overview_step(frame, [obs], [], [])
+        last = frame
+    judge.finish(last)
+    assert risk.takes == []

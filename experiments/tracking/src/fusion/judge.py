@@ -49,6 +49,7 @@ class DualJudge:
         self.overview_size = overview_size
         self.linker = CrossViewLinker(config)
         self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors)
+        self.shelf_image = shelf_image
         self.reach = None
         """전체 카메라 팔 뻗기 (손목이 화면의 선반 영역 안). 손목 기록만 있으면 되므로 기록 재실행에서도 같이 돈다."""
         if config.overview_reach_seconds > 0 and shelf_image:
@@ -122,7 +123,8 @@ class DualJudge:
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
         self.linker.update(frame.pts_ms)
-        reach_takes = self._reach_takes(self.reach.update(frame, identities), resolve) if self.reach else []
+        reach_takes = (self._reach_takes(self.reach.update(frame, self._standing(identities)), resolve)
+                       if self.reach else [])
         # 손 접촉도 방문과 같이 기다렸다 넘긴다 — 그 시간을 덮는 짝 기록이 쌓인 뒤에 주인을 정해야
         # 손 접촉과 방문이 같은 손님으로 해석된다 (2차 C1: 일찍 정하면 손 접촉과 방문의 주인이 갈렸다)
         delay = self.config.release_delay_seconds * 1000.0
@@ -144,6 +146,19 @@ class DualJudge:
         done = self.risk.finish(frame, self.overview_size)
         self.events.extend(done)
         return done
+
+    def _standing(self, identities: list[IdentityObservation]) -> list[IdentityObservation]:
+        """발(상자 아래 가운데)이 화면의 선반 영역 밖인 사람만 — 선반 위 상품 포장의 사람 그림에 관절이 잡힌
+        가짜 사람을 뺀다 (2차 N8-2 18.5초: 사람이 없는데 선반 안에 손목 둘)."""
+        from ..zones.geometry import contains_point
+
+        polys = [self.shelf_image.polygon_of(z.name) for z in self.shelf_image.zones]
+        out = []
+        for o in identities:
+            fx, fy = (o.bbox[0] + o.bbox[2]) / 2.0, o.bbox[3]
+            if not any(p and contains_point(p, fx, fy) for p in polys):
+                out.append(o)
+        return out
 
     def _reach_takes(self, reaches: list[TakeCandidate], resolve) -> list[TakeCandidate]:
         """전체 카메라 팔 뻗기 → 주인 정하기 근거로 적고, 그 손님의 손 뻗기로도 넘긴다."""
