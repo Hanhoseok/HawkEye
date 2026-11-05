@@ -252,6 +252,10 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
     if ignore:
         ov_detector = MaskedDetector(ov_detector, ignore)
     ov_registry = registry(overview_cam)
+    inside = set(config.risk.inside_zones)
+    if inside and hasattr(ov_registry, "set_promote_check"):
+        # 임시 신원은 발이 매장 안 바닥(선반 앞·계산대·통로)에 있어야 정식이 된다 — 손님 조건(C-20)과 같은 기준
+        ov_registry.set_promote_check(lambda bbox: any(h.zone in inside for h in floor_zones.evaluate(bbox)))
     overview = CameraWorker(overview_cam.name, ov_detector, build_tracker(config.tracker), ov_registry, floor_zones,
                             InteractionDetector(config.interaction, floor_zones))
 

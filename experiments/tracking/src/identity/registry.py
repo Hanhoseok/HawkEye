@@ -37,6 +37,13 @@ ByteTrack 이든 BoT-SORT 든 그대로 동작한다.
 그래서 판정은 즉시 하고, 신원마다 0.5초 간격으로 사진을 계속 모은다. 새로 등록된 신원이
 10장(약 5초)을 모으면 '그 직전에 사라진 사람'과 평균끼리 다시 비교해 같으면 합친다(88%).
 
+## 임시 신원 (identity.tentative_seconds)
+
+새로 등록한 신원은 '임시'로 시작해, 정해진 시간 동안 연속으로 정식 조건(전체 카메라: 발이 매장 안 바닥)을
+채워야 정식 신원이 된다. 임시 신원은 새 track 의 대조 상대·나중에 합치기 상대가 되지 않는다.
+번호는 그대로 내보내므로 뒤 계층은 달라지지 않는다 — 가짜 사람(외투·창밖 행인·문 앞 조각)이 보관함에
+남아 진짜 손님과 맺어지는 길만 막는다 (C-11).
+
 합친 기록은 `merges` 에 남는다. 이미 내보낸 관측의 person_id 는 바뀌지 않으므로,
 뒤 계층(상태·위험 판정)이 이 기록을 받아 두 신원의 이력을 하나로 합쳐야 한다.
 `resolve(person_id)` 가 최종 신원을 알려준다.
@@ -79,6 +86,11 @@ class _Person:
     embedding_count: int = 0
     recent: deque = field(default_factory=lambda: deque(maxlen=3))
     """최근 사진 몇 장. 판정 직전 신원 확인(recent_consistency)에 쓴다."""
+
+    tentative: bool = False
+    """아직 임시 신원인가 (identity.tentative_seconds). 임시면 대조·나중에 합치기 상대가 아니다."""
+    promote_since_ms: float | None = None
+    """정식 조건을 연속으로 채우기 시작한 시각. 조건이 끊기면 None."""
 
     def similarity(self, embedding: np.ndarray) -> float:
         """보관 중인 템플릿 중 가장 닮은 것과의 코사인 유사도 (새 track 즉시 판정용)."""
@@ -136,6 +148,7 @@ class IdentityRegistry:
         self.config = config
         self.embedder = embedder
         self.imgsz = imgsz
+        self._promote_check = None
         self.reset()
 
     def reset(self) -> None:
@@ -149,6 +162,17 @@ class IdentityRegistry:
         """나중에 합친 기록. {"from": 없어진 신원, "into": 남은 신원, "frame", "similarity"}"""
         self._next_person_id = 1
         self._min_bbox_px: float | None = None
+        self.promotions: list[dict] = []
+        """임시 → 정식으로 올린 기록. {"person": 신원, "ms": 시각, "since_ms": 조건을 채우기 시작한 시각}"""
+
+    def set_promote_check(self, check) -> None:
+        """임시 신원을 정식으로 올리는 조건 `check(bbox) -> bool` (예: 발이 매장 안 바닥). None 이면 시간만 본다."""
+        self._promote_check = check
+
+    def is_tentative(self, person_id: int) -> bool:
+        """아직 임시 신원인가 (합쳐진 신원은 최종 신원 기준)."""
+        person = self._people.get(self.resolve(person_id))
+        return person is not None and person.tentative
 
     def resolve(self, person_id: int) -> int:
         """합쳐진 신원이면 최종적으로 남은 신원을 돌려준다."""
@@ -212,6 +236,18 @@ class IdentityRegistry:
         """이 관측을 신원 판단에 써도 되는 크기인가."""
         height = obs.bbox[3] - obs.bbox[1]
         return height >= (self._min_bbox_px or 0.0)
+
+    def _update_tentative(self, person: _Person, obs: TrackObservation, now_ms: float) -> None:
+        """임시 신원이 정식 조건을 연속으로 tentative_seconds 동안 채웠으면 정식으로 올린다."""
+        ok = self._usable(obs) and (self._promote_check is None or bool(self._promote_check(obs.bbox)))
+        if not ok:
+            person.promote_since_ms = None
+            return
+        if person.promote_since_ms is None:
+            person.promote_since_ms = now_ms
+        if now_ms - person.promote_since_ms >= self.config.tentative_seconds * 1000.0:
+            person.tentative = False
+            self.promotions.append({"person": person.person_id, "ms": now_ms, "since_ms": person.promote_since_ms})
 
     def _active_people(self, now_ms: float) -> list[_Person]:
         """아직 매장 안에 있다고 보는 사람들.
@@ -285,6 +321,8 @@ class IdentityRegistry:
             person.last_seen = frame.index
             person.last_seen_ms = frame.pts_ms
             person.last_bbox = obs.bbox
+            if person.tentative:
+                self._update_tentative(person, obs, frame.pts_ms)
             due = frame.pts_ms - person.last_template_ms >= refresh_ms
             if due and self._usable(obs):
                 refresh.append(obs)
@@ -343,6 +381,7 @@ class IdentityRegistry:
                     last_seen=frame.index,
                     first_seen_ms=frame.pts_ms,
                     last_seen_ms=frame.pts_ms,
+                    tentative=cfg.tentative_seconds > 0,
                 )
                 similarity = None
 
@@ -350,6 +389,8 @@ class IdentityRegistry:
             person.last_seen = frame.index
             person.last_seen_ms = frame.pts_ms
             person.last_bbox = obs.bbox
+            if person.tentative:
+                self._update_tentative(person, obs, frame.pts_ms)
             if emb is not None:
                 person.add_template(emb, obs.bbox[3] - obs.bbox[1], cfg.max_templates)
                 person.add_embedding(emb)
@@ -395,13 +436,15 @@ class IdentityRegistry:
         cfg = self.config
         if not cfg.late_merge_enabled or person.embedding_count not in cfg.late_merge_samples:
             return None
+        if person.tentative:
+            return None  # 임시 신원은 합치지 않는다 — 정식이 된 뒤 다음 확인 때 본다
         mean = person.mean
         if mean is None:
             return None
         retire_ms = cfg.retire_after_seconds * 1000.0
         best_id, best_sim = None, cfg.late_merge_threshold
         for other in self._people.values():
-            if other is person or other.mean is None:
+            if other is person or other.mean is None or other.tentative:
                 continue
             if other.last_seen_ms >= person.first_seen_ms:
                 continue  # 함께 보인 적이 있다
@@ -478,6 +521,8 @@ class IdentityRegistry:
         for person in self._active_people(now_ms):
             if person.person_id in occupied:
                 continue
+            if person.tentative and person.person_id != favored:
+                continue  # 임시 신원(가짜 사람일 수 있음)은 대조 상대가 아니다 — 되살아난 번호의 원래 주인만 예외
             sim = person.similarity(query)
             near = person.person_id == favored or self._near(person, bbox, now_ms)
             effective = sim + (bonus if near else 0.0)
@@ -508,4 +553,7 @@ class IdentityRegistry:
             lines.append(f"이어붙인 track : {merged}건 (tracker 가 쪼갠 것을 신원으로 복원)")
         if self.merges:
             lines.append(f"나중에 합친 신원 : {len(self.merges)}건")
+        if self.config.tentative_seconds > 0:
+            left = sum(1 for p in self._people.values() if p.tentative)
+            lines.append(f"정식으로 올린 신원 : {len(self.promotions)}명, 임시로 끝난 신원 : {left}명")
         return "\n".join(lines)

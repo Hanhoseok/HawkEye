@@ -46,6 +46,7 @@ LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
 OVERRIDES: list[str] = []
 OVERVIEW_POSE = False
+TENTATIVE = 0.0   # 전체 카메라 임시 신원 시간 (identity.tentative_seconds, C-11) — 0 이면 끔
 """전체 카메라도 yolo-pose 로 — 위에서 보이는 팔 뻗기 (--overview-pose)."""
 EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "right"]}
 """가장자리 규칙을 적용할 변 — 화각 때문에 늘 잘리는 변(전체 카메라 위쪽 머리, 선반 카메라 아래쪽 발)은 뺀다 (C-18)."""
@@ -77,7 +78,7 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     cfg.cameras = [
         CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"],
                      "yolo-pose" if OVERVIEW_POSE else "yolo",
-                     {"edge_sides": EDGE_SIDES["angle1"]}),
+                     {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE}),
         CameraConfig("angle0", str(video), "detail", str(ZONES / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
                      {"edge_sides": EDGE_SIDES["angle0"]}),
     ]
@@ -425,9 +426,12 @@ def main() -> int:
                     help="전체 카메라도 yolo-pose 로 돌리고 '전체 카메라 팔 뻗기'를 판정에 넣음 (run·judge 둘 다 같이 줄 것)")
     ap.add_argument("--all-edges", action="store_true",
                     help="가장자리 규칙을 네 변 모두에 (늘 잘리는 변을 빼기 전, C-18 비교용)")
+    ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
+                    help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
     args = ap.parse_args()
-    global OUT, OVERRIDES, OVERVIEW_POSE
+    global OUT, OVERRIDES, OVERVIEW_POSE, TENTATIVE
     OVERVIEW_POSE = args.overview_pose
+    TENTATIVE = args.tentative
     if args.all_edges:
         for cam in EDGE_SIDES:
             EDGE_SIDES[cam] = ["left", "top", "right", "bottom"]
