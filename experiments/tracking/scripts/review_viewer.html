@@ -232,7 +232,7 @@ function buildMain(c) {
   <div class="legend">
     <span>상자 색 = 전체 카메라 최종 신원 (선반 카메라 상자는 그 순간 짝인 전체 카메라 신원의 색, 짝 없으면 흰색)</span><span>라벨 <code>3</code> = 신원, <code>5→3</code> = 나중에 합쳐짐, <code>#7</code> = 추적 번호</span>
     <span>회색 점선 = 신원 보류(-1)</span><span><b style="color:#ff9f1a">주황 굵은 변</b> = 화면 가장자리에 닿음(가장자리 규칙)</span>
-    <span>빨간 손목 = 선반 영역 안</span><span>경보 손님 = 빨간 이름표</span>
+    <span>빨간 손목 = 선반 영역 안</span><span>이름표의 <code>집음1·결제0</code> = 그 시각까지 확정된 것, 판정(경보·통과)은 판정 시각부터 표시 — 경보 손님은 빨간 이름표</span>
   </div>
   <div class="lower">
     <div class="box"><h3>지금 장면의 사람</h3><div id="people"></div></div>
@@ -384,6 +384,15 @@ function tag(ctx, x, y, text, bg, scale) {
   ctx.fillStyle = bg; ctx.fillRect(x, y - h, w, h);
   ctx.fillStyle = '#fff'; ctx.fillText(text, x + 6 * scale, y - 9 * scale);
 }
+// 그 시각까지 확정된 것만 — 판정은 판정 시각이 지나야, 집음·결제는 그 일이 끝난 뒤에 보인다
+function liveOf(pid, t) {
+  const d = state.data, v = d.verdictOf[pid];
+  const verdict = v && v.ms <= t ? v : null;
+  let taken = 0, paid = 0;
+  for (const a of d.actions) if (a.pid === pid && a.start <= t && (a.kind === 'TAKE' || a.kind === 'UNVERIFIED' || a.kind === 'RETURN' || a.kind === 'MOVE')) taken += a.count;
+  for (const p of d.payments) if (p.pid === pid && p.ms <= t) paid += p.items;
+  return { verdict, later: v && v.ms > t ? v : null, taken, paid };
+}
 function linkNow(t) {
   // 선반 카메라 신원 → 전체 카메라 신원 (지금 시각의 짝)
   const m = {}; for (const l of state.data.links) if (l.start <= t && t <= l.end) m[l.detail] = l.overview; return m;
@@ -440,15 +449,16 @@ function drawCam(cam, t) {
       if (cam === 'angle0' && pid > 0) label = '선반 ' + label;
       label += ` #${tid}`;
       if (cam === 'angle0' && pid > 0) label += ov !== undefined ? ` ⇄전체 ${ov}` : ' (짝 없음)';
-      if (cam === 'angle1') {
+      let live = null;
+      if (cam === 'angle1' && pid > 0) {
         const cu = d.customers[rpid];
         if (cu && !cu.inside) label += ' (손님 아님)';
-        const v = d.verdictOf[rpid];
-        if (v && v.level === 'HIGH_RISK') label += ' 경보';
+        live = liveOf(rpid, t);
+        if (live.verdict) label += ' ' + LEVEL[live.verdict.level][0];
+        else if (live.taken || live.paid) label += ` 집음${live.taken}·결제${live.paid}`;
       }
       if (flags & 1) label += ' 새';
-      const v = cam === 'angle1' ? d.verdictOf[rpid] : null;
-      const bg = v && v.level === 'HIGH_RISK' ? '#c8382e' : (col === '#ffffff' ? '#555' : col);
+      const bg = live && live.verdict && live.verdict.level === 'HIGH_RISK' ? '#c8382e' : (col === '#ffffff' ? '#555' : col);
       const ty = y1 < 40 * s ? y1 + 38 * s : y1;
       tag(ctx, x1, ty, label, bg, s);
     }
@@ -551,9 +561,13 @@ function renderPeople(t) {
       const [pid, rpid, tid, , , , , flags, sim] = r;
       let info = '';
       if (cam === 'angle1') {
-        const cu = d.customers[rpid], v = d.verdictOf[rpid];
+        const cu = d.customers[rpid], lv = pid > 0 ? liveOf(rpid, t) : null;
         info = cu ? (cu.inside ? '손님' : '손님 아님(매장 안 1초 못 채움)') : '';
-        if (v) info += ` · 판정 <b style="color:${LEVEL[v.level][1]}">${LEVEL[v.level][0]}</b>`;
+        if (lv) {
+          info += ` · 지금까지 집음 ${lv.taken} · 결제 ${lv.paid}`;
+          if (lv.verdict) info += ` · 판정 <b style="color:${LEVEL[lv.verdict.level][1]}">${LEVEL[lv.verdict.level][0]}</b>`;
+          else if (lv.later) info += ` <span style="color:var(--muted)">(나중에 ${(lv.later.ms / 1000).toFixed(1)}초 ${LEVEL[lv.later.level][0]})</span>`;
+        }
       } else if (links[rpid] !== undefined) info = `짝: 전체 카메라 ${links[rpid]}`;
       else info = '짝 없음';
       const sm = sim != null ? ` · 대조 ${sim}` : '';
