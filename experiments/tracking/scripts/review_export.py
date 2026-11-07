@@ -41,7 +41,9 @@ RUNS = [
     ("edge", "dual_eval_edge", {}, "가장자리 변만",
      "카메라별 가장자리 변(전체 카메라 위쪽·선반 카메라 아래쪽 제외). 다시 판정 없음."),
     ("edgegap", "dual_eval_edgegap", {}, "가장자리 변 + 다시 판정 (현재 기본)",
-     "가장자리 변 + 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정(3판). 지금 카메라 2대 기본 설정."),
+     "가장자리 변 + 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정(3판) + 선반 앞 후보가 한 명이면 외형 0.85 이상으로 두 카메라 짝(11-07). 지금 카메라 2대 기본 설정."),
+    ("posonly", "dual_eval_edgegap", {"fusion": {"solo_appearance_min": 0.0}}, "두 카메라 짝을 위치로만 (11-07 전)",
+     "현재 기본과 같고, 두 카메라 짝을 위치 점수로만 정함(외형은 0.3 보조). 선반 카메라 띠 위치가 어긋나면 외형이 높아도 '짝 없음'."),
     ("tent", "dual_eval_tent", {}, "+ 임시 신원 1초",
      "가장자리 변 + 다시 판정 + 전체 카메라 새 신원은 임시로 두고 발이 매장 안 바닥에 1초 있어야 정식(대조·나중에 합치기 상대)."),
     ("gap1", "dual_eval_gap", {}, "다시 판정 1판 (가장자리 변 없음)",
@@ -79,10 +81,13 @@ def judge_with(run_dir: str, opts: dict, pair: str, base: AppConfig, table: Sync
     dual_eval.OVERVIEW_POSE = bool(opts.get("pose"))
     dual_eval.OVERRIDES = []
     b = base
-    if opts.get("reach_takes"):
+    if opts.get("reach_takes") or opts.get("fusion"):
         from copy import deepcopy
         b = deepcopy(base)
-        b.fusion.overview_reach_takes = True
+        if opts.get("reach_takes"):
+            b.fusion.overview_reach_takes = True
+        for k, v in (opts.get("fusion") or {}).items():
+            setattr(b.fusion, k, v)
     result = dual_eval.judge_pair(pair, b, table.offset_ms(pair) or 0.0, band)
     return result, _Capture.judge
 

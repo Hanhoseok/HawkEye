@@ -110,12 +110,16 @@ class CrossViewLinker:
         scores = np.full((len(detail), len(overview)), -1.0)
         parts: dict[tuple[int, int], tuple[float | None, float | None]] = {}
         for i, d in enumerate(detail):
+            pos_of = {o: self._position_score(self._detail[d], self._overview[o], start, end) for o in overview}
+            solo = sum(p is not None for p in pos_of.values()) == 1
             for j, o in enumerate(overview):
-                pos = self._position_score(self._detail[d], self._overview[o], start, end)
+                pos = pos_of[o]
                 app = self._appearance_score(self._detail[d], self._overview[o])
                 score = self._combine(pos, app)
                 if score is None:
                     continue
+                if solo and self._solo_rescue(app):
+                    score = max(score, self.config.min_score)   # 비교할 상대가 한 명뿐 — 외형이 높으면 위치가 어긋나도 잇는다
                 if self._current.get(d) == o:
                     score += self.config.keep_bonus   # 한 조각의 흔들림으로 짝을 바꾸지 않는다
                 scores[i, j] = score
@@ -144,6 +148,10 @@ class CrossViewLinker:
             return pos
         w = self.config.position_weight
         return w * pos + (1.0 - w) * app
+
+    def _solo_rescue(self, app: float | None) -> bool:
+        floor = self.config.solo_appearance_min
+        return floor > 0 and app is not None and app >= floor
 
     def _position_score(self, a: _Track, b: _Track, start: float, end: float) -> float | None:
         """같은 때(±pair_tolerance) 두 화면의 띠 위치가 얼마나 가까운가. 0~1."""

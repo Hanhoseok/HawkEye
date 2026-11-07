@@ -41,6 +41,40 @@ def test_linker_leaves_unmatched_when_positions_disagree():
     assert linker.current(1) is None     # 띠에서 한참 떨어진 사람과는 잇지 않는다 (짝 없음 허용)
 
 
+def test_linker_trusts_appearance_only_when_one_candidate():
+    # 선반 카메라 띠 위치가 0.25 넘게 어긋나도(계산대·팔 뻗기), 비교할 사람이 한 명이고 외형이 높으면 잇는다
+    cfg = FusionConfig()
+    a, b = np.array([1.0, 0.0]), np.array([0.6, 0.8])
+    linker = CrossViewLinker(cfg)
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, a)
+        linker.update(float(t))
+    assert linker.current(1) == 3
+    # 외형이 낮으면(0.6) 그대로 짝 없음
+    linker = CrossViewLinker(cfg)
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, b)
+        linker.update(float(t))
+    assert linker.current(1) is None
+    # 후보가 둘이면 외형만으로 잇지 않는다 — 위치가 가까운 사람이 없으면 짝 없음
+    linker = CrossViewLinker(cfg)
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, a)
+        linker.observe("overview", 4, float(t), 0.20, a)
+        linker.update(float(t))
+    assert linker.current(1) is None
+    # 끄면(0) 위치만 본다
+    linker = CrossViewLinker(FusionConfig(solo_appearance_min=0.0))
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, a)
+        linker.update(float(t))
+    assert linker.current(1) is None
+
+
 def test_linker_follows_crossing_people_with_appearance_help():
     # 두 사람이 자리를 바꾼다 — 위치만으로 따라가고, 외형이 같은 쪽을 받쳐 준다
     cfg = FusionConfig()
