@@ -41,6 +41,40 @@ def test_linker_leaves_unmatched_when_positions_disagree():
     assert linker.current(1) is None     # 띠에서 한참 떨어진 사람과는 잇지 않는다 (짝 없음 허용)
 
 
+def test_linker_trusts_appearance_only_when_one_candidate():
+    # 선반 카메라 띠 위치가 0.25 넘게 어긋나도(계산대·팔 뻗기), 비교할 사람이 한 명이고 외형이 높으면 잇는다
+    cfg = FusionConfig()
+    a, b = np.array([1.0, 0.0]), np.array([0.6, 0.8])
+    linker = CrossViewLinker(cfg)
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, a)
+        linker.update(float(t))
+    assert linker.current(1) == 3
+    # 외형이 낮으면(0.6) 그대로 짝 없음
+    linker = CrossViewLinker(cfg)
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, b)
+        linker.update(float(t))
+    assert linker.current(1) is None
+    # 후보가 둘이면 외형만으로 잇지 않는다 — 위치가 가까운 사람이 없으면 짝 없음
+    linker = CrossViewLinker(cfg)
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, a)
+        linker.observe("overview", 4, float(t), 0.20, a)
+        linker.update(float(t))
+    assert linker.current(1) is None
+    # 끄면(0) 위치만 본다
+    linker = CrossViewLinker(FusionConfig(solo_appearance_min=0.0))
+    for t in range(0, 3000, 66):
+        linker.observe("detail", 1, float(t), 0.70, a)
+        linker.observe("overview", 3, float(t), 0.95, a)
+        linker.update(float(t))
+    assert linker.current(1) is None
+
+
 def test_linker_follows_crossing_people_with_appearance_help():
     # 두 사람이 자리를 바꾼다 — 위치만으로 따라가고, 외형이 같은 쪽을 받쳐 준다
     cfg = FusionConfig()
@@ -153,3 +187,107 @@ def test_floor_zone_adapter_reports_foot_zone():
     hits = fz.evaluate((480, 100, 560, 520))   # 화면 위쪽 = 계산대 쪽
     assert [h.zone for h in hits] == ["counter"]
     assert len(fz.polygon_of("counter")) == 4
+
+
+def test_overview_reach_names_the_owner_over_the_band_link():
+    # C2 같은 경우: 비슷한 옷 2명이 선반 앞 띠에서 거의 같은 자리 — 띠 위치로는 선반 카메라 4번이 11번과 짝.
+    # 전체 카메라에서는 12번만 선반으로 팔을 뻗었다 → 그 시각 선반 변화의 주인은 12번
+    cfg = FusionConfig()
+    linker = CrossViewLinker(cfg)
+    feed(linker, {("detail", 4): lambda t: 0.3, ("overview", 11): lambda t: 0.3,
+                  ("overview", 12): lambda t: 0.45}, 0, 6000)
+    fuser = ShelfEventFuser(cfg, linker, TimeAxis(30.0), TimeAxis(60.0), {"card": "shelf"})
+    visit = ShelfVisit(4, "shelf", 60, 150, 1, 0, "shelf", "[shelf] 사라짐: 1단 1번째")
+    assert fuser.detail_visit(visit, 2000.0, 4700.0).person_id == 11          # 팔 뻗기 기록이 없으면 예전처럼 짝
+    fuser.note_reach(2500.0, 3200.0, 12)
+    fused = fuser.detail_visit(visit, 2000.0, 4700.0)
+    assert fused.person_id == 12 and fuser.records[-1].how == "전체 카메라 팔 뻗기"
+    fuser.note_reach(2600.0, 3000.0, 11)                                      # 둘 다 뻗었으면 팔 뻗기로는 못 정함
+    assert fuser.detail_visit(visit, 2000.0, 4700.0).person_id == 11
+
+
+def kp_with_wrist(x: float, y: float, conf: float = 0.9):
+    """관절 17점 — 왼손목(9)만 (x, y), 나머지는 안 보임."""
+    pts = [(0.0, 0.0, 0.0)] * 17
+    pts[9] = (x, y, conf)
+    return tuple(pts)
+
+
+class RecordingRisk:
+    def __init__(self):
+        self.takes = []
+
+    def reset(self):
+        self.takes = []
+
+    def update(self, frame, identities, takes, merges, visits):
+        self.takes += takes
+        return [], []
+
+    def finish(self, frame, size):
+        return []
+
+
+def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
+    from src.core.types import Frame, IdentityObservation
+    from src.fusion.judge import DualJudge
+    from src.zones.floor import shelf_image_zones
+
+    root = Path(__file__).resolve().parents[1]
+    floor = FloorMap.load(root / "zones" / "store01_dual" / "floor.yaml")
+    import yaml
+    raw = yaml.safe_load((root / "zones" / "store01_dual" / "floor.yaml").read_text(encoding="utf-8"))
+    w, h = 1920, 1080
+    bbox = (0.30 * w, 0.20 * h, 0.45 * w, 0.85 * h)
+
+    def run(reach_seconds, wrist, as_take=True):
+        risk = RecordingRisk()
+        judge = DualJudge(FusionConfig(overview_reach_seconds=reach_seconds, overview_reach_takes=as_take), risk,
+                          floor, (1.0, 0.0),
+                          TimeAxis(30.0), TimeAxis(60.0), w, (w, h), {}, None, shelf_image_zones(raw))
+        judge.reset()
+        last = None
+        for i in range(0, 120, 4):                       # 2초, 초당 15장
+            frame = Frame(index=i, timestamp="", pts_ms=i * 1000.0 / 60, image=None, camera_id="angle1")
+            x = wrist if 0.5 <= frame.pts_ms / 1000 <= 1.2 else 0.43 * w   # 0.5~1.2초 동안 손목이 선반 안
+            obs = IdentityObservation(person_id=3, track_id=3, bbox=bbox, frame=i, timestamp="",
+                                      keypoints=kp_with_wrist(x, 0.5 * h))
+            judge.overview_step(frame, [obs], [], [])
+            last = frame
+        judge.finish(last)
+        return risk.takes, judge
+
+    takes, judge = run(0.3, 0.33 * w)
+    assert len(takes) == 1 and takes[0].person_id == 3 and takes[0].zone == "shelf"
+    assert 0.6 <= takes[0].duration_sec <= 0.8
+    assert any(r.kind == "reach" for r in judge.fuser.records)
+    assert run(0.3, 0.40 * w)[0] == []                  # 손목이 선반 앞 모서리(0.375) 밖 — 몸 옆
+    assert run(0.0, 0.33 * w)[0] == []                  # 기본은 꺼짐 (전체 카메라에 손목이 없던 예전 실행과 같음)
+    takes, judge = run(0.3, 0.33 * w, as_take=False)    # 기본: 주인 정하기 근거로만 — 집기 행동으로 넘기지 않음
+    assert takes == [] and any(r.kind == "reach" for r in judge.fuser.records)
+
+
+def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
+    # 상품 포장의 사람 그림에 관절이 잡히면 '발'도 선반 영역 안에 있다 — 바닥에 선 사람이 아니므로 팔 뻗기로 안 봄
+    from src.core.types import Frame, IdentityObservation
+    from src.fusion.judge import DualJudge
+    from src.zones.floor import shelf_image_zones
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    raw = yaml.safe_load((root / "zones" / "store01_dual" / "floor.yaml").read_text(encoding="utf-8"))
+    floor = FloorMap.load(root / "zones" / "store01_dual" / "floor.yaml")
+    w, h = 1920, 1080
+    risk = RecordingRisk()
+    judge = DualJudge(FusionConfig(overview_reach_seconds=0.3, overview_reach_takes=True), risk, floor, (1.0, 0.0),
+                      TimeAxis(30.0), TimeAxis(60.0), w, (w, h), {}, None, shelf_image_zones(raw))
+    judge.reset()
+    ghost = (0.15 * w, 0.40 * h, 0.25 * w, 0.70 * h)          # 선반 한가운데 작은 '사람'
+    for i in range(0, 120, 4):
+        frame = Frame(index=i, timestamp="", pts_ms=i * 1000.0 / 60, image=None, camera_id="angle1")
+        obs = IdentityObservation(person_id=9, track_id=9, bbox=ghost, frame=i, timestamp="",
+                                  keypoints=kp_with_wrist(0.2 * w, 0.55 * h))
+        judge.overview_step(frame, [obs], [], [])
+        last = frame
+    judge.finish(last)
+    assert risk.takes == [] and not any(r.kind == "reach" for r in judge.fuser.records)

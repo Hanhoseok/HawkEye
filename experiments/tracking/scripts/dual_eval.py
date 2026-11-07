@@ -37,13 +37,19 @@ from src.risk.customers import ShelfVisit  # noqa: E402
 from src.risk.engine import RiskEngine  # noqa: E402
 from src.risk.payments import PaymentFeed  # noqa: E402
 from src.sinks.observation_log import read_identities  # noqa: E402
-from src.zones.floor import FloorMap, FloorZoneMap  # noqa: E402
+from src.zones.floor import FloorMap, FloorZoneMap, shelf_image_zones  # noqa: E402
 import sync_pair  # noqa: E402
 
 OUT = ROOT / "outputs" / "dual_eval"
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
+OVERRIDES: list[str] = []
+OVERVIEW_POSE = False
+TENTATIVE = 0.0   # 전체 카메라 임시 신원 시간 (identity.tentative_seconds, C-11) — 0 이면 끔
+"""전체 카메라도 yolo-pose 로 — 위에서 보이는 팔 뻗기 (--overview-pose)."""
+EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "right"]}
+"""가장자리 규칙을 적용할 변 — 화각 때문에 늘 잘리는 변(전체 카메라 위쪽 머리, 선반 카메라 아래쪽 발)은 뺀다 (C-18)."""
 """60FPS 전체 카메라는 4장에 1장, 30FPS 선반 카메라는 2장에 1장 — 둘 다 초당 15장."""
 
 
@@ -61,15 +67,29 @@ def pairs(pattern: str | None) -> list[str]:
 
 def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig:
     cfg = deepcopy(base)
+    # 끊겼다 되살아난 추적 번호는 다시 판정 (C-22) — 가장자리 변과 함께 켜면 손님 수 36→38/38, 판정 변화 없음
+    # (2026-11-04 3차 비교). --set identity.track_gap_recheck_seconds=0 으로 끌 수 있다.
+    cfg.identity.track_gap_recheck_seconds = 1.0
+    for item in OVERRIDES:
+        key, value = item.split("=", 1)
+        section, name = key.split(".")
+        setattr(getattr(cfg, section), name, yaml.safe_load(value))
     video, ref = sync_pair.pair_files(pair)
     cfg.cameras = [
-        CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"], "yolo"),
-        CameraConfig("angle0", str(video), "detail", str(ZONES / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose"),
+        CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"],
+                     "yolo-pose" if OVERVIEW_POSE else "yolo",
+                     {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE}),
+        CameraConfig("angle0", str(video), "detail", str(ZONES / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
+                     {"edge_sides": EDGE_SIDES["angle0"]}),
     ]
     # 선반 카메라 손 뻗기 = 손목이 칸(SHELF 구역) 안에 0.3초 이상 (설계 M-6). 기준값은 N 으로 다시 본다.
     cfg.detail_interaction = InteractionConfig(**{**cfg.interaction.__dict__, "signal": "hand",
                                                   "dwell_seconds": 0.3, "hand_conf": 0.3})
     cfg.risk.payment_mode = "dwell"   # 결제 기록 없음: 계산대 체류 = 결제 (사용자 확인 규칙)
+    # 매장 안 바닥(선반 앞·계산대·통로)에 1초 이상 들어온 사람만 손님 — 문 앞·창밖 행인·입장 순간 겹친 상자 제외 (C-20)
+    cfg.risk.inside_zones, cfg.risk.inside_seconds = ["shelf", "counter", "aisle"], 1.0
+    if OVERVIEW_POSE:
+        cfg.fusion.overview_reach_seconds = 0.3   # 선반 카메라 손-칸 접촉과 같은 기준에서 시작 (N 으로 다시 본다)
     cfg.output.write_video = False
     cfg.shelves.log_items = True
     from fake_sensor import UNIT_G
@@ -192,8 +212,9 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         path = LABELS / "fake_sensor" / f"{pair}.csv"
         if path.exists():
             sensors = load_sensor_events(path)
+    floor_raw = yaml.safe_load((ZONES / "floor.yaml").read_text(encoding="utf-8")) or {}
     judge = DualJudge(cfg.fusion, risk, floor, band_map, TimeAxis(m0["fps"], offset_ms), TimeAxis(m1["fps"]),
-                      m0["width"], (m1["width"], m1["height"]), slot_shelf, sensors)
+                      m0["width"], (m1["width"], m1["height"]), slot_shelf, sensors, shelf_image_zones(floor_raw))
     judge.reset()
     if use_detail:
         from src.shelf.slot_diff import SlotChange
@@ -231,7 +252,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
             judge.overview_step(frame, log.ids["angle1"].get(idx, []), take_at["angle1"].get(idx, []),
                                 merges_seen, log.appearance("angle1", 0.0, ms), log.resolver("angle1", idx))
             last = frame
-    judge.finish(last)
+    judge.finish(last, log.resolver("angle1", m1["frames"]))
     finals = [e for e in judge.events if e.level != RiskLevel.WARNING]
     levels = [e.level.value for e in finals]
     expected_theft = pair[0] == "T"
@@ -240,7 +261,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     return {
         "pair": pair, "kind": kind(pair), "verdicts": levels, "correct": correct,
         "reasons": [f"P{e.person_id} {e.level.value}: {e.reason}" for e in finals],
-        "people": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
+        "people": sum(1 for c in risk.book.customers.values() if c.seen_inside),
+        "identities": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
         "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes,
         "actions": [a.describe() for a in risk.all_actions() if a.kind != "LOOK"],
         "payments": sum(1 for p in risk.book.payments if p.method == "dwell"),
@@ -397,7 +419,25 @@ def main() -> int:
     ap.add_argument("--label", default="")
     ap.add_argument("--before", action="store_true",
                     help="C1·C12 를 보고 고치기 전 규칙으로 (손 접촉 1.0초 뒤 주인 결정, 다른 손님 손 뻗기는 안 지움)")
+    ap.add_argument("--out", help="기록 폴더 이름 (outputs/ 아래, 기본 dual_eval) — 설정을 바꿔 따로 돌려 비교할 때")
+    ap.add_argument("--set", action="append", default=[], metavar="절.키=값",
+                    help="config.yaml 값을 이번 실행만 바꿈, 예: identity.track_gap_recheck_seconds=1.0")
+    ap.add_argument("--overview-pose", action="store_true",
+                    help="전체 카메라도 yolo-pose 로 돌리고 '전체 카메라 팔 뻗기'를 판정에 넣음 (run·judge 둘 다 같이 줄 것)")
+    ap.add_argument("--all-edges", action="store_true",
+                    help="가장자리 규칙을 네 변 모두에 (늘 잘리는 변을 빼기 전, C-18 비교용)")
+    ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
+                    help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
     args = ap.parse_args()
+    global OUT, OVERRIDES, OVERVIEW_POSE, TENTATIVE
+    OVERVIEW_POSE = args.overview_pose
+    TENTATIVE = args.tentative
+    if args.all_edges:
+        for cam in EDGE_SIDES:
+            EDGE_SIDES[cam] = ["left", "top", "right", "bottom"]
+    if args.out:
+        OUT = ROOT / "outputs" / args.out
+    OVERRIDES = args.set
     if args.stage == "run":
         run(args.only)
     elif args.stage == "sync":

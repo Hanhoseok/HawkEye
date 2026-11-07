@@ -170,6 +170,18 @@ class FloorMap:
         return float(np.mean(errors))
 
 
+def shelf_image_zones(raw: dict) -> "ZoneMap | None":
+    """floor.yaml 의 `shelf_image`(전체 카메라 화면의 선반 영역, 화면 비율 다각형들) → 화면 구역. 없으면 None."""
+    from .zone_map import ZoneMap
+
+    polys = raw.get("shelf_image") or []
+    if not polys:
+        return None
+    return ZoneMap([Zone(name=f"shelf_image{i + 1}", type=ZoneType.SHELF,
+                         polygon=tuple((float(x), float(y)) for x, y in poly), normalized=True)
+                    for i, poly in enumerate(polys)])
+
+
 class FloorZoneMap:
     """바닥 구역을 화면 구역(ZoneMap)과 같은 방식으로 쓰게 하는 어댑터.
 

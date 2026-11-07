@@ -137,7 +137,7 @@ class RiskEngine:
         # 5) 출구에 다가섬 — 이대로 나가면 HIGH_RISK 인 손님에게만 WARNING
         min_ms = self.config.exit_min_seconds * 1000.0
         for customer in visible:
-            if customer.exit_since_ms is None or customer.exit_judged:
+            if customer.exit_since_ms is None or customer.exit_judged or not customer.seen_inside:
                 continue
             if now - customer.exit_since_ms < min_ms:
                 continue

@@ -14,7 +14,7 @@ import heapq
 import json
 import time
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -26,7 +26,7 @@ from .fusion.judge import DualJudge
 from .fusion.shelf_events import TimeAxis, load_sensor_events
 from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
-from .zones.floor import FloorMap, FloorZoneMap
+from .zones.floor import FloorMap, FloorZoneMap, shelf_image_zones
 from .zones.zone_map import ZoneMap
 
 
@@ -191,7 +191,8 @@ class MultiCameraPipeline:
         if last_overview is not None:
             if rest:
                 self.judge.risk.add_late_takes(rest, last_overview.pts_ms)
-            for e in self.judge.finish(last_overview):
+            resolve = self.overview.registry.resolve if self.overview.registry is not None else None
+            for e in self.judge.finish(last_overview, resolve):
                 self._report(e)
                 risk_log.write_many([e])
         risk_log.close()
@@ -235,16 +236,26 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
     floor_raw = yaml.safe_load(Path(overview_cam.zones).read_text(encoding="utf-8")) or {}
     embedder = build_embedder(config.tracker.reid)
 
-    def registry():
-        return IdentityRegistry(config.identity, embedder, imgsz=config.detector.imgsz)
+    def registry(cam: CameraConfig):
+        # 카메라마다 화각이 달라 신원 계층 값 일부(예: 늘 잘리는 변)를 따로 준다
+        ident = replace(config.identity, **{k: tuple(v) if isinstance(v, list) else v for k, v in cam.identity.items()})
+        return IdentityRegistry(ident, embedder, imgsz=config.detector.imgsz)
 
     # 전체 카메라: 사람 상자만, 바닥 구역, 선반 앞 띠에서 머묾(보조)
     floor_zones = FloorZoneMap(floor)
-    ov_detector = build_detector(config.detector)
+    ocfg = deepcopy(config.detector)
+    if overview_cam.detector == "yolo-pose":
+        # 위에서 보면 팔 뻗기가 잘 보인다 — 손목으로 '전체 카메라 팔 뻗기'(fusion.overview_reach_seconds)
+        ocfg.name, ocfg.model_path = "yolo-pose", "yolov8n-pose.pt"
+    ov_detector = build_detector(ocfg)
     ignore = [tuple(map(float, r)) for r in floor_raw.get("ignore_image") or []]
     if ignore:
         ov_detector = MaskedDetector(ov_detector, ignore)
-    ov_registry = registry()
+    ov_registry = registry(overview_cam)
+    inside = set(config.risk.inside_zones)
+    if inside and hasattr(ov_registry, "set_promote_check"):
+        # 임시 신원은 발이 매장 안 바닥(선반 앞·계산대·통로)에 있어야 정식이 된다 — 손님 조건(C-20)과 같은 기준
+        ov_registry.set_promote_check(lambda bbox: any(h.zone in inside for h in floor_zones.evaluate(bbox)))
     overview = CameraWorker(overview_cam.name, ov_detector, build_tracker(config.tracker), ov_registry, floor_zones,
                             InteractionDetector(config.interaction, floor_zones))
 
@@ -260,7 +271,7 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
         shelves = ShelfWatcher(scfg, build_item_detector(scfg.model_path, scfg.imgsz, scfg.conf,
                                                          config.detector.device, scfg.ignore),
                                slots=[(z.name, z.polygon) for z in setup.zone_map.zones]) if setup.shelves else None
-        detail = CameraWorker(detail_cam.name, build_detector(dcfg), build_tracker(config.tracker), registry(),
+        detail = CameraWorker(detail_cam.name, build_detector(dcfg), build_tracker(config.tracker), registry(detail_cam),
                               setup.zone_map, InteractionDetector(icfg, setup.zone_map), shelves)
 
     payments = PaymentFeed.load(config.risk.payments) if config.risk.payments else PaymentFeed.empty()
@@ -283,5 +294,5 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
         d_fps, d_size = 30.0, (1920, 1080)
     judge = DualJudge(config.fusion, risk, floor, setup.band_map if setup else (1.0, 0.0),
                       TimeAxis(d_fps, detail_cam.offset_ms if detail_cam else 0.0), TimeAxis(ov_fps, overview_cam.offset_ms),
-                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors)
+                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors, shelf_image_zones(floor_raw))
     return MultiCameraPipeline(config, overview, detail, overview_cam, detail_cam, judge, out_dir)

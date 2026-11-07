@@ -11,6 +11,8 @@ cameras:
     zones: zones/store01_dual/floor.yaml
     stride: 4               # 60FPS → 15FPS
     detector: yolo
+    identity:
+      edge_sides: [left, right, bottom]   # 위쪽은 화각 때문에 늘 머리가 잘림 — 가장자리 규칙에서 뺌 (C-18)
   - name: angle0
     role: detail            # 선반 카메라: 손·선반 물건
     source: ""
@@ -18,10 +20,16 @@ cameras:
     offset_ms: 0
     stride: 2               # 30FPS → 15FPS
     detector: yolo-pose
+    identity:
+      edge_sides: [left, top, right]      # 아래쪽은 늘 발이 잘림
 detail_interaction:         # 선반 카메라 손 뻗기 = 손목이 칸 안에 0.3초 이상 (설계 M-6)
   signal: hand
   dwell_seconds: 0.3
   hand_conf: 0.3
 risk:
   payment_mode: dwell       # 결제 기록 없음: 계산대 체류 = 결제
-fusion: {}                  # 기본값 (src/core/config.py FusionConfig)
+  inside_zones: [shelf, counter, aisle]   # 이 바닥 구역에 1초 이상 들어온 사람만 손님 (문 앞·창밖 행인 제외)
+  inside_seconds: 1.0
+identity:
+  track_gap_recheck_seconds: 1.0   # 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정 (C-22) — 가장자리 변과 함께 손님 수 38/38
+fusion: {}                  # 기본값 (src/core/config.py FusionConfig). 전체 카메라 팔 뻗기는 끔 (D-19, 3차 비교)

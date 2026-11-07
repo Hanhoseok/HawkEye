@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>오판 장면 보기</title>
+<style>
+:root {
+  --bg: #f6f6f3; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --soft: #efeee9;
+  --accent: #2f6fdb; --ok: #1f8a4c; --bad: #c8382e; --warn: #c27c0e; --exp: #7a4fc9;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161615; --panel: #1f1f1d; --ink: #ecebe6; --muted: #9c9b95; --line: #34332f; --soft: #2a2926;
+          --accent: #6b9cf0; --ok: #4cc27f; --bad: #f0675c; --warn: #e9a63a; --exp: #a98af0; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
+button { font: inherit; color: inherit; }
+.app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+aside { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
+aside header { padding: 16px 16px 8px; position: sticky; top: 0; background: var(--panel); z-index: 2; border-bottom: 1px solid var(--line); }
+aside h1 { font-size: 17px; margin: 0 0 4px; }
+aside .sub { color: var(--muted); font-size: 12px; }
+.tabs { display: flex; gap: 4px; margin-top: 10px; }
+.tabs button { flex: 1; border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 5px 0; cursor: pointer; font-size: 13px; }
+.tabs button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.group { padding: 10px 12px 2px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+.case { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 14px 8px 12px; cursor: pointer; border-left: 3px solid transparent; }
+.case:hover { background: var(--soft); }
+.case.on { background: var(--soft); border-left-color: var(--accent); }
+.case .t { font-weight: 600; font-size: 13px; }
+.case .m { color: var(--muted); font-size: 12px; }
+.badge { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 9px; margin-right: 4px; font-weight: 600; vertical-align: 1px; }
+.b-fixed { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.b-open { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.b-exp { background: color-mix(in srgb, var(--exp) 18%, transparent); color: var(--exp); }
+.b-info { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.pairgrid { padding: 8px 12px; }
+.pairgrid table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.pairgrid th, .pairgrid td { padding: 3px 4px; border-bottom: 1px solid var(--line); text-align: center; }
+.pairgrid th { color: var(--muted); font-weight: 500; font-size: 11px; }
+.pairgrid td:first-child { text-align: left; font-family: var(--mono); }
+.pairgrid tr { cursor: pointer; }
+.pairgrid tr:hover td { background: var(--soft); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+main { overflow: auto; padding: 16px 20px 40px; }
+.casehead h2 { margin: 0 0 6px; font-size: 19px; }
+.casehead .desc { max-width: 980px; }
+.casehead .desc p { margin: 6px 0; }
+.look { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.look button { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; padding: 3px 10px; cursor: pointer; font-size: 13px; }
+.look button:hover { border-color: var(--accent); color: var(--accent); }
+.look button b { font-family: var(--mono); font-weight: 600; margin-right: 4px; }
+.runs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 10px; align-items: stretch; }
+.runbtn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; cursor: pointer; text-align: left; min-width: 170px; }
+.runbtn.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.runbtn .n { font-weight: 600; font-size: 13px; }
+.runbtn .r { font-size: 12px; color: var(--muted); }
+.runbtn .ok { color: var(--ok); font-weight: 600; } .runbtn .bad { color: var(--bad); font-weight: 600; }
+.more { align-self: center; }
+.more select { font: inherit; padding: 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.videos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.videos.big1 { grid-template-columns: 1fr; } .videos.big1 .cam[data-cam=angle0] { display: none; }
+.videos.big0 { grid-template-columns: 1fr; } .videos.big0 .cam[data-cam=angle1] { display: none; }
+.videos.big1 .cam, .videos.big0 .cam { width: 100%; max-width: calc(70vh * 16 / 9); margin: 0 auto; }
+.cam { background: #000; border-radius: 8px; overflow: hidden; position: relative; }
+.cam .stage { position: relative; aspect-ratio: 16/9; }
+.cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cam .label { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 12px; background: rgba(0,0,0,.55); padding: 1px 7px; border-radius: 4px; z-index: 3; }
+.cam .zoom { position: absolute; right: 6px; top: 6px; z-index: 3; background: rgba(0,0,0,.55); color: #fff; border: 0; border-radius: 4px; cursor: pointer; font-size: 12px; padding: 1px 7px; }
+.cam .note { position: absolute; left: 0; right: 0; bottom: 0; color: #fff; font-size: 12px; background: rgba(0,0,0,.6); padding: 2px 8px; z-index: 3; display: none; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 6px; }
+.transport button { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.transport button.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); min-width: 64px; }
+.transport .time { font-family: var(--mono); font-size: 13px; margin-left: 4px; min-width: 120px; }
+.transport label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; cursor: pointer; }
+.transport select { font: inherit; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); padding: 2px; }
+.timeline { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px 8px 96px; user-select: none; }
+.lane { position: relative; height: 18px; margin: 3px 0; }
+.lane .name { position: absolute; left: -90px; width: 84px; font-size: 11px; color: var(--muted); text-align: right; top: 1px; white-space: nowrap; }
+.lane .bg { position: absolute; inset: 7px 0; background: var(--soft); border-radius: 2px; }
+.mk { position: absolute; top: 2px; height: 14px; min-width: 4px; border-radius: 3px; cursor: pointer; opacity: .9; }
+.mk:hover { outline: 2px solid var(--ink); z-index: 2; }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; z-index: 3; }
+.scrub { position: absolute; left: 96px; right: 8px; top: 0; bottom: 0; cursor: crosshair; }
+.tip { position: fixed; z-index: 50; background: var(--ink); color: var(--panel); font-size: 12px; padding: 5px 8px; border-radius: 6px; max-width: 420px; pointer-events: none; display: none; white-space: pre-line; }
+.lower { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.3fr); gap: 12px; margin-top: 12px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.box h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.people { width: 100%; border-collapse: collapse; font-size: 13px; }
+.people td, .people th { padding: 3px 4px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.people th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.log { max-height: 340px; overflow: auto; font-size: 13px; }
+.log div { padding: 3px 4px; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; grid-template-columns: 54px 66px 1fr; gap: 6px; }
+.log div:hover { background: var(--soft); }
+.log div.near { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.log .tm { font-family: var(--mono); color: var(--muted); }
+.log .k { font-size: 12px; font-weight: 600; }
+.legend { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.8; }
+.legend span { margin-right: 12px; white-space: nowrap; }
+.empty { color: var(--muted); padding: 40px; text-align: center; }
+code { font-family: var(--mono); font-size: 12px; background: var(--soft); padding: 0 4px; border-radius: 3px; }
+@media (max-width: 1000px) {
+  .app { grid-template-columns: 1fr; height: auto; }
+  aside { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  .videos, .lower { grid-template-columns: 1fr; }
+  main { padding: 12px 16px 40px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <header>
+      <h1>오판 장면 보기</h1>
+      <div class="sub">store01 카메라 2대 · 기록을 다시 판정한 결과를 원본 영상 위에 그림</div>
+      <div class="tabs"><button id="tabCases" class="on">문제 목록</button><button id="tabPairs">모든 영상</button></div>
+    </header>
+    <div id="caseList"></div>
+    <div id="pairList" class="pairgrid" hidden></div>
+  </aside>
+  <main id="main"><div class="empty">불러오는 중…</div></main>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+// ------------------------------------------------------------------ 데이터 불러오기
+const HE = { _index: null, _cases: [], _data: {}, _wait: {} };
+HE.index = d => { HE._index = d; };
+HE.cases = c => { HE._cases = c; };
+HE.loaded = (key, d) => { HE._data[key] = d; (HE._wait[key] || []).forEach(f => f(d)); delete HE._wait[key]; };
+function loadScript(src) {
+  return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(src); document.head.appendChild(s); });
+}
+function loadPair(run, pair) {
+  const key = run + '/' + pair;
+  if (HE._data[key]) return Promise.resolve(HE._data[key]);
+  return new Promise((ok, no) => {
+    (HE._wait[key] = HE._wait[key] || []).push(ok);
+    loadScript(`data/${run}/${encodeURIComponent(pair)}.js`).catch(() => no(new Error('기록 없음: ' + key)));
+  });
+}
+
+// ------------------------------------------------------------------ 공통
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = ms => (ms / 1000).toFixed(1) + '초';
+const PALETTE = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990',
+  '#dcbeff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075'];
+const colorOf = pid => pid > 0 ? PALETTE[(pid - 1) % PALETTE.length] : '#9a9a9a';
+const LEVEL = { HIGH_RISK: ['경보', 'var(--bad)'], CLEAR: ['통과', 'var(--ok)'], REVIEW: ['확인 필요', 'var(--warn)'], WARNING: ['출구 접근', 'var(--muted)'] };
+const runName = k => (HE._index.runs.find(r => r.key === k) || { name: k }).name;
+
+const state = { mode: 'case', caseId: null, pair: null, run: null, runs: [], data: null, playing: false, t: 0, big: '' ,
+  show: { boxes: true, kp: true, zones: true, edge: true, items: false } };
+
+// ------------------------------------------------------------------ 왼쪽 목록
+function verdictOk(s, pair) {
+  if (!s) return null;
+  const theft = pair[0] === 'T';
+  return theft ? s.verdicts.includes('HIGH_RISK') : !s.verdicts.includes('HIGH_RISK');
+}
+function renderSide() {
+  const groups = {};
+  HE._cases.forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
+  const B = { fixed: ['b-fixed', '해결'], open: ['b-open', '남음'], exp: ['b-exp', '실험'], info: ['b-info', '참고'] };
+  $('#caseList').innerHTML = Object.entries(groups).map(([g, cs]) => `<div class="group">${esc(g)}</div>` + cs.map(c =>
+    `<button class="case" data-id="${c.id}"><div class="t"><span class="badge ${B[c.status][0]}">${B[c.status][1]}</span>${esc(c.title)}</div>
+     <div class="m">${esc(c.pair)} · ${esc(c.short || '')}</div></button>`).join('')).join('');
+  document.querySelectorAll('.case').forEach(b => b.onclick = () => openCase(b.dataset.id));
+  const runs = HE._index.runs.filter(r => HE._index.summary[r.key]);
+  const truth = HE._index.truth;
+  $('#pairList').innerHTML = `<table><tr><th>쌍</th>${runs.map(r => `<th title="${esc(r.name)}">${esc(r.key)}</th>`).join('')}</tr>` +
+    HE._index.pairs.map(p => `<tr data-p="${p}"><td>${p}</td>${runs.map(r => {
+      const s = HE._index.summary[r.key][p];
+      if (!s) return '<td></td>';
+      const ok = verdictOk(s, p), ppl = truth[p] && s.people === truth[p].people;
+      return `<td title="${esc(r.name)}: ${esc(s.verdicts.join(',') || '판정 없음')} / 손님 ${s.people}"><span class="dot" style="background:${ok ? 'var(--ok)' : 'var(--bad)'}"></span>${ppl ? '' : '<sup style="color:var(--warn)">수</sup>'}</td>`;
+    }).join('')}</tr>`).join('') + `</table><div class="legend"><span><span class="dot" style="background:var(--ok)"></span> 판정 맞음</span><span><span class="dot" style="background:var(--bad)"></span> 틀림</span><span><sup style="color:var(--warn)">수</sup> 손님 수 틀림</span></div>`;
+  document.querySelectorAll('#pairList tr[data-p]').forEach(tr => tr.onclick = () => openPair(tr.dataset.p));
+}
+$('#tabCases').onclick = () => { $('#tabCases').classList.add('on'); $('#tabPairs').classList.remove('on'); $('#caseList').hidden = false; $('#pairList').hidden = true; };
+$('#tabPairs').onclick = () => { $('#tabPairs').classList.add('on'); $('#tabCases').classList.remove('on'); $('#caseList').hidden = true; $('#pairList').hidden = false; };
+
+// ------------------------------------------------------------------ 본문
+function openCase(id) {
+  const c = HE._cases.find(x => x.id === id);
+  state.mode = 'case'; state.caseId = id; state.pair = c.pair;
+  state.runs = c.runs; location.hash = 'case=' + id;
+  document.querySelectorAll('.case').forEach(b => b.classList.toggle('on', b.dataset.id === id));
+  buildMain(c);
+  switchRun(c.run || c.runs[0], c.look && c.look[0] ? c.look[0].t * 1000 : 0);
+}
+function openPair(p) {
+  state.mode = 'pair'; state.caseId = null; state.pair = p;
+  state.runs = HE._index.runs.filter(r => HE._index.summary[r.key] && HE._index.summary[r.key][p]).map(r => r.key);
+  location.hash = 'pair=' + p;
+  document.querySelectorAll('.case').forEach(b => b.classList.remove('on'));
+  const t = HE._index.truth[p] || {};
+  buildMain({ title: `${p} — ${t.expected || ''} · 손님 ${t.people ?? '?'}명`, pair: p, desc: `<p>${esc(t.notes || '')}</p>`, look: [] });
+  switchRun(state.runs.includes('edgegap') ? 'edgegap' : state.runs[0], 0);
+}
+
+function buildMain(c) {
+  const m = $('#main');
+  const look = (c.look || []).map((l, i) => `<button data-i="${i}"><b>${l.t.toFixed(1)}초</b>${esc(l.label)}${l.run ? ` <span style="color:var(--muted)">· ${esc(runName(l.run))}</span>` : ''}</button>`).join('');
+  m.innerHTML = `
+  <div class="casehead"><h2>${esc(c.title)}</h2><div class="desc">${c.desc || ''}</div>
+    ${look ? `<div class="look">${look}</div>` : ''}</div>
+  <div class="runs" id="runs"></div>
+  <div class="videos" id="videos">
+    <div class="cam" data-cam="angle1"><div class="stage"><video id="v1" muted playsinline preload="auto"></video><canvas id="c1"></canvas></div>
+      <div class="label">전체 카메라 (angle1)</div><button class="zoom" data-z="1">크게</button><div class="note" id="n1"></div></div>
+    <div class="cam" data-cam="angle0"><div class="stage"><video id="v0" muted playsinline preload="auto"></video><canvas id="c0"></canvas></div>
+      <div class="label">선반 카메라 (angle0)</div><button class="zoom" data-z="0">크게</button><div class="note" id="n0"></div></div>
+  </div>
+  <div class="transport">
+    <button class="primary" id="play">재생</button>
+    <button id="back1" title="1초 뒤로 (←)">−1초</button><button id="prev" title="한 장 뒤로 (,)">◀ 한 장</button>
+    <button id="next" title="한 장 앞으로 (.)">한 장 ▶</button><button id="fwd1" title="1초 앞으로 (→)">+1초</button>
+    <select id="rate"><option value="0.25">0.25배</option><option value="0.5" selected>0.5배</option><option value="1">1배</option><option value="2">2배</option></select>
+    <span class="time" id="time">0.0초</span>
+    <label><input type="checkbox" data-s="boxes" checked>상자·번호</label>
+    <label><input type="checkbox" data-s="kp" checked>관절(팔)</label>
+    <label><input type="checkbox" data-s="zones" checked>구역</label>
+    <label><input type="checkbox" data-s="edge" checked>가장자리 닿음</label>
+    <label><input type="checkbox" data-s="items">선반 물건 탐지</label>
+  </div>
+  <div class="timeline" id="timeline"></div>
+  <div class="legend">
+    <span>상자 색 = 전체 카메라 최종 신원 (선반 카메라 상자는 그 순간 짝인 전체 카메라 신원의 색, 짝 없으면 흰색)</span><span>라벨 <code>3</code> = 신원, <code>5→3</code> = 나중에 합쳐짐, <code>#7</code> = 추적 번호</span>
+    <span>회색 점선 = 신원 보류(-1)</span><span><b style="color:#ff9f1a">주황 굵은 변</b> = 화면 가장자리에 닿음(가장자리 규칙)</span>
+    <span>빨간 손목 = 선반 영역 안</span><span>이름표의 <code>집음1·결제0</code> = 그 시각까지 확정된 것, 판정(경보·통과)은 판정 시각부터 표시 — 경보 손님은 빨간 이름표</span>
+  </div>
+  <div class="lower">
+    <div class="box"><h3>지금 장면의 사람</h3><div id="people"></div></div>
+    <div class="box"><h3>기록 (누르면 그 시각으로)</h3><div class="log" id="log"></div></div>
+  </div>`;
+  m.querySelectorAll('.look button').forEach(b => b.onclick = () => {
+    const l = c.look[+b.dataset.i];
+    if (l.run && l.run !== state.run) switchRun(l.run, l.t * 1000); else seek(l.t * 1000);
+  });
+  m.querySelectorAll('.zoom').forEach(b => b.onclick = () => {
+    const z = 'big' + b.dataset.z; state.big = state.big === z ? '' : z;
+    $('#videos').className = 'videos ' + state.big;
+    m.querySelectorAll('.zoom').forEach(x => x.textContent = state.big ? '나란히' : '크게');
+    draw();
+  });
+  m.querySelectorAll('input[data-s]').forEach(i => i.onchange = () => { state.show[i.dataset.s] = i.checked; draw(); });
+  $('#play').onclick = togglePlay;
+  $('#back1').onclick = () => seek(state.t - 1000); $('#fwd1').onclick = () => seek(state.t + 1000);
+  $('#prev').onclick = () => step(-1); $('#next').onclick = () => step(1);
+  $('#rate').onchange = e => { $('#v1').playbackRate = $('#v0').playbackRate = +e.target.value; };
+  const v1 = $('#v1'), v0 = $('#v0');
+  v1.addEventListener('loadedmetadata', () => { v1.playbackRate = +$('#rate').value; seek(state.t); });
+  v0.addEventListener('loadedmetadata', () => { v0.playbackRate = +$('#rate').value; syncDetail(true); });
+  v1.addEventListener('seeked', draw); v0.addEventListener('seeked', draw);
+  v1.addEventListener('ended', () => { state.playing = false; $('#play').textContent = '재생'; v0.pause(); });
+  window.scrollTo(0, 0);
+}
+
+function renderRuns() {
+  const p = state.pair, truth = HE._index.truth[p] || {};
+  const html = state.runs.map(k => {
+    const s = (HE._index.summary[k] || {})[p];
+    if (!s) return '';
+    const ok = verdictOk(s, p), pplOk = s.people === truth.people;
+    const v = s.verdicts.length ? s.verdicts.map(x => (LEVEL[x] || [x])[0]).join('·') : '판정 없음';
+    return `<button class="runbtn ${k === state.run ? 'on' : ''}" data-k="${k}"><div class="n">${esc(runName(k))}</div>
+      <div class="r"><span class="${ok ? 'ok' : 'bad'}">${ok ? '맞음' : '틀림'}</span> · ${esc(v)} · 손님 <span class="${pplOk ? 'ok' : 'bad'}">${s.people}</span>/${truth.people ?? '?'}</div></button>`;
+  }).join('');
+  const others = HE._index.runs.filter(r => !state.runs.includes(r.key) && (HE._index.summary[r.key] || {})[p]);
+  $('#runs').innerHTML = html + (others.length ? `<span class="more"><select id="otherRun"><option value="">다른 설정 보기…</option>${others.map(r => `<option value="${r.key}">${esc(r.name)}</option>`).join('')}</select></span>` : '') +
+    `<div style="flex-basis:100%;font-size:12px;color:var(--muted)">정답: ${esc(truth.expected || '?')} · 손님 ${truth.people ?? '?'}명 — ${esc(truth.notes || '')}</div>`;
+  document.querySelectorAll('.runbtn').forEach(b => b.onclick = () => switchRun(b.dataset.k, state.t));
+  const o = $('#otherRun'); if (o) o.onchange = () => { if (o.value) { state.runs = [...state.runs, o.value]; switchRun(o.value, state.t); } };
+}
+
+async function switchRun(run, t) {
+  state.run = run; state.t = t || 0;
+  renderRuns();
+  let d;
+  try { d = await loadPair(run, state.pair); } catch (e) { $('#people').textContent = e.message; return; }
+  const sameVideo = state.data && state.data.pair === d.pair;
+  state.data = d; prepare(d);
+  const v1 = $('#v1'), v0 = $('#v0');
+  if (!sameVideo || !v1.src) { v1.src = d.video.angle1; v0.src = d.video.angle0; }
+  buildTimeline(); buildLog(); seek(state.t);
+}
+
+// 장면 번호 목록 (가장 가까운 기록 장면 찾기)
+function prepare(d) {
+  for (const cam of ['angle1', 'angle0']) {
+    const tr = d.tracks[cam];
+    tr.keys = Object.keys(tr.frames).map(Number).sort((a, b) => a - b);
+  }
+  d.items = d.shelf_items || [];
+  const inside = {}; for (const [k, v] of Object.entries(d.customers)) inside[k] = v;
+  d.verdictOf = {}; d.events.filter(e => e.level !== 'WARNING').forEach(e => { d.verdictOf[e.pid] = e; });
+}
+function nearestKey(keys, idx, tol) {
+  let lo = 0, hi = keys.length - 1, best = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (keys[mid] <= idx) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+  const cands = [keys[best], keys[best + 1]].filter(k => k !== undefined);
+  let b = null; for (const k of cands) if (Math.abs(k - idx) <= tol && (b === null || Math.abs(k - idx) < Math.abs(b - idx))) b = k;
+  return b;
+}
+function frameAt(cam, t) {
+  const d = state.data, tr = d.tracks[cam];
+  const local = cam === 'angle1' ? t : t - d.offset_ms;
+  const idx = Math.round(local * tr.fps / 1000);
+  const k = nearestKey(tr.keys, idx, tr.stride);
+  return { idx, key: k, rows: k === null ? [] : tr.frames[k] };
+}
+
+// ------------------------------------------------------------------ 재생
+function duration() { const d = state.data; if (!d) return 0; const tr = d.tracks.angle1; return tr.frames_total * 1000 / tr.fps; }
+function seek(t) {
+  const v1 = $('#v1'); if (!v1) return;
+  t = Math.max(0, Math.min(duration() - 1, t));
+  state.t = t;
+  if (v1.readyState >= 1) v1.currentTime = t / 1000;
+  syncDetail(true); draw();
+}
+function step(dir) {
+  const tr = state.data.tracks.angle1; seek(state.t + dir * tr.stride * 1000 / tr.fps);
+}
+function syncDetail(force) {
+  const d = state.data, v0 = $('#v0'); if (!d || !v0 || v0.readyState < 1) return;
+  const want = (state.t - d.offset_ms) / 1000;
+  const out = want < 0 || want > v0.duration;
+  $('#n0').style.display = out ? 'block' : 'none';
+  $('#n0').textContent = want < 0 ? '선반 카메라는 아직 녹화 전' : '선반 카메라 녹화 끝';
+  if (out) { v0.pause(); return; }
+  if (force || Math.abs(v0.currentTime - want) > 0.12) v0.currentTime = want;
+  if (state.playing && v0.paused) v0.play().catch(() => {});
+}
+function togglePlay() {
+  const v1 = $('#v1'), v0 = $('#v0');
+  state.playing = !state.playing;
+  $('#play').textContent = state.playing ? '멈춤' : '재생';
+  if (state.playing && (v1.ended || state.t >= duration() - 100)) seek(0);
+  if (state.playing) { v1.play(); syncDetail(true); tick(); } else { v1.pause(); v0.pause(); seek(v1.currentTime * 1000); }
+}
+function tick() {
+  if (!state.playing) return;
+  const v1 = $('#v1'); if (!v1) return;
+  state.t = v1.currentTime * 1000; syncDetail(false); draw();
+  requestAnimationFrame(tick);
+}
+document.addEventListener('keydown', e => {
+  if (!state.data || e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'ArrowLeft') seek(state.t - 1000);
+  else if (e.key === 'ArrowRight') seek(state.t + 1000);
+  else if (e.key === ',') step(-1);
+  else if (e.key === '.') step(1);
+});
+
+// ------------------------------------------------------------------ 그리기
+function fitCanvas(c, w, h) {
+  const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  if (c.width !== Math.round(r.width * dpr)) { c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr); }
+  const ctx = c.getContext('2d'); ctx.setTransform(c.width / w, 0, 0, c.height / h, 0, 0); ctx.clearRect(0, 0, w, h);
+  return ctx;
+}
+function poly(ctx, pts, stroke, fill, lw) {
+  if (!pts || !pts.length) return;
+  ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  ctx.lineWidth = lw || 3; ctx.strokeStyle = stroke; ctx.stroke();
+}
+function inPoly(pts, x, y) {
+  let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) c = !c;
+  } return c;
+}
+function tag(ctx, x, y, text, bg, scale) {
+  ctx.font = `600 ${Math.round(26 * scale)}px "Malgun Gothic", sans-serif`;
+  const w = ctx.measureText(text).width + 12 * scale, h = 34 * scale;
+  ctx.fillStyle = bg; ctx.fillRect(x, y - h, w, h);
+  ctx.fillStyle = '#fff'; ctx.fillText(text, x + 6 * scale, y - 9 * scale);
+}
+// 그 시각까지 확정된 것만 — 판정은 판정 시각이 지나야, 집음·결제는 그 일이 끝난 뒤에 보인다
+function liveOf(pid, t) {
+  const d = state.data, v = d.verdictOf[pid];
+  const verdict = v && v.ms <= t ? v : null;
+  let taken = 0, paid = 0;
+  for (const a of d.actions) if (a.pid === pid && a.start <= t && (a.kind === 'TAKE' || a.kind === 'UNVERIFIED' || a.kind === 'RETURN' || a.kind === 'MOVE')) taken += a.count;
+  for (const p of d.payments) if (p.pid === pid && p.ms <= t) paid += p.items;
+  return { verdict, later: v && v.ms > t ? v : null, taken, paid };
+}
+function linkNow(t) {
+  // 선반 카메라 신원 → 전체 카메라 신원 (지금 시각의 짝)
+  const m = {}; for (const l of state.data.links) if (l.start <= t && t <= l.end) m[l.detail] = l.overview; return m;
+}
+function draw() {
+  const d = state.data; if (!d || !$('#c1')) return;
+  const t = state.t;
+  $('#time').textContent = `${(t / 1000).toFixed(2)}초 / ${(duration() / 1000).toFixed(1)}`;
+  const ph = $('#playhead'); if (ph) ph.style.left = `calc(96px + (100% - 104px) * ${t / duration()})`;
+  for (const cam of ['angle1', 'angle0']) drawCam(cam, t);
+  renderPeople(t); markLog(t);
+}
+function drawCam(cam, t) {
+  const d = state.data, tr = d.tracks[cam], c = $(cam === 'angle1' ? '#c1' : '#c0');
+  const ctx = fitCanvas(c, tr.w, tr.h), s = tr.w / 1920;
+  const z = d.zones;
+  if (state.show.zones) {
+    if (cam === 'angle1') {
+      z.overview.forEach(o => poly(ctx, o.poly, 'rgba(255,255,255,.55)', null, 2));
+      z.overview.forEach(o => { const p = o.poly[0]; if (p) { ctx.font = `${22 * s}px sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillText(o.name, p[0] + 8, p[1] + 26); } });
+      z.shelf_image.forEach(p => poly(ctx, p, 'rgba(255,214,0,.9)', 'rgba(255,214,0,.08)', 3));
+      z.ignore.forEach(r => { ctx.setLineDash([10, 8]); ctx.strokeStyle = 'rgba(200,200,200,.7)'; ctx.lineWidth = 2; ctx.strokeRect(r[0], r[1], r[2] - r[0], r[3] - r[1]); ctx.setLineDash([]); });
+    } else {
+      z.shelves.forEach(b => { ctx.strokeStyle = 'rgba(255,214,0,.6)'; ctx.lineWidth = 2; ctx.strokeRect(b.box[0], b.box[1], b.box[2] - b.box[0], b.box[3] - b.box[1]); });
+      z.slots.forEach(o => { poly(ctx, o.poly, 'rgba(0,229,255,.9)', 'rgba(0,229,255,.08)', 3); ctx.font = `${22 * s}px sans-serif`; ctx.fillStyle = '#00e5ff'; ctx.fillText(o.name, o.poly[0][0] + 4, o.poly[0][1] - 6); });
+    }
+  }
+  if (cam === 'angle0' && state.show.items && d.items.length) {
+    const idx = Math.round((t - d.offset_ms) * tr.fps / 1000);
+    let best = null; for (const r of d.items) { if (r[0] <= idx) best = r; else break; }
+    if (best) best[1].forEach(([n, x1, y1, x2, y2, cf]) => { ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.5; ctx.strokeRect(x1, y1, x2 - x1, y2 - y1); ctx.font = `${16 * s}px sans-serif`; ctx.fillStyle = '#fff'; ctx.fillText(`${n} ${cf}`, x1, y1 - 3); });
+  }
+  const { rows, key } = frameAt(cam, t);
+  const links = cam === 'angle0' ? linkNow(t) : {};
+  const shelfPoly = cam === 'angle1' ? z.shelf_image : z.slots.map(o => o.poly);
+  for (const r of rows) {
+    const [pid, rpid, tid, x1, y1, x2, y2, flags, sim, kp] = r;
+    // 선반 카메라 신원은 번호 체계가 따로라, 색은 '지금 짝인 전체 카메라 신원'의 색 (짝 없으면 흰색)
+    const ov = cam === 'angle0' && pid > 0 ? links[rpid] : undefined;
+    const col = cam === 'angle1' ? colorOf(rpid) : (ov !== undefined ? colorOf(ov) : (pid > 0 ? '#ffffff' : '#9a9a9a'));
+    if (state.show.boxes) {
+      ctx.lineWidth = 4 * s; ctx.strokeStyle = col;
+      if (pid <= 0) ctx.setLineDash([14, 10]);
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1); ctx.setLineDash([]);
+      if (state.show.edge) {
+        const m = 0.02; ctx.strokeStyle = '#ff9f1a'; ctx.lineWidth = 12 * s; ctx.beginPath();
+        if (x1 <= m * tr.w) { ctx.moveTo(x1, y1); ctx.lineTo(x1, y2); }
+        if (y1 <= m * tr.h) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y1); }
+        if (x2 >= (1 - m) * tr.w) { ctx.moveTo(x2, y1); ctx.lineTo(x2, y2); }
+        if (y2 >= (1 - m) * tr.h) { ctx.moveTo(x1, y2); ctx.lineTo(x2, y2); }
+        ctx.stroke();
+      }
+      let label = pid <= 0 ? '보류' : (pid === rpid ? `${pid}` : `${pid}→${rpid}`);
+      if (cam === 'angle0' && pid > 0) label = '선반 ' + label;
+      label += ` #${tid}`;
+      if (cam === 'angle0' && pid > 0) label += ov !== undefined ? ` ⇄전체 ${ov}` : ' (짝 없음)';
+      let live = null;
+      if (cam === 'angle1' && pid > 0) {
+        const cu = d.customers[rpid];
+        if (cu && !cu.inside) label += ' (손님 아님)';
+        live = liveOf(rpid, t);
+        if (live.verdict) label += ' ' + LEVEL[live.verdict.level][0];
+        else if (live.taken || live.paid) label += ` 집음${live.taken}·결제${live.paid}`;
+      }
+      if (flags & 1) label += ' 새';
+      const bg = live && live.verdict && live.verdict.level === 'HIGH_RISK' ? '#c8382e' : (col === '#ffffff' ? '#555' : col);
+      const ty = y1 < 40 * s ? y1 + 38 * s : y1;
+      tag(ctx, x1, ty, label, bg, s);
+    }
+    if (state.show.kp && kp && kp.length) {
+      const P = i => [kp[i * 3], kp[i * 3 + 1], kp[i * 3 + 2]];
+      ctx.lineWidth = 5 * s; ctx.strokeStyle = 'rgba(255,255,255,.85)';
+      for (const [a, b] of [[0, 2], [2, 4], [1, 3], [3, 5], [0, 1]]) {
+        const A = P(a), B = P(b); if (A[2] < 30 || B[2] < 30 || (!A[0] && !A[1]) || (!B[0] && !B[1])) continue;
+        ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke();
+      }
+      for (const w of [4, 5]) {
+        const [x, y, c] = P(w); if (c < 30 || (!x && !y)) continue;
+        const hit = shelfPoly.some(p => inPoly(p, x, y));
+        ctx.beginPath(); ctx.arc(x, y, (hit ? 16 : 10) * s, 0, Math.PI * 2);
+        ctx.fillStyle = hit ? '#ff2d2d' : col; ctx.fill(); ctx.lineWidth = 3 * s; ctx.strokeStyle = '#fff'; ctx.stroke();
+      }
+    }
+  }
+  // 순간 알림: 새 신원, 되살아난 번호, 합침
+  const notes = [];
+  for (const b of d.births[cam]) if (Math.abs(b.ms + (cam === 'angle0' ? d.offset_ms : 0) - t) < 700)
+    notes.push(`새 신원 ${b.pid} (추적 #${b.track}${b.edge ? ', 가장자리 ' + edgeWord(b.edge) + ' → 즉시 대조 건너뜀' : ''})`);
+  for (const r of d.revivals[cam]) if (Math.abs(r.ms + (cam === 'angle0' ? d.offset_ms : 0) - t) < 700)
+    notes.push(`추적 #${r.track} ${(r.gap_ms / 1000).toFixed(1)}초 끊겼다 되살아남: 신원 ${r.before_pid} → ${r.after_pid}`);
+  for (const m of d.merges[cam]) if (Math.abs(m.ms - t) < 700) notes.push(`나중에 합치기: 신원 ${m.from} → ${m.into}`);
+  const n = $(cam === 'angle1' ? '#n1' : '#n0');
+  if (cam === 'angle1' || n.style.display === 'none' || notes.length) {
+    if (notes.length) { n.style.display = 'block'; n.textContent = notes.join(' · '); }
+    else if (cam === 'angle1') n.style.display = 'none';
+  }
+  if (cam === 'angle0' && !notes.length) syncNoteDetail();
+}
+function syncNoteDetail() {
+  const d = state.data, v0 = $('#v0'); const want = (state.t - d.offset_ms) / 1000;
+  const n = $('#n0'); const out = want < 0 || (v0.duration && want > v0.duration);
+  n.style.display = out ? 'block' : 'none';
+  if (out) n.textContent = want < 0 ? '선반 카메라는 아직 녹화 전' : '선반 카메라 녹화 끝';
+}
+const edgeWord = e => e.split('').map(c => ({ L: '왼쪽', T: '위', R: '오른쪽', B: '아래' }[c])).join('·');
+
+// ------------------------------------------------------------------ 타임라인·기록
+function lanesOf(d) {
+  const L = [];
+  const ev = d.events.filter(e => e.level !== 'WARNING');
+  L.push({ name: '판정', items: ev.map(e => ({ s: e.ms, e: e.ms, c: e.level === 'HIGH_RISK' ? '#c8382e' : '#1f8a4c', text: `${fmt(e.ms)} 손님 ${e.pid} ${LEVEL[e.level][0]}\n${e.reason}` })) });
+  const AC = { TAKE: '#c8382e', UNVERIFIED: '#e07b00', RETURN: '#1f8a4c', MOVE: '#7a4fc9', TOUCH: '#4363d8', LOOK: '#9a9a9a' };
+  L.push({ name: '손님 행동', items: d.actions.map(a => ({ s: a.start, e: a.end, c: AC[a.kind] || '#888', text: `${fmt(a.start)}~${fmt(a.end)}\n${a.text}` })) });
+  L.push({ name: '선반 변화', items: d.visits.map(v => ({ s: v.start, e: v.end, c: v.removed || v.added || v.slot_change ? '#c8382e' : '#8a8a8a', text: `선반 방문 ${fmt(v.start)}~${fmt(v.end)}\n${v.detail || '변화 없음'}${v.slot_change ? '\n칸 그림: ' + v.slot_change : ''}` })) });
+  L.push({ name: '주인 정하기', items: d.shelf_events.map(r => ({ s: r.start_ms, e: r.end_ms, c: r.owner > 0 ? colorOf(r.owner) : '#555', text: `${r.kind === 'visit' ? '선반 변화' : r.kind === 'reach' ? '전체 카메라 팔 뻗기' : '손 접촉'} ${fmt(r.start_ms)}~${fmt(r.end_ms)}\n주인: ${r.owner > 0 ? '손님 ' + r.owner : '못 정함'} (${r.how})\n${r.detail || ''}` })) });
+  L.push({ name: '손-칸 접촉', items: d.takes0.map(k => ({ s: k.start, e: k.end, c: '#00a3c4', text: `선반 카메라 손-칸 접촉 ${fmt(k.start)}~${fmt(k.end)}\n선반 카메라 신원 ${k.pid}, 칸 ${k.zone}` })) });
+  L.push({ name: '결제', items: d.payments.map(p => ({ s: p.ms, e: p.ms, c: '#2f6fdb', text: `${fmt(p.ms)} 결제(계산대 체류) ${p.items}개 → 손님 ${p.pid ?? '없음'}` })) });
+  const idItems = [];
+  d.births.angle1.forEach(b => idItems.push({ s: b.ms, e: b.ms, c: b.edge ? '#ff9f1a' : '#666', text: `전체 카메라 새 신원 ${b.pid}${b.edge ? ' (가장자리 ' + edgeWord(b.edge) + ' → 즉시 대조 안 함)' : ''}` }));
+  d.revivals.angle1.forEach(r => idItems.push({ s: r.ms, e: r.ms, c: r.before_pid === r.after_pid ? '#9a6324' : '#e6194b', text: `전체 카메라 추적 #${r.track} ${(r.gap_ms / 1000).toFixed(1)}초 끊겼다 되살아남\n신원 ${r.before_pid} → ${r.after_pid}${r.before_pid === r.after_pid ? ' (그대로 물려받음)' : ''}` }));
+  d.merges.angle1.forEach(m => idItems.push({ s: m.ms, e: m.ms, c: '#469990', text: `나중에 합치기 ${m.from} → ${m.into}` }));
+  L.push({ name: '신원 (전체)', items: idItems });
+  return L;
+}
+function buildTimeline() {
+  const d = state.data, D = duration(), tl = $('#timeline');
+  const lanes = lanesOf(d);
+  tl.innerHTML = lanes.map((ln, i) => `<div class="lane"><div class="name">${ln.name}</div><div class="bg"></div>${ln.items.map((it, j) =>
+    `<div class="mk" data-l="${i}" data-j="${j}" style="left:${100 * it.s / D}%;width:max(4px, ${100 * (it.e - it.s) / D}%);background:${it.c}"></div>`).join('')}</div>`).join('') +
+    '<div class="playhead" id="playhead"></div>';
+  const tip = $('#tip');
+  tl.querySelectorAll('.mk').forEach(mk => {
+    const it = lanes[+mk.dataset.l].items[+mk.dataset.j];
+    mk.onmousemove = e => { tip.style.display = 'block'; tip.textContent = it.text; tip.style.left = Math.min(e.clientX + 12, innerWidth - 440) + 'px'; tip.style.top = (e.clientY + 14) + 'px'; };
+    mk.onmouseleave = () => tip.style.display = 'none';
+    mk.onclick = e => { e.stopPropagation(); seek(it.s); };
+  });
+  tl.onclick = e => {
+    const r = tl.getBoundingClientRect(), x = (e.clientX - r.left - 96) / (r.width - 104);
+    if (x >= 0 && x <= 1) seek(x * D);
+  };
+}
+function buildLog() {
+  const d = state.data, rows = [];
+  d.events.filter(e => e.level !== 'WARNING').forEach(e => rows.push([e.ms, LEVEL[e.level][0], `손님 ${e.pid}: ${e.reason}`, LEVEL[e.level][1]]));
+  d.actions.forEach(a => rows.push([a.start, '행동', a.text, 'var(--warn)']));
+  d.shelf_events.forEach(r => rows.push([r.start_ms, r.kind === 'visit' ? '선반 변화' : r.kind === 'reach' ? '팔 뻗기' : '손 접촉', `주인 ${r.owner > 0 ? '손님 ' + r.owner : '못 정함'} — ${r.how}. ${r.detail || ''}`, 'var(--accent)']));
+  d.payments.forEach(p => rows.push([p.ms, '결제', `${p.items}개 → 손님 ${p.pid ?? '없음'}`, 'var(--accent)']));
+  d.births.angle1.forEach(b => rows.push([b.ms, '새 신원', `전체 카메라 신원 ${b.pid} (추적 #${b.track})${b.edge ? ' — 가장자리 ' + edgeWord(b.edge) + '라 즉시 대조 안 함' : ''}`, 'var(--muted)']));
+  d.revivals.angle1.forEach(r => rows.push([r.ms, '되살아남', `추적 #${r.track} ${(r.gap_ms / 1000).toFixed(1)}초 끊겼다 다시: 신원 ${r.before_pid} → ${r.after_pid}`, 'var(--muted)']));
+  d.merges.angle1.forEach(m => rows.push([m.ms, '합침', `신원 ${m.from} → ${m.into}`, 'var(--muted)']));
+  rows.sort((a, b) => a[0] - b[0]);
+  state.logRows = rows;
+  $('#log').innerHTML = rows.map(([ms, k, txt, c], i) => `<div data-i="${i}"><span class="tm">${(ms / 1000).toFixed(1)}</span><span class="k" style="color:${c}">${esc(k)}</span><span>${esc(txt)}</span></div>`).join('') || '<div>기록 없음</div>';
+  $('#log').querySelectorAll('div[data-i]').forEach(r => r.onclick = () => seek(rows[+r.dataset.i][0]));
+}
+function markLog(t) {
+  const rows = state.logRows || [];
+  $('#log').querySelectorAll('div[data-i]').forEach(r => r.classList.toggle('near', Math.abs(rows[+r.dataset.i][0] - t) < 800));
+}
+function renderPeople(t) {
+  const d = state.data, out = [];
+  for (const cam of ['angle1', 'angle0']) {
+    const { rows } = frameAt(cam, t), links = cam === 'angle0' ? linkNow(t) : {};
+    for (const r of rows) {
+      const [pid, rpid, tid, , , , , flags, sim] = r;
+      let info = '';
+      if (cam === 'angle1') {
+        const cu = d.customers[rpid], lv = pid > 0 ? liveOf(rpid, t) : null;
+        info = cu ? (cu.inside ? '손님' : '손님 아님(매장 안 1초 못 채움)') : '';
+        if (lv) {
+          info += ` · 지금까지 집음 ${lv.taken} · 결제 ${lv.paid}`;
+          if (lv.verdict) info += ` · 판정 <b style="color:${LEVEL[lv.verdict.level][1]}">${LEVEL[lv.verdict.level][0]}</b>`;
+          else if (lv.later) info += ` <span style="color:var(--muted)">(나중에 ${(lv.later.ms / 1000).toFixed(1)}초 ${LEVEL[lv.later.level][0]})</span>`;
+        }
+      } else if (links[rpid] !== undefined) info = `짝: 전체 카메라 ${links[rpid]}`;
+      else info = '짝 없음';
+      const sm = sim != null ? ` · 대조 ${sim}` : '';
+      const swc = cam === 'angle1' ? colorOf(rpid) : (links[rpid] !== undefined ? colorOf(links[rpid]) : '#ffffff');
+      out.push(`<tr><td>${cam === 'angle1' ? '전체' : '선반'}</td><td><span class="sw" style="background:${swc};outline:1px solid var(--line)"></span>${pid <= 0 ? '보류' : pid === rpid ? pid : pid + '→' + rpid}</td><td>#${tid}</td><td>${info}${sm}${flags & 1 ? ' · 새' : ''}${flags & 2 ? ' · 이어 붙임' : ''}</td></tr>`);
+    }
+  }
+  $('#people').innerHTML = out.length ? `<table class="people"><tr><th>카메라</th><th>신원</th><th>추적</th><th>상태</th></tr>${out.join('')}</table>` : '<div style="color:var(--muted)">이 장면에 잡힌 사람 없음</div>';
+}
+window.addEventListener('resize', () => draw());
+
+// ------------------------------------------------------------------ 시작
+function route() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('pair')) { if (state.mode !== 'pair' || state.pair !== h.get('pair')) openPair(h.get('pair')); }
+  else {
+    const id = h.get('case') && HE._cases.some(c => c.id === h.get('case')) ? h.get('case') : HE._cases[0].id;
+    if (state.mode !== 'case' || state.caseId !== id) openCase(id);
+  }
+}
+window.addEventListener('hashchange', route);
+Promise.all([loadScript('data/index.js'), loadScript('cases.js')]).then(() => { renderSide(); route(); }).catch(e => { $('#main').innerHTML = `<div class="empty">데이터를 못 불러옴 (${esc(e)}). <code>python scripts/review_export.py</code> 를 먼저 돌리세요.</div>`; });
+</script>
+</body>
+</html>

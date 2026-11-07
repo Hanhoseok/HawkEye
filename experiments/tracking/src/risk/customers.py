@@ -211,7 +211,10 @@ class Customer:
     at_shelf_overlap: float = 0.0
     """지금 SHELF 구역과 몸이 겹친 비율 (가장 큰 값)."""
     seen_inside: bool = False
-    """매장 안(문 밖 구역이 아닌 곳)에서 보인 적이 있는가. 문 밖 행인은 판정하지 않는다."""
+    """매장 안에서 보인 적이 있는가. 문 밖 행인·문 앞에만 있던 사람은 판정하지 않는다.
+    매장 안 = 문 밖 구역이 아닌 곳 (기본), 또는 config.inside_zones 에 inside_seconds 이상 (카메라 2대)."""
+    inside_since_ms: float | None = None
+    """지금 inside_zones 안에 연속으로 있다면 들어온 시각."""
 
     last_bbox: BBox | None = None
 
@@ -392,7 +395,17 @@ class CustomerBook:
                 customer.last_exit_ms = now_ms
             else:
                 customer.outside_since_ms = None
-                customer.seen_inside = True
+                if not self.config.inside_zones:
+                    customer.seen_inside = True
+            if self.config.inside_zones and not customer.seen_inside:
+                inside = any(h.zone in self.config.inside_zones and h.contains_foot for h in hits)
+                if not inside:
+                    customer.inside_since_ms = None
+                else:
+                    if customer.inside_since_ms is None:
+                        customer.inside_since_ms = now_ms
+                    if now_ms - customer.inside_since_ms >= self.config.inside_seconds * 1000.0:
+                        customer.seen_inside = True
             in_checkout = any(h.zone_type == ZoneType.CHECKOUT and h.contains_foot for h in hits)
             customer.at_shelf_overlap = max((h.overlap for h in hits if h.zone_type == ZoneType.SHELF), default=0.0)
             exit_hit = next((h for h in hits if h.zone_type == ZoneType.EXIT and h.contains_foot), None)
