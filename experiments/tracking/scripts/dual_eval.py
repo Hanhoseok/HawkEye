@@ -420,6 +420,7 @@ def main() -> int:
     ap.add_argument("--before", action="store_true",
                     help="C1·C12 를 보고 고치기 전 규칙으로 (손 접촉 1.0초 뒤 주인 결정, 다른 손님 손 뻗기는 안 지움)")
     ap.add_argument("--out", help="기록 폴더 이름 (outputs/ 아래, 기본 dual_eval) — 설정을 바꿔 따로 돌려 비교할 때")
+    ap.add_argument("--zones", help="구역 폴더 (floor.yaml·angle0.yaml, 기본 zones/store01_dual) — 구역 편집 페이지의 초안으로 판정할 때")
     ap.add_argument("--set", action="append", default=[], metavar="절.키=값",
                     help="config.yaml 값을 이번 실행만 바꿈, 예: identity.track_gap_recheck_seconds=1.0")
     ap.add_argument("--overview-pose", action="store_true",
@@ -429,7 +430,7 @@ def main() -> int:
     ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
                     help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
     args = ap.parse_args()
-    global OUT, OVERRIDES, OVERVIEW_POSE, TENTATIVE
+    global OUT, OVERRIDES, OVERVIEW_POSE, TENTATIVE, ZONES
     OVERVIEW_POSE = args.overview_pose
     TENTATIVE = args.tentative
     if args.all_edges:
@@ -437,6 +438,8 @@ def main() -> int:
             EDGE_SIDES[cam] = ["left", "top", "right", "bottom"]
     if args.out:
         OUT = ROOT / "outputs" / args.out
+    if args.zones:
+        ZONES = Path(args.zones).resolve()
     OVERRIDES = args.set
     if args.stage == "run":
         run(args.only)
