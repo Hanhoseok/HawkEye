@@ -410,11 +410,13 @@ class CustomerBook:
             customer.at_shelf_overlap = max((h.overlap for h in hits if h.zone_type == ZoneType.SHELF), default=0.0)
             exit_hit = next((h for h in hits if h.zone_type == ZoneType.EXIT and h.contains_foot), None)
 
+            grace_ms = self.config.zone_grace_seconds * 1000.0
             if in_checkout:
                 if customer.checkout_since_ms is None:
                     customer.checkout_since_ms = now_ms
                 customer.last_checkout_ms = now_ms
-            else:
+            elif not (grace_ms > 0 and customer.last_checkout_ms is not None
+                      and now_ms - customer.last_checkout_ms <= grace_ms):
                 customer.checkout_since_ms = None
 
             if exit_hit is not None:
@@ -426,6 +428,9 @@ class CustomerBook:
                     if customer.exit_left_ms is not None and now_ms - customer.exit_left_ms >= rearm_ms:
                         customer.exit_judged = False
                 customer.exit_left_ms = None
+            elif (grace_ms > 0 and customer.exit_since_ms is not None and customer.last_exit_ms is not None
+                  and now_ms - customer.last_exit_ms <= grace_ms):
+                pass   # 잠깐 벗어남 — 출구에 머문 시간을 이어서 센다 (zone_grace_seconds)
             else:
                 if customer.exit_since_ms is not None:
                     customer.exit_left_ms = now_ms
