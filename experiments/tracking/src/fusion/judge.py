@@ -115,8 +115,9 @@ class DualJudge:
                 continue
             pid = resolve(obs.person_id) if resolve else obs.person_id
             point = self.floor.foot_on_floor(obs.bbox, w, h)
-            band = self.floor.band_position(point)
-            in_band = any(z.name == self.config.shelf_zone for z in self.floor.zones_at(point))
+            band = self.floor.band_position(point)   # 띠는 band_map 을 맞춘 상자 기준 그대로
+            foot = self.floor.foot_on_floor(obs.bbox, w, h, obs.keypoints) if self.floor.foot_mode != "bbox" else point
+            in_band = any(z.name == self.config.shelf_zone for z in self.floor.zones_at(foot))
             if band is not None and not (-0.3 <= band <= 1.3):
                 band = None
             self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None)

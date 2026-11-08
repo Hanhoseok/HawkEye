@@ -40,6 +40,11 @@ DRAFT = WORK / "draft"
 BACKUP = WORK / "backup"
 RECORDS = "dual_eval_edgegap"
 """판정을 다시 돌릴 기록 폴더 (outputs/ 아래) — 지금 기본 설정의 기록."""
+FOOT = {
+    "bbox": (RECORDS, []),
+    "ankle": ("dual_eval_pose", ["--set", "zones.foot_point=ankle"]),
+}
+"""발 점 방식 → (기록 폴더, 판정 추가 설정). 발목은 전체 카메라를 관절 모델로 돌린 기록(11-04)에만 있다 (B-15)."""
 FILES = {"floor": "floor.yaml", "angle0": "angle0.yaml"}
 INSIDE_ZONES = ("shelf", "counter", "aisle")
 """configs/store01_dual.yaml risk.inside_zones — 이 이름의 구역이 없으면 손님이 한 명도 안 생긴다."""
@@ -296,38 +301,42 @@ class JudgeJob:
         self.step = ""
         self.error = ""
         self.started = 0.0
+        self.foot = "bbox"
 
-    def cache(self, h: str) -> Path:
-        return WORK / "judge" / f"{h}.json"
+    def cache(self, h: str, foot: str = "bbox") -> Path:
+        return WORK / "judge" / (f"{h}.json" if foot == "bbox" else f"{h}_{foot}.json")
 
-    def result(self, h: str | None) -> dict | None:
-        if not h or not self.cache(h).exists():
+    def result(self, h: str | None, foot: str = "bbox") -> dict | None:
+        if not h or not self.cache(h, foot).exists():
             return None
-        return json.loads(self.cache(h).read_text(encoding="utf-8"))
+        return json.loads(self.cache(h, foot).read_text(encoding="utf-8"))
 
-    def start(self) -> dict:
+    def start(self, foot: str = "bbox") -> dict:
+        if foot not in FOOT:
+            return {"ok": False, "errors": [f"모르는 발 점 방식: {foot}"]}
         with self.lock:
             if self.running:
                 return {"ok": False, "errors": ["이미 돌리는 중"]}
-            self.running, self.error, self.started = True, "", time.time()
+            self.running, self.error, self.started, self.foot = True, "", time.time(), foot
         threading.Thread(target=self._run, daemon=True).start()
         return {"ok": True}
 
     def _run(self) -> None:
         try:
+            records, extra = FOOT[self.foot]
             targets = [("적용본", APPLIED), ("초안", DRAFT)]
             for name, folder in targets:
                 h = digest(folder)
-                if h is None or self.cache(h).exists():
+                if h is None or self.cache(h, self.foot).exists():
                     continue
-                self.step = f"{name} 구역으로 38쌍 판정 중"
-                label = f"zone_{h}"
+                self.step = f"{name} 구역으로 38쌍 판정 중 ({'발목' if self.foot == 'ankle' else '상자'} 발 점)"
+                label = f"zone_{h}_{self.foot}"
                 proc = subprocess.run(
-                    [sys.executable, str(ROOT / "scripts" / "dual_eval.py"), "judge", "--out", RECORDS,
-                     "--zones", str(folder), "--label", label],
+                    [sys.executable, str(ROOT / "scripts" / "dual_eval.py"), "judge", "--out", records,
+                     "--zones", str(folder), "--label", label, *extra],
                     cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8",
                     env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"})
-                out = ROOT / "outputs" / RECORDS / f"results_{label}.json"
+                out = ROOT / "outputs" / records / f"results_{label}.json"
                 if proc.returncode != 0 or not out.exists():
                     self.error = (proc.stderr or proc.stdout)[-2000:]
                     return
@@ -335,20 +344,20 @@ class JudgeJob:
                 out.unlink()
                 keep = ("pair", "kind", "verdicts", "correct", "reasons", "people", "links", "payments", "cancels",
                         "unowned_takes", "actions")
-                data = {"hash": h, "when": time.strftime("%Y-%m-%d %H:%M"), "seconds": round(time.time() - self.started),
-                        "rows": [{k: r.get(k) for k in keep} for r in rows]}
-                self.cache(h).parent.mkdir(parents=True, exist_ok=True)
-                self.cache(h).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+                data = {"hash": h, "foot": self.foot, "records": records, "when": time.strftime("%Y-%m-%d %H:%M"),
+                        "seconds": round(time.time() - self.started), "rows": [{k: r.get(k) for k in keep} for r in rows]}
+                self.cache(h, self.foot).parent.mkdir(parents=True, exist_ok=True)
+                self.cache(h, self.foot).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception as e:  # noqa: BLE001
             self.error = repr(e)
         finally:
             self.step = ""
             self.running = False
 
-    def status(self) -> dict:
-        return {"running": self.running, "step": self.step, "error": self.error,
+    def status(self, foot: str = "bbox") -> dict:
+        return {"running": self.running, "step": self.step, "error": self.error, "foot": foot,
                 "elapsed": round(time.time() - self.started) if self.running else 0,
-                "applied": self.result(digest(APPLIED)), "draft": self.result(digest(DRAFT))}
+                "applied": self.result(digest(APPLIED), foot), "draft": self.result(digest(DRAFT), foot)}
 
 
 JOB = JudgeJob()
@@ -358,8 +367,8 @@ def handle(method: str, path: str, body: dict | None) -> tuple[int, dict]:
     """review_serve.py 가 부른다. (HTTP 상태, JSON)."""
     if method == "GET" and path == "/api/zones":
         return 200, state()
-    if method == "GET" and path == "/api/judge":
-        return 200, JOB.status()
+    if method == "GET" and path in ("/api/judge", "/api/judge/ankle"):
+        return 200, JOB.status("ankle" if path.endswith("/ankle") else "bbox")
     if method == "POST" and path == "/api/zones/draft":
         return 200, save_draft(body or {})
     if method == "POST" and path == "/api/zones/apply":
@@ -369,7 +378,7 @@ def handle(method: str, path: str, body: dict | None) -> tuple[int, dict]:
     if method == "POST" and path == "/api/zones/restore":
         return 200, restore_backup((body or {}).get("name", ""))
     if method == "POST" and path == "/api/judge":
-        return 200, JOB.start()
+        return 200, JOB.start((body or {}).get("foot", "bbox"))
     return 404, {"ok": False, "errors": [f"모르는 요청: {method} {path}"]}
 
 

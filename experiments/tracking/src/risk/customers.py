@@ -376,7 +376,7 @@ class CustomerBook:
             if obs.person_id <= 0:
                 continue
             customer = self._get(obs.person_id, now_ms)
-            hits = self.zone_map.evaluate(obs.bbox) if self.zone_map else []
+            hits = self.zone_map.evaluate(obs.bbox, getattr(obs, "keypoints", None)) if self.zone_map else []
             outside = any(h.zone_type == ZoneType.OUTSIDE and h.contains_foot for h in hits)
             if customer.departed and not outside:
                 # '나갔다'고 확정했는데 다시 보인다 — 나간 게 아니라 탐지가 끊겼던 것이다.

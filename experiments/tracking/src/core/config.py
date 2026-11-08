@@ -72,6 +72,14 @@ class ZonesConfig:
 
     path: str = "zones/store-aisle.yaml"
     enabled: bool = True
+    foot_point: str = "bbox"
+    """바닥 구역 판단에 쓰는 발 점 (전체 카메라 바닥 지도, floor.yaml).
+    - "bbox": 사람 상자 아래 가운데 (지금까지).
+    - "ankle": 관절 모델의 두 발목 가운데 (믿을 만한 발목이 없으면 상자 아래 가운데). 전체 카메라를 yolo-pose 로 돌린 기록에서만 의미가 있다.
+    팔을 뻗으면 상자가 넓어져 '아래 가운데'가 실제 발에서 수십 px 옮겨 가 실제 자리에 맞게 그린 구역에서 머문 시간이 안 채워졌다 (B-15, 2026-11-08).
+    선반 앞 띠 위치(두 카메라 짝)는 band_map 을 상자 기준으로 맞췄으므로 이 값과 상관없이 상자 아래 가운데를 쓴다."""
+    ankle_conf: float = 0.3
+    """foot_point="ankle" 일 때 발목 신뢰도 하한."""
 
 
 @dataclass

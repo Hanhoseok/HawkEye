@@ -80,8 +80,9 @@ class ZoneMap:
 
     # ------------------------------------------------------------------
 
-    def evaluate(self, bbox: tuple[float, float, float, float]) -> list[ZoneHit]:
-        """사람 bbox 와 각 구역의 관계를 계산한다. 관계가 없는 구역은 제외한다."""
+    def evaluate(self, bbox: tuple[float, float, float, float], keypoints=None) -> list[ZoneHit]:
+        """사람 bbox 와 각 구역의 관계를 계산한다. 관계가 없는 구역은 제외한다.
+        keypoints 는 바닥 구역(FloorZoneMap)과 모양을 맞추려고 받기만 한다 — 화면 구역은 상자로 판단."""
         x1, y1, x2, y2 = bbox
         foot = ((x1 + x2) / 2.0, y2)  # 발 위치: 사람이 서 있는 지점
         hits: list[ZoneHit] = []

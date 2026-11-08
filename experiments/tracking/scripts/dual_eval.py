@@ -201,6 +201,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     log = PairLog(pair)
     cfg = dual_config(base, pair, offset_ms)
     floor = FloorMap.load(ZONES / "floor.yaml")
+    floor.foot_mode, floor.ankle_conf = cfg.zones.foot_point, cfg.zones.ankle_conf
     fz = FloorZoneMap(floor)
     m1, m0 = log.meta["angle1"], log.meta["angle0"]
     fz.resolve(m1["width"], m1["height"])
