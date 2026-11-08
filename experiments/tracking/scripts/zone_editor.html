@@ -954,7 +954,10 @@ function renderStats() {
       html += `<tr><td><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${TYPE_COLOR[z.type]}"></span> ${esc(n)}</td>` +
         ['N', 'T', 'C'].map(set => `<td>${pct(st.cnt[set][n] || 0, st.tot[set])}${bs ? delta(p(st, set, n), p(bs, set, n)) : ''}</td>`).join('') + '</tr>';
     }
+    const dead = S.Z.floor.zones.filter(z => ['EXIT', 'CHECKOUT', 'OUTSIDE'].includes(z.type) && (st.cnt.N[z.name] || 0) < 0.005 * st.tot.N);
+    const deadHtml = dead.length ? `<div class="msg bad">⚠ ${dead.map(z => esc(z.name)).join(', ')} 에 정상(N) 영상 발 점이 거의 없습니다 (0.5% 미만) — 구역은 물건이 아니라 <b>사람이 서는 발 자리</b>여야 합니다 (상자 아래 가운데 점).</div>` : '';
     html += `<tr><td class="bad">어느 구역도 아님</td>${['N', 'T', 'C'].map(set => `<td>${pct(st.none[set], st.tot[set])}${bs ? delta(p(st, set, null), p(bs, set, null), 1, false) : ''}</td>`).join('')}</tr></table>`;
+    html += deadHtml;
     // 손님 수 근사
     const ok = s => S.pairs.filter(pp => truth[pp] && s.ppl[pp] === truth[pp].people).length;
     const diffs = S.pairs.filter(pp => bs && bs.ppl[pp] !== st.ppl[pp]);
@@ -986,6 +989,13 @@ function renderJudge(j) {
   const all = R => R ? R.rows.filter(r => r.correct).length + '/' + R.rows.length : '–';
   let html = `<div class="sum">` + kinds.map(k => `<span>${k} <b>${ta ? ta[k].join('/') : '–'}</b>${td ? ` → <b>${td[k].join('/')}</b>` : ''}</span>`).join('') +
     `<span>모두 <b>${all(A)}</b>${D ? ` → <b>${all(D)}</b>` : ''}</span></div>`;
+  // 판정이 아예 없으면 정상·복합 정상은 '경보 없음'으로 맞은 것처럼 보인다 — 따로 센다
+  const silent = R => R ? R.rows.filter(r => !r.verdicts.length).length : 0;
+  const paid = R => R ? R.rows.reduce((a, r) => a + (r.payments || 0), 0) : 0;
+  html += `<div class="sum"><span>판정이 하나도 없는 영상 <b>${silent(A)}</b>${D ? ` → <b>${silent(D)}</b>` : ''}</span>` +
+    `<span>계산대 결제 합 <b>${paid(A)}</b>${D ? ` → <b>${paid(D)}</b>` : ''}</span></div>`;
+  if (D && silent(D) > silent(A) + 2)
+    html += `<div class="bad" style="margin-bottom:6px">⚠ 초안에서 판정이 사라진 영상이 많습니다 — 손님이 출구(EXIT)·문 밖(OUTSIDE) 구역에 발을 들이지 않아 나감 판정이 안 나온 것입니다. 정상 영상이 '맞음'으로 늘어난 것은 경보가 없어서일 뿐입니다.</div>`;
   if (!D) html += `<div class="sub">초안이 없어 적용본만 판정했습니다.</div>`;
   const rows = (A || D).rows.map(r => r.pair), byA = Object.fromEntries((A?.rows || []).map(r => [r.pair, r])), byD = Object.fromEntries((D?.rows || []).map(r => [r.pair, r]));
   const sig = r => r ? [r.verdicts.join(','), r.correct, r.people, r.links, r.payments, r.cancels, r.unowned_takes].join('|') : '';
