@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import cv2
+import numpy as np
 
 STATUS_COLORS = {  # BGR
     "ok": (90, 200, 90), "blocked": (0, 150, 255), "checking": (0, 215, 255), "learning": (160, 160, 160),
@@ -34,7 +35,11 @@ def draw_shelves(image, watcher, now_ms: float):
         status = monitor.status
         color = STATUS_COLORS[status]
         x1, y1, x2, y2 = (int(v) for v in monitor.box)
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+        if getattr(monitor, "polygon", None):
+            pts = np.array([[int(x), int(y)] for x, y in monitor.polygon], dtype=np.int32)
+            cv2.polylines(canvas, [pts], True, color, 2)
+        else:
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
         if status == "blocked":
             who = ",".join(f"P{p}" for p in monitor.blocking if p > 0) or "?"
             text = f"{monitor.name}: blocked by {who}"

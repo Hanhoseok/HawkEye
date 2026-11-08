@@ -133,3 +133,29 @@ def test_change_without_visible_person_is_reported_unattributed():
     run(mon, 0.0, 2.0, ROW)
     changes = run(mon, 2.0, 4.0, ROW[1:])
     assert len(changes) == 1 and changes[0].person_id is None and changes[0].people == []
+
+
+# ---------------------------------------------------------------- 다각형 선반 영역 (2026-11-08)
+
+def test_polygon_shelf_ignores_people_in_the_box_corner():
+    """비스듬한 선반: 다각형이면 사각형 구석(선반 밖)에 선 사람은 '가림'이 아니고, 구석의 물건도 선반 물건이 아니다."""
+    tri = ((0.0, 0.0), (400.0, 0.0), (0.0, 200.0))         # 둘레 사각형은 SHELF 와 같음
+    poly = ShelfMonitor("shelf", SHELF, polygon=tri)
+    rect = monitor()
+    corner = (330.0, 150.0, 390.0, 400.0)                    # 사각형 오른쪽 아래 구석 — 삼각형 밖
+    assert rect.blocked_by([(1, corner)]) == [1]
+    assert poly.blocked_by([(1, corner)]) == []
+    assert poly.blocked_by([(2, PERSON)]) == [2]
+    assert not poly._inside(item("jug", 330, 130)) and rect._inside(item("jug", 330, 130))
+
+
+def test_watcher_reads_polygon_area():
+    from src.core.config import ShelfConfig
+    from src.shelf.watcher import ShelfWatcher
+
+    area = {"name": "shelf", "box": [0, 0, 1, 1], "polygon": [[0.1, 0.2], [0.5, 0.2], [0.3, 0.6]]}
+    w = ShelfWatcher(ShelfConfig(areas=[area]), detector=None)
+    w.resolve(1000, 500, 10)
+    mon = w.monitors[0][1]
+    assert mon.polygon == ((100.0, 100.0), (500.0, 100.0), (300.0, 300.0))
+    assert mon.box == (100.0, 100.0, 500.0, 300.0)            # box 는 다각형 둘레로 다시 계산

@@ -187,7 +187,9 @@ def _zones(m1: dict, m0: dict) -> dict:
     w0, h0 = m0["width"], m0["height"]
     slots = [{"name": z["name"], "poly": [[round(x * w0), round(y * h0)] for x, y in z["polygon"]]} for z in d["zones"]]
     shelves = [{"name": s["name"], "box": [round(s["box"][0] * w0), round(s["box"][1] * h0),
-                                            round(s["box"][2] * w0), round(s["box"][3] * h0)]} for s in d["shelves"]]
+                                            round(s["box"][2] * w0), round(s["box"][3] * h0)],
+                **({"poly": [[round(x * w0), round(y * h0)] for x, y in s["polygon"]]} if s.get("polygon") else {})}
+               for s in d["shelves"]]
     return {"overview": over, "shelf_image": shelf_img, "ignore": ignore, "slots": slots, "shelves": shelves}
 
 

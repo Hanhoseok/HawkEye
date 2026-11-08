@@ -138,7 +138,7 @@ code { font-family: var(--mono); font-size: 12px; background: var(--soft); paddi
       <label><input type="checkbox" id="cOnly">이 영상만</label>
     </div>
     <div class="stagewrap" id="wrap"><video id="vid" muted playsinline preload="auto"></video><canvas id="cv"></canvas></div>
-    <p class="hint"><b>클릭</b> 구역 고르기 · <b>꼭짓점 끌기</b> 모양 바꾸기 · <b>안쪽 끌기</b> 통째로 옮기기 · <b>변 더블클릭</b> 꼭짓점 더하기 · <b>꼭짓점 오른쪽 클릭</b> 지우기 · 발 점 색 = 그 점이 들어간 구역 (빨강 = 어느 구역도 아님)</p>
+    <p class="hint"><b>클릭</b> 구역 고르기 · <b>꼭짓점 끌기</b> 모양 바꾸기 · <b>안쪽 끌기</b> 통째로 옮기기 · <b>변 더블클릭</b> 꼭짓점 더하기 · <b>꼭짓점 오른쪽 클릭</b> 지우기 · 사각형 구역(사람 아님·칸)은 <b>변 가운데 네모</b>로 한 변만 · 발 점 색 = 그 점이 들어간 구역 (빨강 = 어느 구역도 아님)</p>
     <div class="lower">
       <div class="box" id="topBox"><h3>바닥에서 내려다본 모습 <span>cm · 끌어서 고칠 수 있음</span></h3><canvas id="top"></canvas></div>
       <div class="box"><h3>지금 구역으로 본 발 점 <span id="statNote"></span></h3><div id="stats"></div></div>
@@ -199,6 +199,7 @@ const ROLE = {
     ['rerun', '바꾸면 <code>dual_eval.py calibrate</code> 로 band_map(선반 카메라 x → 띠)을 다시 맞춰야 함'],
   ],
   ignore: [
+    ['rerun', '<b>사각형만</b> — 사람 상자와 겹침(IoU)을 사각형끼리 재서. 모서리를 끌면 옆 두 모서리가 같이, 변 가운데 네모를 끌면 그 변만'],
     ['rerun', '<b>사람 아님 영역</b> — 전체 카메라 탐지 단계에서 이 상자와 0.5 이상 겹치는 사람 상자를 버린다 (masked.py). 외투·의자처럼 사람으로 잘못 잡히는 자리'],
   ],
   shelf_image: [
@@ -206,10 +207,12 @@ const ROLE = {
     ['off', '발이 이 안인 사람은 팔 뻗기 대상에서 뺌 (선반 위 상품 그림의 가짜 사람)'],
   ],
   shelfbox: [
-    ['rerun', '<b>선반 방문</b> — 사람 상자가 이 상자와 겹치면 "가림". 가림이 끝나면 앞뒤 물건 탐지를 비교해 방문 하나(사라짐·생김 몇 개)를 만든다 (shelf/monitor.py)'],
-    ['rerun', '물건 탐지는 가운데가 이 상자 안인 물건만 센다'],
+    ['rerun', '<b>선반 방문</b> — 사람 상자가 이 영역과 겹치면 "가림". 가림이 끝나면 앞뒤 물건 탐지를 비교해 방문 하나(사라짐·생김 몇 개)를 만든다 (shelf/monitor.py)'],
+    ['rerun', '물건 탐지는 가운데가 이 영역 안인 물건만 센다'],
+    ['rerun', '다각형으로 고치면 파일에 <code>polygon</code> 이 생기고 <code>box</code> 는 그 둘레 사각형으로 같이 저장 (2026-11-08 전 기록은 사각형으로 돌린 것)'],
   ],
   slot: [
+    ['rerun', '<b>사각형만</b> — 칸 그림 비교가 칸을 사각형으로 잘라 비교해서. 모서리를 끌면 옆 두 모서리가 변을 따라 같이 움직이고, 변 가운데 네모를 끌면 그 변만 움직임'],
     ['rerun', '<b>손-칸 접촉</b> — 선반 카메라 손목이 칸 안에 0.3초 이상 = 집기 동작 (<code>detail_interaction</code>, 설계 M-6)'],
     ['rerun', '<b>칸 그림 비교</b> — 사람이 비킨 뒤 칸 안 그림이 바뀌었으면 물건이 사라짐·생김 (slot_diff.py). 바깥 사각형만 씀'],
     ['judge', '센서 칸 이름·같은 선반 묶기 (<code>slot_shelf</code>)'],
@@ -314,7 +317,7 @@ function layers(cam = S.cam) {
     out.push({ id: 'band', kind: 'band', name: '선반 앞 띠', color: C_BAND, group: '바닥 지도', role: 'band', noteKey: 'band', file: 'floor' });
     out.push({ id: 'cal', kind: 'calib', name: '보정점', color: C_CAL, group: '바닥 지도', role: 'calibration', noteKey: 'calibration', file: 'floor' });
   } else {
-    (S.Z.angle0.shelves || []).forEach((s, i) => out.push({ id: 'sh:' + i, kind: 'rect', name: s.name, color: C_SHELFBOX, group: '선반 상자', role: 'shelfbox', noteKey: s.name, file: 'angle0' }));
+    (S.Z.angle0.shelves || []).forEach((s, i) => out.push({ id: 'sh:' + i, kind: 'poly', name: s.name, color: C_SHELFBOX, group: '선반 상자', role: 'shelfbox', noteKey: s.name, file: 'angle0' }));
     (S.Z.angle0.zones || []).forEach((z, i) => out.push({ id: 'sl:' + i, kind: 'rect', name: z.name, type: z.type, color: C_SLOT, group: '선반 칸', role: 'slot', noteKey: z.name, file: 'angle0' }));
     out.push({ id: 'bm', kind: 'info', name: 'band_map', color: C_BAND, group: '두 카메라 잇기', role: 'band_map', noteKey: 'band_map', file: 'angle0' });
   }
@@ -328,7 +331,7 @@ function getPts(id) {
   if (k === 'fz') return S.Z.floor.zones[i].polygon;
   if (k === 'ig') return rectPoly(S.Z.floor.ignore_image[i]);
   if (k === 'si') return S.Z.floor.shelf_image[i];
-  if (k === 'sh') return rectPoly(S.Z.angle0.shelves[i].box);
+  if (k === 'sh') return S.Z.angle0.shelves[i].polygon || rectPoly(S.Z.angle0.shelves[i].box);
   if (k === 'sl') return rectPoly(polyRect(S.Z.angle0.zones[i].polygon));
   if (k === 'cal') return S.Z.floor.calibration.image;
   return [];
@@ -338,10 +341,18 @@ function setPts(id, pts) {
   if (k === 'fz') S.Z.floor.zones[i].polygon = pts.map(p => [r1(p[0]), r1(p[1])]);
   else if (k === 'ig') S.Z.floor.ignore_image[i] = polyRect(pts).map(v => r4(Math.min(1, Math.max(0, v))));
   else if (k === 'si') S.Z.floor.shelf_image[i] = pts.map(p => [r4(p[0]), r4(p[1])]);
-  else if (k === 'sh') S.Z.angle0.shelves[i].box = polyRect(pts).map(v => r4(Math.min(1, Math.max(0, v))));
+  else if (k === 'sh') {   // 다각형 + 그 둘레 사각형 box (box 만 읽는 코드용)
+    const poly = pts.map(p => [r4(Math.min(1, Math.max(0, p[0]))), r4(Math.min(1, Math.max(0, p[1])))]);
+    S.Z.angle0.shelves[i].polygon = poly; S.Z.angle0.shelves[i].box = polyRect(poly);
+  }
   else if (k === 'sl') S.Z.angle0.zones[i].polygon = rectPoly(polyRect(pts).map(v => r4(Math.min(1, Math.max(0, v)))));
 }
-const isRect = id => /^(ig|sh|sl):/.test(id);
+const isRect = id => /^(ig|sl):/.test(id);
+// 사각형 손잡이: 모서리 4개 + 변 가운데 4개 (변 가운데를 끌면 그 변만 움직임)
+function handles(id, pts) {
+  if (!pts || !isRect(id)) return pts;
+  return pts.concat(pts.map((p, i) => { const q = pts[(i + 1) % 4]; return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]; }));
+}
 const isFloor = id => id.startsWith('fz:');
 
 // ====================================================================== 무대(영상 + 덮개) 좌표
@@ -440,9 +451,14 @@ function drawPoly(ctx, pts, color, sel, dashed) {
   ctx.fillStyle = hexA(color, sel ? 0.22 : 0.10); ctx.fill();
   ctx.setLineDash(dashed ? [6, 4] : []); ctx.lineWidth = sel ? 3 : 2; ctx.strokeStyle = color; ctx.stroke(); ctx.setLineDash([]);
 }
-function drawHandles(ctx, pts, color) {
+function drawHandles(ctx, pts, color, rect) {
   pts.forEach((p, i) => {
-    ctx.beginPath(); ctx.arc(p[0], p[1], S.hoverV === i ? 7 : 5, 0, 7);
+    const big = S.hoverV === i;
+    if (rect && i >= 4) {   // 변 가운데: 네모
+      const r = big ? 6 : 4; ctx.fillStyle = '#fff'; ctx.fillRect(p[0] - r, p[1] - r, 2 * r, 2 * r);
+      ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.strokeRect(p[0] - r, p[1] - r, 2 * r, 2 * r); return;
+    }
+    ctx.beginPath(); ctx.arc(p[0], p[1], big ? 7 : 5, 0, 7);
     ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.stroke();
   });
 }
@@ -519,7 +535,7 @@ function draw() {
   }
   // 고른 구역 꼭짓점
   if (S.sel && !['band', 'bm'].includes(S.sel) && layerById(S.sel) && layerById(S.sel).kind !== 'calib') {
-    const l = layerById(S.sel); if (l && (S.cam === 'angle1') === (l.file === 'floor')) { const pts = screenPts(S.sel, F); if (pts) drawHandles(ctx, pts, l.color); }
+    const l = layerById(S.sel); if (l && (S.cam === 'angle1') === (l.file === 'floor')) { const pts = screenPts(S.sel, F); if (pts) drawHandles(ctx, handles(S.sel, pts), l.color, isRect(S.sel)); }
   }
   drawTop();
 }
@@ -651,7 +667,7 @@ function onDown(e, view) {
     if (i >= 0) { snapshot(); select('cal'); drag = { type: 'cal', i, view, keep: pinnedImage(F) }; return; }
   }
   if (S.sel && layerById(S.sel) && ['floorpoly', 'rect', 'poly'].includes(layerById(S.sel).kind)) {
-    const pts = viewPts(S.sel, view, F);
+    const pts = handles(S.sel, viewPts(S.sel, view, F));
     if (pts) {
       const i = nearVertex(pts, p);
       if (i >= 0) { snapshot(); drag = { type: 'vertex', id: S.sel, i, view }; return; }
@@ -674,7 +690,7 @@ function onMove(e, view) {
     let hv = null;
     if (S.sel && (view === 'img' || isFloor(S.sel))) {
       const pts = view === 'top' && TV ? viewPts(S.sel, 'top', F) : (view === 'img' ? viewPts(S.sel, 'img', F) : null);
-      if (pts) { const i = nearVertex(pts, p); if (i >= 0) hv = i; }
+      if (pts) { const i = nearVertex(handles(S.sel, pts), p); if (i >= 0) hv = i; }
     }
     if (hv !== S.hoverV) { S.hoverV = hv; schedule(); }
     el.style.cursor = hv !== null ? 'grab' : 'crosshair';
@@ -694,7 +710,11 @@ function onMove(e, view) {
     const q = fromView(drag.id, view, F, ...p); if (!q) return;
     if (drag.type === 'vertex') {
       const pts = clone(getPts(drag.id));
-      if (isRect(drag.id)) {   // 사각형: 고른 모서리와 마주 보는 모서리로 다시 만든다
+      if (isRect(drag.id) && drag.i >= 4) {   // 사각형 변 가운데: 그 변만 (위·오른쪽·아래·왼쪽)
+        const r = polyRect(pts), side = drag.i - 4;
+        if (side === 0) r[1] = q[1]; else if (side === 1) r[2] = q[0]; else if (side === 2) r[3] = q[1]; else r[0] = q[0];
+        setPts(drag.id, rectPoly(polyRect(rectPoly(r))));
+      } else if (isRect(drag.id)) {   // 사각형 모서리: 이 모서리와 마주 보는 모서리로 다시 만든다 (옆 두 모서리는 변을 따라 같이 움직임)
         const opp = pts[(drag.i + 2) % 4];
         setPts(drag.id, [q, [opp[0], q[1]], opp, [q[0], opp[1]]]);
       } else { pts[drag.i] = q; setPts(drag.id, pts); }
@@ -777,7 +797,7 @@ function renderLayers() {
       const cam = l.file === 'floor' ? '전체' : '선반';
       html += `<div class="group"><span>${cam} · ${esc(g)}</span>${add[g] ? `<button class="add" data-add="${add[g]}">+ 더하기</button>` : ''}</div>`;
     }
-    const tag = l.kind === 'floorpoly' ? TYPE_NAME[l.type] || l.type : l.kind === 'rect' ? (l.role === 'ignore' ? '빼기' : '상자') : l.kind === 'calib' ? (S.calEdit ? '편집 중' : '잠김') : '';
+    const tag = l.kind === 'floorpoly' ? TYPE_NAME[l.type] || l.type : l.role === 'shelfbox' ? '다각형' : l.kind === 'rect' ? (l.role === 'ignore' ? '빼기 · 사각형' : '사각형') : l.kind === 'calib' ? (S.calEdit ? '편집 중' : '잠김') : '';
     html += `<div class="layer${S.sel === l.id ? ' on' : ''}${layerChanged(l) ? ' changed' : ''}" data-id="${l.id}">
       <input type="checkbox" data-vis="${l.id}" ${hidden.has(l.id) ? '' : 'checked'} title="보이기">
       <span class="sw" style="background:${l.color}"></span><span class="nm">${esc(l.name)}</span><span class="tag">${esc(tag)}</span></div>`;

@@ -112,7 +112,18 @@ def clean_floor(raw: dict) -> dict:
 def clean_detail(raw: dict) -> dict:
     raw = dict(raw)
     raw["normalized"] = True
-    raw["shelves"] = [{**s, "box": [_r(v, 4) for v in s["box"]]} for s in raw.get("shelves") or []]
+    shelves = []
+    for s in raw.get("shelves") or []:
+        s = dict(s)
+        if s.get("polygon"):
+            # 다각형이면 box 는 그 둘레 사각형 (box 만 읽는 코드·보기 페이지용)
+            s["polygon"] = [[_r(x, 4), _r(y, 4)] for x, y in s["polygon"]]
+            xs, ys = [p[0] for p in s["polygon"]], [p[1] for p in s["polygon"]]
+            s["box"] = [min(xs), min(ys), max(xs), max(ys)]
+        s["box"] = [_r(v, 4) for v in s["box"]]
+        shelves.append({k: s[k] for k in ("name", "box", "polygon", "zone") if k in s}
+                       | {k: v for k, v in s.items() if k not in ("name", "box", "polygon", "zone")})
+    raw["shelves"] = shelves
     if raw.get("band_map"):
         raw["band_map"] = [_r(v, 4) for v in raw["band_map"]]
     raw["zones"] = [{"name": z["name"], "type": z.get("type", "SHELF"),
@@ -171,6 +182,9 @@ def validate(floor: dict, detail: dict) -> tuple[list[str], list[str]]:
         if len(p) < 3:
             errors.append(f"전체 카메라 선반 영역 {i + 1}: 꼭짓점 3개 미만")
     for s in detail.get("shelves") or []:
+        poly = s.get("polygon")
+        if poly is not None and (len(poly) < 3 or not all(0 <= v <= 1 for p in poly for v in p)):
+            errors.append(f"선반 영역 '{s.get('name')}': 꼭짓점 3개 이상, 화면 비율 0~1 이어야 함")
         b = s.get("box") or []
         if len(b) != 4 or not (0 <= b[0] < b[2] <= 1 and 0 <= b[1] < b[3] <= 1):
             errors.append(f"선반 상자 '{s.get('name')}': 화면 비율 x1<x2, y1<y2 (0~1) 이어야 함")

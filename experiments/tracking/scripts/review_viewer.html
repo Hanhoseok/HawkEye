@@ -416,7 +416,9 @@ function drawCam(cam, t) {
       z.shelf_image.forEach(p => poly(ctx, p, 'rgba(255,214,0,.9)', 'rgba(255,214,0,.08)', 3));
       z.ignore.forEach(r => { ctx.setLineDash([10, 8]); ctx.strokeStyle = 'rgba(200,200,200,.7)'; ctx.lineWidth = 2; ctx.strokeRect(r[0], r[1], r[2] - r[0], r[3] - r[1]); ctx.setLineDash([]); });
     } else {
-      z.shelves.forEach(b => { ctx.strokeStyle = 'rgba(255,214,0,.6)'; ctx.lineWidth = 2; ctx.strokeRect(b.box[0], b.box[1], b.box[2] - b.box[0], b.box[3] - b.box[1]); });
+      z.shelves.forEach(b => { ctx.strokeStyle = 'rgba(255,214,0,.6)'; ctx.lineWidth = 2;
+        if (b.poly) { ctx.beginPath(); b.poly.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.stroke(); }
+        else ctx.strokeRect(b.box[0], b.box[1], b.box[2] - b.box[0], b.box[3] - b.box[1]); });
       z.slots.forEach(o => { poly(ctx, o.poly, 'rgba(0,229,255,.9)', 'rgba(0,229,255,.08)', 3); ctx.font = `${22 * s}px sans-serif`; ctx.fillStyle = '#00e5ff'; ctx.fillText(o.name, o.poly[0][0] + 4, o.poly[0][1] - 6); });
     }
   }

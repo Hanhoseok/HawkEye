@@ -82,3 +82,15 @@ def test_draft_apply_restore_cycle(tmp_path, monkeypatch):
 def test_api_rejects_unknown_route():
     code, data = ze.handle("POST", "/api/zones/delete-everything", {})
     assert code == 404 and not data["ok"]
+
+
+def test_shelf_polygon_keeps_box_as_its_bounds():
+    s = _applied()
+    detail = copy.deepcopy(s["angle0"])
+    detail["shelves"][0]["polygon"] = [[0.0, 0.5], [0.5, 0.48], [0.55, 0.9], [0.02, 0.93]]
+    clean = ze.clean_detail(detail)
+    assert clean["shelves"][0]["box"] == [0.0, 0.48, 0.55, 0.93]
+    assert list(clean["shelves"][0])[:3] == ["name", "box", "polygon"]
+    assert ze.validate(s["floor"], clean)[0] == []
+    detail["shelves"][0]["polygon"] = [[0.0, 0.5], [1.2, 0.5], [0.3, 0.9]]
+    assert any("선반 영역" in e for e in ze.validate(s["floor"], detail)[0])

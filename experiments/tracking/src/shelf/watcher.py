@@ -40,12 +40,19 @@ class ShelfWatcher:
         """화면 비율로 준 선반 영역을 픽셀로 바꾸고 선반마다 지켜보기를 만든다."""
         self.monitors = []
         for i, area in enumerate(self.config.areas):
-            x1, y1, x2, y2 = (float(v) for v in area["box"])
             name = area.get("name") or f"shelf{i + 1}"
-            box = (x1 * width, y1 * height, x2 * width, y2 * height)
+            polygon = None
+            if area.get("polygon"):
+                # 다각형 선반 영역 (화면 비율) — 사각형 box 는 그 둘레로 다시 계산한다
+                polygon = tuple((float(x) * width, float(y) * height) for x, y in area["polygon"])
+                xs, ys = [p[0] for p in polygon], [p[1] for p in polygon]
+                box = (min(xs), min(ys), max(xs), max(ys))
+            else:
+                x1, y1, x2, y2 = (float(v) for v in area["box"])
+                box = (x1 * width, y1 * height, x2 * width, y2 * height)
             self.monitors.append((area, ShelfMonitor(name, box, stable_seconds=self.config.stable_seconds,
                                                      map_score=self.config.map_score,
-                                                     weak_presence=self.config.weak_presence)))
+                                                     weak_presence=self.config.weak_presence, polygon=polygon)))
         self.per_window = max(1, int(round(self.config.stable_seconds * fps)))
         self._seen = [0] * len(self.monitors)
         if self.slots:
