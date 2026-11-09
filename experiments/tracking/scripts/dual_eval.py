@@ -6,6 +6,7 @@
     python scripts/dual_eval.py judge      # 저장된 기록으로 합치기·판정만 다시 (몇 초)
         --only "N*,T1"   짝 이름 패턴     --detail-off  선반 카메라 없이 (전체 카메라만, 1-2 기준선)
         --sensor          가짜 센서 기록(labels/store01_dual/fake_sensor/<짝>.csv)을 함께 (1-6)
+        --payments        계산대 체류 대신 결제 라벨(labels/store01_dual/payments.csv)을 결제 기록으로 (E-13)
 
 기준값은 정상(N) 영상으로 정하고 고정한 뒤 절도(T)·복합(C)으로 채점한다 (1차 촬영과 같은 방식).
 영상은 저장소 밖 ../../source/1(angle0)·1(angle1).
@@ -202,7 +203,7 @@ class PairLog:
 # ---------------------------------------------------------------------- 판정 재실행
 
 def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detail: bool = True,
-               sensor: bool = False) -> dict:
+               sensor: bool = False, payments: bool = False) -> dict:
     log = PairLog(pair)
     cfg = dual_config(base, pair, offset_ms)
     floor = FloorMap.load(ZONES / "floor.yaml")
@@ -210,7 +211,13 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     fz = FloorZoneMap(floor)
     m1, m0 = log.meta["angle1"], log.meta["angle0"]
     fz.resolve(m1["width"], m1["height"])
-    risk = RiskEngine(cfg.risk, fz, PaymentFeed.empty())
+    feed = PaymentFeed.empty()
+    if payments:
+        # 결제 라벨(scripts/label_payments.py)의 완료된 결제만 결제 기록으로 — 계산대 체류 규칙은 끈다
+        from label_payments import load_feed
+        cfg.risk.payment_mode = "feed"
+        feed = load_feed(pair)
+    risk = RiskEngine(cfg.risk, fz, feed)
     detail_setup = yaml.safe_load((ZONES / "angle0.yaml").read_text(encoding="utf-8"))
     slot_shelf = {z["name"]: detail_setup["shelves"][0]["name"] for z in detail_setup["zones"]}
     sensors = []
@@ -271,7 +278,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         "identities": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
         "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes,
         "actions": [a.describe() for a in risk.all_actions() if a.kind != "LOOK"],
-        "payments": sum(1 for p in risk.book.payments if p.method == "dwell"),
+        "payments": sum(1 for p in risk.book.payments if p.method in ("dwell", "checkout", "given")),
+        "unmatched_payments": sum(1 for p in risk.book.payments if p.method == "unmatched"),
         "cancels": sum(1 for p in risk.book.payments if p.method == "cancel"),
         "shelf_events": [r.to_dict() for r in judge.fuser.records],
     }
@@ -283,7 +291,8 @@ def load_band_map() -> tuple[float, float]:
     return float(a), float(b)
 
 
-def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", before: bool = False) -> list[dict]:
+def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", before: bool = False,
+          payments: bool = False) -> list[dict]:
     base = AppConfig.load(ROOT / "config.yaml")
     if before:
         base.fusion.release_delay_seconds, base.fusion.unchanged_clears_all = 1.0, False
@@ -293,7 +302,7 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
     for pair in pairs(pattern):
         if not (OUT / pair / ".done").exists():
             continue
-        rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor))
+        rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor, payments))
     for k in ("정상", "절도", "복합 정상"):
         part = [r for r in rows if r["kind"] == k]
         if part:
@@ -303,6 +312,7 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
         mark = "OK " if r["correct"] else "XX "
         print(f"  {mark}{r['pair']:6s} {','.join(r['verdicts']) or '(판정 없음)'}  손님 {r['people']}  짝 {r['links']}  "
               f"계산대 결제 {r['payments']}" + (f" 취소 {r['cancels']}" if r["cancels"] else "")
+              + (f"  연결 못한 결제 {r['unmatched_payments']}" if r["unmatched_payments"] else "")
               + (f"  주인 없는 손 접촉 {r['unowned_takes']}" if r["unowned_takes"] else ""))
         if not r["correct"]:
             for reason in r["reasons"]:
@@ -437,6 +447,8 @@ def main() -> int:
                     help="가장자리 규칙을 네 변 모두에 (늘 잘리는 변을 빼기 전, C-18 비교용)")
     ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
                     help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
+    ap.add_argument("--payments", action="store_true",
+                    help="계산대 체류 대신 결제 라벨(labels/store01_dual/payments.csv, scripts/label_payments.py)을 결제 기록으로")
     args = ap.parse_args()
     global OUT, OVERRIDES, OVERVIEW_POSE, OVERVIEW_DETECTOR, TENTATIVE, ZONES
     OVERVIEW_POSE = args.overview_pose
@@ -457,7 +469,7 @@ def main() -> int:
     elif args.stage == "calibrate":
         calibrate(args.only or "N*")
     else:
-        judge(args.only, not args.detail_off, args.sensor, args.label, args.before)
+        judge(args.only, not args.detail_off, args.sensor, args.label, args.before, args.payments)
     return 0
 
 
