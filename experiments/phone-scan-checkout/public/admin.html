@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>상품 등록</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>📦 상품 등록</h1>
+    <nav>
+      <a href="/">계산대로</a>
+      <a href="/samples" target="_blank">샘플 바코드</a>
+    </nav>
+  </header>
+
+  <main class="grid">
+    <section class="card">
+      <h2 id="formTitle">상품 추가</h2>
+      <form id="form">
+        <input type="hidden" id="pid">
+        <p><label>바코드 번호<br><input id="barcode" type="text" inputmode="numeric" placeholder="예: 8801234567890" required></label></p>
+        <p><label>상품명<br><input id="name" type="text" placeholder="예: 삼다수 생수 500ml" required></label></p>
+        <p><label>가격(원)<br><input id="price" type="number" min="0" step="1" placeholder="예: 950" required></label></p>
+        <div class="row">
+          <button type="submit" class="primary" id="submit">추가</button>
+          <button type="button" id="cancel" style="display:none">취소</button>
+        </div>
+        <div id="msg" style="margin-top:10px"></div>
+      </form>
+      <p class="muted">실제 상품 포장의 바코드 아래 인쇄된 숫자(EAN-13은 13자리)를 그대로 입력하세요.</p>
+    </section>
+
+    <section class="card">
+      <h2>등록된 상품 <span class="muted" id="cnt"></span></h2>
+      <table>
+        <thead><tr><th>바코드</th><th>상품명</th><th class="num">가격</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>

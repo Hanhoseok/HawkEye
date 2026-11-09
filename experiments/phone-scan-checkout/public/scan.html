@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>바코드 스캔</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="scan">
+  <header class="top">
+    <h1>📱 바코드 스캔</h1>
+    <span id="status" class="badge">연결 중…</span>
+  </header>
+
+  <main>
+    <div id="invalid" class="card err" style="display:none"></div>
+
+    <section class="card" id="scanCard">
+      <div id="reader"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="start" class="primary big">📷 스캔 시작</button>
+        <button id="stop" class="big" style="display:none">스캔 중지</button>
+      </div>
+      <p class="muted" id="camHint">상품 포장의 바코드를 사각형 안에 맞춰 주세요. 한 상품은 한 번만 담기며, 같은 바코드를 다시 찍어도 수량은 올라가지 않습니다. 수량은 노트북 계산대에서 바꿔 주세요.</p>
+      <div id="camWarn"></div>
+    </section>
+
+    <section class="card" style="margin-top:14px">
+      <h2>바코드 직접 입력</h2>
+      <form id="manualForm" class="row">
+        <input id="manual" type="text" inputmode="numeric" placeholder="바코드 숫자 입력" autocomplete="off" style="flex:1">
+        <button type="submit" class="primary">담기</button>
+      </form>
+      <p class="muted">카메라 권한이 없거나 인식이 어려울 때 바코드 아래 숫자를 입력하세요.</p>
+    </section>
+
+    <section class="card" style="margin-top:14px">
+      <div class="status-line"><b>현재 장바구니</b><span>총 <span id="count">0</span>개 · <b id="total">0원</b></span></div>
+      <div class="list" id="list"></div>
+      <p class="muted" id="last"></p>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/vendor/html5-qrcode/html5-qrcode.min.js"></script>
+  <script src="/js/dedupe.js"></script>
+  <script src="/js/scan.js"></script>
+</body>
+</html>
