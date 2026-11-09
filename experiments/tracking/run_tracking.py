@@ -129,7 +129,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def apply_dual(config: AppConfig, args: argparse.Namespace) -> AppConfig:
-    """카메라 2대 설정 파일을 기본 설정 위에 얹는다. risk·identity 는 적힌 칸만 바꾼다."""
+    """카메라 2대 설정 파일을 기본 설정 위에 얹는다. risk·identity·zones 는 적힌 칸만 바꾼다."""
     import yaml
     from src.core.config import CameraConfig, FusionConfig, InteractionConfig
 
@@ -139,7 +139,7 @@ def apply_dual(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.fusion = FusionConfig(**raw["fusion"])
     if raw.get("detail_interaction"):
         config.detail_interaction = InteractionConfig(**{**config.interaction.__dict__, **raw["detail_interaction"]})
-    for section in ("risk", "identity"):
+    for section in ("risk", "identity", "zones"):
         for key, value in (raw.get(section) or {}).items():
             setattr(getattr(config, section), key, value)
     for spec in args.camera or []:

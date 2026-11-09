@@ -136,7 +136,7 @@ code { font-family: var(--mono); font-size: 12px; background: var(--soft); paddi
       <label><input type="checkbox" class="cSet" value="T">T</label>
       <label><input type="checkbox" class="cSet" value="C">C</label>
       <label><input type="checkbox" id="cOnly">이 영상만</label>
-      <select id="footSel" title="구역 판단에 쓰는 발 점"><option value="bbox">발 점: 상자 아래 가운데 (지금 판정)</option><option value="ankle">발 점: 발목 (관절 기록 11-04)</option></select>
+      <select id="footSel" title="구역 판단에 쓰는 발 점"><option value="ankle">발 점: 발목 (지금 판정 · 관절 기록)</option><option value="bbox">발 점: 상자 아래 가운데 (11-08 까지 · 예전 기록)</option></select>
     </div>
     <div class="stagewrap" id="wrap"><video id="vid" muted playsinline preload="auto"></video><canvas id="cv"></canvas></div>
     <p class="hint"><b>클릭</b> 구역 고르기 · <b>꼭짓점 끌기</b> 모양 바꾸기 · <b>안쪽 끌기</b> 통째로 옮기기 · <b>변 더블클릭</b> 꼭짓점 더하기 · <b>꼭짓점 오른쪽 클릭</b> 지우기 · 사각형 구역(사람 아님·칸)은 <b>변 가운데 네모</b>로 한 변만 · 발 점 색 = 그 점이 들어간 구역 (빨강 = 어느 구역도 아님)</p>
@@ -153,8 +153,8 @@ const HE = { _index: null, _data: {} };
 HE.index = d => { HE._index = d; };
 HE.cases = () => {};
 HE.loaded = (key, d) => { HE._data[key] = d; };
-let RUN = 'edgegap';
-const FOOT_RUN = { bbox: 'edgegap', ankle: 'pose_owner' };
+let RUN = 'ankle';
+const FOOT_RUN = { bbox: 'edgegap', ankle: 'ankle' };
 // 발 점: 상자 아래 가운데, 또는 발목(관절 기록에만 — kp 의 7·8번째 = 왼·오른 발목, review_export KP_KEEP)
 function footOf(r, tr) {
   const [x1, y1, x2, y2] = [r[3], r[4], r[5], r[6]], kp = r[9] || [];
@@ -313,7 +313,7 @@ const S = {
   cam: 'angle1', pair: null, sel: null, hoverV: null,
   undo: [], redo: [],
   pinZones: true, calEdit: false,
-  pairs: [], judge: null, foot: 'bbox',
+  pairs: [], judge: null, foot: 'ankle',
 };
 const $ = id => document.getElementById(id);
 const vid = $('vid'), cv = $('cv'), wrap = $('wrap'), topc = $('top');
@@ -999,12 +999,12 @@ function renderJudge(j) {
   if (j.running) { body.innerHTML = `<b>${esc(j.step || '준비 중')}</b> · ${j.elapsed}초`; return; }
   if (j.error) { body.innerHTML = `<div class="bad">판정 실패</div><pre style="white-space:pre-wrap;font-size:11px">${esc(j.error)}</pre>`; return; }
   const A = j.applied, D = j.draft;
-  if (!A && !D) { body.innerHTML = `아직 판정한 적 없음 (${S.foot === 'ankle' ? '발목 발 점 · 관절 기록' : '상자 발 점 · 지금 기록'})`; return; }
+  if (!A && !D) { body.innerHTML = `아직 판정한 적 없음 (${S.foot === 'ankle' ? '발목 발 점 · 지금 기록' : '상자 발 점 · 예전 기록'})`; return; }
   const kinds = ['정상', '절도', '복합 정상'];
   const tot = R => R ? Object.fromEntries(kinds.map(k => [k, [R.rows.filter(r => r.kind === k && r.correct).length, R.rows.filter(r => r.kind === k).length]])) : null;
   const ta = tot(A), td = tot(D);
   const all = R => R ? R.rows.filter(r => r.correct).length + '/' + R.rows.length : '–';
-  let html = `<div class="sub">${S.foot === 'ankle' ? '발목 발 점 · 전체 카메라 관절 기록(dual_eval_pose, 11-04) — 기록이 달라 상자 쪽 점수와 바로 비교하지 말 것' : '상자 아래 가운데 발 점 · 지금 기본 기록(dual_eval_edgegap)'}</div><div class="sum">` + kinds.map(k => `<span>${k} <b>${ta ? ta[k].join('/') : '–'}</b>${td ? ` → <b>${td[k].join('/')}</b>` : ''}</span>`).join('') +
+  let html = `<div class="sub">${S.foot === 'ankle' ? '발목 발 점 · 지금 기본 기록(dual_eval_pose3, 전체 카메라 관절 모델)' : '상자 아래 가운데 발 점 · 11-08 까지의 기본 기록(dual_eval_edgegap, 기존 탐지 모델) — 기록이 달라 발목 쪽 점수와 바로 비교하지 말 것'}</div><div class="sum">` + kinds.map(k => `<span>${k} <b>${ta ? ta[k].join('/') : '–'}</b>${td ? ` → <b>${td[k].join('/')}</b>` : ''}</span>`).join('') +
     `<span>모두 <b>${all(A)}</b>${D ? ` → <b>${all(D)}</b>` : ''}</span></div>`;
   // 판정이 아예 없으면 정상·복합 정상은 '경보 없음'으로 맞은 것처럼 보인다 — 따로 센다
   const silent = R => R ? R.rows.filter(r => !r.verdicts.length).length : 0;

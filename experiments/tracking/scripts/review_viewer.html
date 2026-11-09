@@ -200,7 +200,7 @@ function openPair(p) {
   document.querySelectorAll('.case').forEach(b => b.classList.remove('on'));
   const t = HE._index.truth[p] || {};
   buildMain({ title: `${p} — ${t.expected || ''} · 손님 ${t.people ?? '?'}명`, pair: p, desc: `<p>${esc(t.notes || '')}</p>`, look: [] });
-  switchRun(state.runs.includes('edgegap') ? 'edgegap' : state.runs[0], 0);
+  switchRun(state.runs.includes('ankle') ? 'ankle' : state.runs.includes('edgegap') ? 'edgegap' : state.runs[0], 0);
 }
 
 function buildMain(c) {

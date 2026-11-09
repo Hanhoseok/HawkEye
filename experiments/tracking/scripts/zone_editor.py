@@ -38,13 +38,13 @@ APPLIED = ROOT / "zones" / "store01_dual"
 WORK = ROOT / "outputs" / "zone_editor"
 DRAFT = WORK / "draft"
 BACKUP = WORK / "backup"
-RECORDS = "dual_eval_edgegap"
-"""판정을 다시 돌릴 기록 폴더 (outputs/ 아래) — 지금 기본 설정의 기록."""
+RECORDS = "dual_eval_pose3"
+"""판정을 다시 돌릴 기록 폴더 (outputs/ 아래) — 지금 기본 설정의 기록 (전체 카메라 관절 모델, 2026-11-09)."""
 FOOT = {
-    "bbox": (RECORDS, []),
-    "ankle": ("dual_eval_pose", ["--set", "zones.foot_point=ankle"]),
+    "ankle": (RECORDS, []),
+    "bbox": ("dual_eval_edgegap", ["--set", "zones.foot_point=bbox"]),
 }
-"""발 점 방식 → (기록 폴더, 판정 추가 설정). 발목은 전체 카메라를 관절 모델로 돌린 기록(11-04)에만 있다 (B-15)."""
+"""발 점 방식 → (기록 폴더, 판정 추가 설정). 기본은 발목(관절 기록). 상자는 11-08 까지의 기본(기존 탐지 모델 기록)과 비교용 (B-15)."""
 FILES = {"floor": "floor.yaml", "angle0": "angle0.yaml"}
 INSIDE_ZONES = ("shelf", "counter", "aisle")
 """configs/store01_dual.yaml risk.inside_zones — 이 이름의 구역이 없으면 손님이 한 명도 안 생긴다."""
@@ -301,17 +301,18 @@ class JudgeJob:
         self.step = ""
         self.error = ""
         self.started = 0.0
-        self.foot = "bbox"
+        self.foot = "ankle"
 
-    def cache(self, h: str, foot: str = "bbox") -> Path:
-        return WORK / "judge" / (f"{h}.json" if foot == "bbox" else f"{h}_{foot}.json")
+    def cache(self, h: str, foot: str = "ankle") -> Path:
+        # 기록 폴더 이름도 넣는다 — 같은 구역·발 점이라도 기록이 바뀌면 결과가 다르다 (11-09 기본 기록 바뀜)
+        return WORK / "judge" / f"{h}_{foot}_{FOOT[foot][0]}.json"
 
-    def result(self, h: str | None, foot: str = "bbox") -> dict | None:
+    def result(self, h: str | None, foot: str = "ankle") -> dict | None:
         if not h or not self.cache(h, foot).exists():
             return None
         return json.loads(self.cache(h, foot).read_text(encoding="utf-8"))
 
-    def start(self, foot: str = "bbox") -> dict:
+    def start(self, foot: str = "ankle") -> dict:
         if foot not in FOOT:
             return {"ok": False, "errors": [f"모르는 발 점 방식: {foot}"]}
         with self.lock:
@@ -354,7 +355,7 @@ class JudgeJob:
             self.step = ""
             self.running = False
 
-    def status(self, foot: str = "bbox") -> dict:
+    def status(self, foot: str = "ankle") -> dict:
         return {"running": self.running, "step": self.step, "error": self.error, "foot": foot,
                 "elapsed": round(time.time() - self.started) if self.running else 0,
                 "applied": self.result(digest(APPLIED), foot), "draft": self.result(digest(DRAFT), foot)}
@@ -378,7 +379,7 @@ def handle(method: str, path: str, body: dict | None) -> tuple[int, dict]:
     if method == "POST" and path == "/api/zones/restore":
         return 200, restore_backup((body or {}).get("name", ""))
     if method == "POST" and path == "/api/judge":
-        return 200, JOB.start((body or {}).get("foot", "bbox"))
+        return 200, JOB.start((body or {}).get("foot", "ankle"))
     return 404, {"ok": False, "errors": [f"모르는 요청: {method} {path}"]}
 
 

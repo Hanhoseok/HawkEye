@@ -10,7 +10,7 @@ cameras:
     source: ""
     zones: zones/store01_dual/floor.yaml
     stride: 4               # 60FPS → 15FPS
-    detector: yolo
+    detector: yolo-pose     # 발목 발 점에 관절이 필요 (2026-11-09, 그 전엔 yolo). 외투 큰 상자는 floor.yaml 사람 아님 영역 3번째
     identity:
       edge_sides: [left, right, bottom]   # 위쪽은 화각 때문에 늘 머리가 잘림 — 가장자리 규칙에서 뺌 (C-18)
   - name: angle0
@@ -30,6 +30,8 @@ risk:
   payment_mode: dwell       # 결제 기록 없음: 계산대 체류 = 결제
   inside_zones: [shelf, counter, aisle]   # 이 바닥 구역에 1초 이상 들어온 사람만 손님 (문 앞·창밖 행인 제외)
   inside_seconds: 1.0
+zones:
+  foot_point: ankle         # 바닥 구역 판단 = 발목 (B-15, 2026-11-09). 구역은 실제 바닥 자리에 맞춰 그림 — 상자 발 점(bbox)과 함께 쓰면 28/38
 identity:
   track_gap_recheck_seconds: 1.0   # 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정 (C-22) — 가장자리 변과 함께 손님 수 38/38
 fusion: {}                  # 기본값 (src/core/config.py FusionConfig). 전체 카메라 팔 뻗기는 끔 (D-19, 3차 비교)

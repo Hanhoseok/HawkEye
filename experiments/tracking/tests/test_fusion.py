@@ -228,6 +228,14 @@ class RecordingRisk:
         return []
 
 
+TEST_SHELF_IMAGE = [[0.0, 0.22], [0.2, 0.2], [0.3, 0.33], [0.375, 0.36], [0.375, 1.0], [0.0, 1.0]]
+"""시험용 전체 카메라 선반 영역 — 11-04 에 그린 모양(앞 모서리 x 0.375). 적용본은 구역 편집 페이지에서 바뀌므로 시험은 이것에 묶는다."""
+
+
+def _with_test_shelf(raw: dict) -> dict:
+    return {**raw, "shelf_image": [TEST_SHELF_IMAGE]}
+
+
 def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
     from src.core.types import Frame, IdentityObservation
     from src.fusion.judge import DualJudge
@@ -236,7 +244,7 @@ def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
     root = Path(__file__).resolve().parents[1]
     floor = FloorMap.load(root / "zones" / "store01_dual" / "floor.yaml")
     import yaml
-    raw = yaml.safe_load((root / "zones" / "store01_dual" / "floor.yaml").read_text(encoding="utf-8"))
+    raw = _with_test_shelf(yaml.safe_load((root / "zones" / "store01_dual" / "floor.yaml").read_text(encoding="utf-8")))
     w, h = 1920, 1080
     bbox = (0.30 * w, 0.20 * h, 0.45 * w, 0.85 * h)
 
@@ -275,7 +283,7 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
     import yaml
 
     root = Path(__file__).resolve().parents[1]
-    raw = yaml.safe_load((root / "zones" / "store01_dual" / "floor.yaml").read_text(encoding="utf-8"))
+    raw = _with_test_shelf(yaml.safe_load((root / "zones" / "store01_dual" / "floor.yaml").read_text(encoding="utf-8")))
     floor = FloorMap.load(root / "zones" / "store01_dual" / "floor.yaml")
     w, h = 1920, 1080
     risk = RecordingRisk()

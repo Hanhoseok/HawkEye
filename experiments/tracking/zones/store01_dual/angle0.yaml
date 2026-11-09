@@ -10,7 +10,8 @@ notes:
 normalized: true
 shelves:
 - name: shelf
-  box: [0.0, 0.48, 0.55, 0.93]
+  box: [0.1515, 0.3963, 0.5217, 0.8832]
+  polygon: [[0.1515, 0.5561], [0.5154, 0.3963], [0.5217, 0.605], [0.1769, 0.8832]]
   zone: shelf
 band_map: [1.7193, -0.4803]
 zones:

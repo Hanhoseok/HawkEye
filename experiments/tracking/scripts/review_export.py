@@ -40,9 +40,11 @@ RUNS = [
      "11-04 기준선. 가장자리 규칙이 네 변 모두, 되살아난 번호 다시 판정 없음."),
     ("edge", "dual_eval_edge", {}, "가장자리 변만",
      "카메라별 가장자리 변(전체 카메라 위쪽·선반 카메라 아래쪽 제외). 다시 판정 없음."),
-    ("edgegap", "dual_eval_edgegap", {}, "가장자리 변 + 다시 판정 (현재 기본)",
-     "가장자리 변 + 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정(3판) + 선반 앞 후보가 한 명이면 외형 0.85 이상으로 두 카메라 짝(11-07). 지금 카메라 2대 기본 설정."),
-    ("posonly", "dual_eval_edgegap", {"fusion": {"solo_appearance_min": 0.0}}, "두 카메라 짝을 위치로만 (11-07 전)",
+    ("ankle", "dual_eval_pose3", {}, "관절 모델 + 발목 발 점 + 사용자 구역 (현재 기본)",
+     "전체 카메라 yolov8n-pose, 바닥 구역 판단은 발목(B-15), 구역은 사용자가 편집 페이지에서 실제 바닥 자리에 맞춰 그린 것 + 외투 큰 상자용 사람 아님 영역(11-09). 팔 뻗기는 끔. 지금 카메라 2대 기본 설정."),
+    ("edgegap", "dual_eval_edgegap", {"set": ["zones.foot_point=bbox"]}, "가장자리 변 + 다시 판정 (11-08 까지 기본)",
+     "기존 탐지 모델(yolov8n), 상자 아래 가운데 발 점. 가장자리 변 + 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정(3판) + 선반 앞 후보가 한 명이면 외형 0.85 이상으로 두 카메라 짝(11-07). 구역은 지금 적용본으로 판정하므로 그때 점수(32/38)와 다름."),
+    ("posonly", "dual_eval_edgegap", {"set": ["zones.foot_point=bbox"], "fusion": {"solo_appearance_min": 0.0}}, "두 카메라 짝을 위치로만 (11-07 전)",
      "현재 기본과 같고, 두 카메라 짝을 위치 점수로만 정함(외형은 0.3 보조). 선반 카메라 띠 위치가 어긋나면 외형이 높아도 '짝 없음'."),
     ("tent", "dual_eval_tent", {}, "+ 임시 신원 1초",
      "가장자리 변 + 다시 판정 + 전체 카메라 새 신원은 임시로 두고 발이 매장 안 바닥에 1초 있어야 정식(대조·나중에 합치기 상대)."),
@@ -50,9 +52,9 @@ RUNS = [
      "되살아난 번호를 새 번호처럼 다시 판정. 가장자리 변 없이 시험 — C21 을 쪼갬."),
     ("gap3", "dual_eval_gap3", {}, "다시 판정 3판 (가장자리 변 없음)",
      "원래 주인 우대·가장자리면 미룸·작으면 보류. 가장자리 변 없이는 늘 '미룸'이라 효과 없음."),
-    ("pose_reach", "dual_eval_pose", {"pose": True, "reach_takes": True}, "관절 + 팔 뻗기를 집기로 (처음 구현)",
+    ("pose_reach", "dual_eval_pose", {"pose": True, "reach_takes": True, "set": ["zones.foot_point=bbox"]}, "관절 + 팔 뻗기를 집기로 (처음 구현)",
      "전체 카메라 yolov8n-pose. 팔 뻗기를 주인 정하기 + 손 뻗기(집기 행동)로 넘김 — C 거짓 경보 4개."),
-    ("pose_owner", "dual_eval_pose", {"pose": True}, "관절 + 팔 뻗기는 주인 정하기만",
+    ("pose_owner", "dual_eval_pose", {"pose": True, "set": ["zones.foot_point=bbox"]}, "관절 + 팔 뻗기는 주인 정하기만",
      "전체 카메라 yolov8n-pose. 팔 뻗기는 주인 정하기에만 (지금 코드의 관절 켬 동작)."),
 ]
 
@@ -79,7 +81,7 @@ dual_eval.DualJudge = _capturing(dual_eval.DualJudge)
 def judge_with(run_dir: str, opts: dict, pair: str, base: AppConfig, table: SyncTable, band) -> tuple[dict, object]:
     dual_eval.OUT = ROOT / "outputs" / run_dir
     dual_eval.OVERVIEW_POSE = bool(opts.get("pose"))
-    dual_eval.OVERRIDES = []
+    dual_eval.OVERRIDES = list(opts.get("set") or [])   # 예전 설정 기록은 그때의 발 점(상자)으로
     b = base
     if opts.get("reach_takes") or opts.get("fusion"):
         from copy import deepcopy
