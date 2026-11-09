@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>샘플 바코드</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>🏷️ 등록 상품 바코드 (화면 스캔용)</h1>
+    <nav><a href="/">계산대로</a><a href="/admin">상품 등록</a></nav>
+  </header>
+  <main>
+    <p class="muted">실물 상품이 없을 때 이 화면을 휴대폰 카메라로 스캔해 보세요. 화면 밝기를 올리고 15~25cm 거리에서 비추면 잘 읽힙니다.</p>
+    <div class="samples" id="samples"></div>
+  </main>
+  <script src="/vendor/jsbarcode/JsBarcode.all.min.js"></script>
+  <script>
+    (async () => {
+      const products = await (await fetch('/api/products')).json();
+      const wrap = document.getElementById('samples');
+      for (const p of products) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<h2>${p.name}</h2><svg></svg><p class="muted">${p.price.toLocaleString('ko-KR')}원</p>`;
+        wrap.appendChild(card);
+        const svg = card.querySelector('svg');
+        const format = /^\d{13}$/.test(p.barcode) ? 'EAN13' : /^\d{8}$/.test(p.barcode) ? 'EAN8' : /^\d{12}$/.test(p.barcode) ? 'UPC' : 'CODE128';
+        try { JsBarcode(svg, p.barcode, { format, width: 2.4, height: 90, fontSize: 18, margin: 12 }); }
+        catch (e) { svg.outerHTML = `<p class="err">바코드를 그릴 수 없습니다: ${p.barcode} (${e.message || e})</p>`; }
+      }
+      if (!products.length) wrap.innerHTML = '<p class="empty">등록된 상품이 없습니다.</p>';
+    })();
+  </script>
+</body>
+</html>

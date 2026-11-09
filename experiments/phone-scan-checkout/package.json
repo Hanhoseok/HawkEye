@@ -1,0 +1,21 @@
+{
+  "name": "phone-scan-checkout",
+  "version": "1.0.0",
+  "description": "휴대폰을 바코드 리더기처럼 쓰는 셀프 계산대 데모 (Express + SQLite + SSE)",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning server.js",
+    "test": "node --no-warnings=ExperimentalWarning --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.3.0",
+    "html5-qrcode": "^2.3.8",
+    "jsbarcode": "^3.12.3",
+    "qrcode": "^1.5.4"
+  }
+}
