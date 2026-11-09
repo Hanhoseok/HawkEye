@@ -1,0 +1,30 @@
+# arduino 폴더 전용 규칙 (경로는 이 폴더 기준)
+
+# 다운로드한 도구 (공식 사이트에서 다시 받을 수 있음)
+tools/arduino-cli/
+
+# 제3자 드라이버 (Silicon Labs 라이선스 대상, 다운로드 링크만 README 에 둔다)
+firmware/CP210x_Universal_Windows_Driver/
+
+# 실행 중 생성되는 기록
+python/logs/
+*.jsonl
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Arduino 빌드 산출물
+build/
+*.bin
+*.elf
+
+# 편집기·OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
