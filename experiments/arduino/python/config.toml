@@ -1,0 +1,132 @@
+# =============================================================================
+# 스프링 푸셔 진열대 모니터 설정 (Python 쪽에서만 사용)
+#  - 상품, 두께, 빈 레인 거리, 최대 수량, 허용 오차, 안정 판정, 히스테리시스를 여기서 수정한다.
+#  - ESP32 펌웨어에는 "어느 레인에 센서가 있는지(enabled, tca_channel)"만 있다.
+#    레인을 켜고 끌 때는 펌웨어의 LANE_HW 와 이 파일의 enabled 를 함께 맞춘다.
+#  - 단위: 거리 mm, 시간 ms (단, *_s 로 끝나는 항목은 초)
+# =============================================================================
+
+[network]
+source = "serial"      # 기본 수신 방식: "serial"(USB) 또는 "wifi"(UDP). 실행 시 --wifi / --port 가 우선
+udp_port = 4210        # 펌웨어 UDP_PORT 와 같게. Windows 방화벽에서 Python 허용 필요(개인 네트워크)
+
+[serial]
+port = "auto"          # "COM5" 처럼 지정 권장. "auto" 는 CP210x/CH340 USB 포트를 찾는다.
+baud = 115200
+device_id = ""         # 비우면 아무 장치나 허용. 지정하면 다른 device_id 메시지는 무시.
+
+[timing]
+link_stale_s     = 3.0     # 이 시간 동안 아무 메시지도 없으면 USB 링크 STALE (재고 0 아님)
+lane_stale_s     = 3.0     # 레인별: 이 시간 동안 유효 측정이 없으면 stale 표시
+backlog_limit_ms = 1000    # 수신 지연(버퍼 적체)이 이 값보다 크면 그 샘플은 안정 판정에 쓰지 않음
+resync_gap_ms    = 5000    # 한 레인의 유효 측정 공백이 이보다 길면 "관찰 못한 구간" → RESYNC
+status_interval_s = 5.0    # 콘솔 STATUS 출력 주기
+restock_timeout_s = 600    # 재입고 모드를 켜둔 채 잊었을 때 자동 종료 (0 = 자동 종료 안 함)
+
+[output]
+event_log  = "logs/events.jsonl"    # 확정 이벤트(INIT/ADD/REMOVE/RESYNC/SENSOR_ERROR/...) 저장
+status_log = "logs/status.jsonl"    # 주기적 STATUS 저장 ("" 이면 저장 안 함)
+
+# -----------------------------------------------------------------------------
+# 레인 기본값: 각 [[lanes]] 에서 같은 키를 쓰면 그 레인만 덮어쓴다.
+# -----------------------------------------------------------------------------
+[lane_defaults]
+valid_min_mm       = 30     # 이 범위 밖의 측정은 무효 처리(필터에 넣지 않음)
+valid_max_mm       = 1200
+tolerance_mm       = 15     # 후보 수량 기준거리와의 잔차 허용치 (|잔차| <= tolerance 일 때만 후보 인정)
+hysteresis_mm      = 10     # 현재 확정 수량은 tolerance + hysteresis 까지 유지 (경계 떨림 방지)
+stable_time_ms     = 1200   # 같은 후보가 이 시간(장치 측정 시각 기준) 이상 유지돼야 확정
+min_stable_samples = 5      # 그 사이 연속 유효 샘플 최소 개수
+stable_spread_mm   = 10     # 안정 구간 내 필터값의 최대-최소 허용폭 (넘으면 안정 타이머 초기화)
+median_window      = 5      # 중앙값 필터 길이 (홀수 권장)
+max_sample_gap_ms  = 600    # 유효 샘플 간격이 이보다 길면 연속 구간으로 보지 않음
+error_invalid_count = 5     # 연속 무효 n회 → SENSOR_ERROR
+error_invalid_ms   = 1500   # 또는 무효 상태가 이 시간 지속 → SENSOR_ERROR
+shape              = "box"  # 화면 표시용: "box" 또는 "can"(위에서 본 원)
+
+# -----------------------------------------------------------------------------
+# 레인 설정
+#  thickness_mm      : 상품 1개가 진열(밀판 이동) 방향으로 차지하는 길이.
+#                      캔을 세워 진열하면 캔 높이가 아니라 "지름".
+#  empty_distance_mm : 상품 0개일 때 센서→밀판 표적까지 실측 거리 (README "보정" 참고)
+#  max_count         : 레일에 들어가는 최대 수량
+#  count_distance_mm : (선택) 0개, 1개, 2개 ... max_count 개일 때의 실측 거리표.
+#                      있으면 thickness/empty 기반 계산보다 우선한다. 길이 = max_count + 1.
+#  tca_channel       : TCA9548A 채널 (펌웨어 LANE_HW 와 동일하게)
+# 상품 종류나 두께를 바꾸면 empty_distance_mm / count_distance_mm 를 다시 보정해야 한다.
+# -----------------------------------------------------------------------------
+
+[[lanes]]
+lane_id = 1
+enabled = true
+product_id = "CAN-COLA-355"
+product_name = "맥주"
+thickness_mm = 65          # 실제 상품 지름
+empty_distance_mm = 345    # 빈 레인 실측 (배선 수리 후 재기록, 5회 반복 중앙값 약 345)
+max_count = 5
+tca_channel = 0
+shape = "can"
+# 이 레일은 밀판 앞에 5cm 고정 블록이 있어, 첫 캔은 밀판을 약 17mm 만 민다 (2개째부터 65mm 씩).
+# 0개·1개는 실측값, 2개 이상은 1개 위치에서 65mm 씩 뺀 추정값 → 캔을 넣어 확인 후 실측값으로 교체할 것.
+#   재기록(배선 수리 후 센서가 약 9mm 이동): 필터 후 0개 338~351 (중앙 345), 1개 321~333 (중앙 328)
+#   녹화 재생: 넣기 5회·빼기 4회 정확. 센서 값이 ±6mm 치우쳐도 판정이 바뀌지 않음
+# 0개 기준을 350 으로 둔 이유: 빈 상태 값은 위쪽으로 더 퍼지므로 1개와 겹치지 않게 구간 중심을 올림
+# 센서·표적 위치가 바뀌면 이 값들을 다시 기록해야 한다.
+count_distance_mm  = [350, 328, 263, 198, 133, 68]
+count_tolerance_mm = [10,  7,   15,  15,  15,  15]
+hysteresis_mm = 4
+
+[[lanes]]
+lane_id = 2
+enabled = true
+product_id = "CAN-CANTATA-SWEET-AMERICANO-275"
+product_name = "칸타타 스위트 아메리카노 275ml"
+thickness_mm = 66          # 캔 지름
+empty_distance_mm = 339    # 빈 레인 실측 (5분 기록, 5회 반복 337~340)
+max_count = 5              # 1번과 같은 레일(38cm, 앞 블록 5cm) 기준. 실제 들어가는 개수로 확인
+tca_channel = 1
+shape = "can"
+# 앞 고정 블록 때문에 첫 캔은 밀판을 약 10mm 만 민다 (1번 레인 18mm 보다 작음).
+#   실측(5회 반복): 0개 중앙값 337~340, 1개 328~331. 필터(7개) 후 0개 330~346, 1개 324~334 → 약간 겹침
+#   녹화 데이터 재생 결과: 넣기 5회·빼기 4회를 정확히 판정. 단, 센서 값이 -2mm 또는 +3mm 이상
+#   치우치면 잘못된 이벤트가 생김 → 여유가 작다. 밀판 스페이서로 간격을 넓히는 것을 권장.
+# 2개 이상은 1개 위치에서 66mm 씩 뺀 추정값 → 캔을 넣어 확인 후 실측값으로 교체할 것.
+count_distance_mm  = [340, 329, 263, 197, 131, 65]
+count_tolerance_mm = [6,   4,   15,  15,  15,  15]
+hysteresis_mm = 0          # 0개·1개 간격(11mm)이 좁아 히스테리시스를 둘 여유가 없음
+median_window = 7          # 흔들림을 줄이려고 1번(5)보다 길게. 판정이 약 0.25초 늦어짐
+
+[[lanes]]
+lane_id = 3
+enabled = true     # ※ 상품·빈 레인 거리는 아직 예시값 (보정 필요)
+product_id = "BOX-SNACK-01"
+product_name = "과자"
+thickness_mm = 45
+empty_distance_mm = 430
+max_count = 8
+tca_channel = 2
+tolerance_mm = 10
+hysteresis_mm = 8
+
+[[lanes]]
+lane_id = 4
+enabled = true     # ※ 상품·빈 레인 거리는 아직 예시값 (보정 필요)
+product_id = "BOT-WATER-500"
+product_name = "생수"
+thickness_mm = 65
+empty_distance_mm = 430
+max_count = 5
+tca_channel = 3
+shape = "can"
+
+[[lanes]]
+lane_id = 5
+enabled = false
+product_id = "BOX-GUM-01"
+product_name = "껌"
+thickness_mm = 30
+empty_distance_mm = 430
+max_count = 12
+tca_channel = 4
+tolerance_mm = 8
+hysteresis_mm = 5
