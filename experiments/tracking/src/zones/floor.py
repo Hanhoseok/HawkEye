@@ -92,6 +92,9 @@ class FloorMap:
         self.band = band
         """선반 앞 띠 축: 바닥 y(통로 방향)의 (시작, 끝) cm. 교차 화면 연결의 공통 축 (src/fusion/cross_view.py)."""
         self.note = note
+        self.foot_mode = "bbox"
+        """구역 판단의 발 점: "bbox"(상자 아래 가운데) 또는 "ankle"(발목, 없으면 상자). config zones.foot_point."""
+        self.ankle_conf = 0.3
         self._h = fit_homography(self.image_points, self.floor_points)
         self._h_inv = np.linalg.inv(self._h)
 
@@ -140,10 +143,23 @@ class FloorMap:
         """바닥 cm → 화면 비율. 확인 그림(격자)을 그릴 때 쓴다."""
         return apply_homography(self._h_inv, fx, fy)
 
-    def foot_on_floor(self, bbox: tuple[float, float, float, float], width: int, height: int) -> Point:
-        """사람 상자(픽셀)의 발 위치(아래 가운데)를 바닥 cm 로."""
-        x1, _, x2, y2 = bbox
-        return self.to_floor((x1 + x2) / 2.0 / width, y2 / height)
+    def foot_on_floor(self, bbox: tuple[float, float, float, float], width: int, height: int,
+                      keypoints=None) -> Point:
+        """사람의 발 위치를 바닥 cm 로. keypoints 를 주고 foot_mode 가 "ankle" 이면 발목, 아니면 상자 아래 가운데."""
+        x, y = self.foot_pixel(bbox, keypoints)
+        return self.to_floor(x / width, y / height)
+
+    def foot_pixel(self, bbox: tuple[float, float, float, float], keypoints=None) -> Point:
+        """발 위치 (픽셀). 발목: COCO 15·16 중 신뢰도 ankle_conf 이상이고 (0, 0) 이 아니며 상자 안(높이 5% 여유)인 것의 가운데."""
+        x1, y1, x2, y2 = bbox
+        if self.foot_mode == "ankle" and keypoints is not None and len(keypoints) >= 17:
+            pad = 0.05 * (y2 - y1)
+            pts = [(k[0], k[1]) for k in keypoints[15:17]
+                   if k[2] >= self.ankle_conf and not (k[0] == 0 and k[1] == 0)
+                   and x1 - pad <= k[0] <= x2 + pad and y1 - pad <= k[1] <= y2 + pad]
+            if pts:
+                return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+        return ((x1 + x2) / 2.0, y2)
 
     def band_position(self, point: Point) -> float | None:
         """바닥 점의 선반 앞 띠 위치 (0 = 시작, 1 = 끝). 띠 축이 없으면 None."""
@@ -217,10 +233,10 @@ class FloorZoneMap:
     def resolved_polygons(self):
         return [(z, self._image.get(z.name, ())) for z in self.zones]
 
-    def evaluate(self, bbox: tuple[float, float, float, float]) -> list[ZoneHit]:
+    def evaluate(self, bbox: tuple[float, float, float, float], keypoints=None) -> list[ZoneHit]:
         if self._size is None:
             return []
-        point = self.floor.foot_on_floor(bbox, *self._size)
+        point = self.floor.foot_on_floor(bbox, *self._size, keypoints)
         return [ZoneHit(zone=z.name, zone_type=z.type, overlap=1.0, contains_foot=True)
                 for z in self.floor.zones_at(point)]
 

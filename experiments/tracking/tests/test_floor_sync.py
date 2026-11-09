@@ -88,3 +88,34 @@ def test_best_lag_finds_shift_in_offset_convention():
     off, corr = best_lag(signal, reference, hz)
     assert off == pytest.approx(400.0)
     assert corr > 0.9
+
+
+# ---------------------------------------------------------------- 발목 발 점 (B-15, 2026-11-08)
+
+def _kp(left=None, right=None):
+    kp = [[0.0, 0.0, 0.0] for _ in range(17)]
+    if left:
+        kp[15] = list(left)
+    if right:
+        kp[16] = list(right)
+    return kp
+
+
+def test_ankle_foot_point_uses_ankles_and_falls_back_to_box():
+    fm = FloorMap("cam", [(0, 0), (1, 0), (0, 1), (1, 1)], [(0, 0), (100, 0), (0, 100), (100, 100)])
+    box = (100.0, 0.0, 300.0, 400.0)                       # 팔을 뻗어 넓어진 상자: 아래 가운데 x=200
+    kp = _kp((250, 380, 0.8), (270, 390, 0.7))
+    assert fm.foot_pixel(box, kp) == (200.0, 400.0)       # 기본(bbox)은 그대로
+    fm.foot_mode = "ankle"
+    assert fm.foot_pixel(box, kp) == (260.0, 385.0)
+    assert fm.foot_pixel(box, _kp((250, 380, 0.8), (270, 390, 0.1))) == (250.0, 380.0)   # 믿을 만한 쪽만
+    assert fm.foot_pixel(box, _kp((0, 0, 0.9))) == (200.0, 400.0)       # (0,0) 은 관절 없음
+    assert fm.foot_pixel(box, _kp((900, 390, 0.9))) == (200.0, 400.0)   # 상자 밖 발목은 다른 사람 것
+    assert fm.foot_pixel(box, None) == (200.0, 400.0)
+    # 바닥 구역 판단도 발목으로
+    fm.zones = [FloorZone("counter", ZoneType.CHECKOUT, ((50, 80), (80, 80), (80, 110), (50, 110)))]
+    from src.zones.floor import FloorZoneMap
+    fz = FloorZoneMap(fm)
+    fz.resolve(400, 400)
+    assert [h.zone for h in fz.evaluate(box, kp)] == ["counter"]          # 발목 (65, 96)cm
+    assert fz.evaluate(box) == []                                         # 상자 (50, 100)cm 은 경계 밖

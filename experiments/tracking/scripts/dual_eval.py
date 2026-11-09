@@ -40,14 +40,16 @@ from src.sinks.observation_log import read_identities  # noqa: E402
 from src.zones.floor import FloorMap, FloorZoneMap, shelf_image_zones  # noqa: E402
 import sync_pair  # noqa: E402
 
-OUT = ROOT / "outputs" / "dual_eval"
+OUT = ROOT / "outputs" / "dual_eval_pose3"
+"""기본 기록 — 전체 카메라 관절 모델 + 발목 발 점 + 사용자 구역(2026-11-09 채택). 그 전 기본은 dual_eval_edgegap (기존 탐지 모델·상자 발 점)."""
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
 OVERRIDES: list[str] = []
 OVERVIEW_POSE = False
+OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
 TENTATIVE = 0.0   # 전체 카메라 임시 신원 시간 (identity.tentative_seconds, C-11) — 0 이면 끔
-"""전체 카메라도 yolo-pose 로 — 위에서 보이는 팔 뻗기 (--overview-pose)."""
+"""전체 카메라 팔 뻗기를 판정에 넣음 (--overview-pose). 관절 모델 자체는 OVERVIEW_DETECTOR 가 정한다."""
 EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "right"]}
 """가장자리 규칙을 적용할 변 — 화각 때문에 늘 잘리는 변(전체 카메라 위쪽 머리, 선반 카메라 아래쪽 발)은 뺀다 (C-18)."""
 """60FPS 전체 카메라는 4장에 1장, 30FPS 선반 카메라는 2장에 1장 — 둘 다 초당 15장."""
@@ -70,6 +72,9 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     # 끊겼다 되살아난 추적 번호는 다시 판정 (C-22) — 가장자리 변과 함께 켜면 손님 수 36→38/38, 판정 변화 없음
     # (2026-11-04 3차 비교). --set identity.track_gap_recheck_seconds=0 으로 끌 수 있다.
     cfg.identity.track_gap_recheck_seconds = 1.0
+    # 바닥 구역 판단의 발 점 = 발목 (B-15, 2026-11-09 채택) — 사용자가 실제 바닥 자리에 맞춰 그린 구역과 짝.
+    # 관절이 없는 예전 기록은 상자 아래 가운데로 대신한다. --set zones.foot_point=bbox 로 예전 방식.
+    cfg.zones.foot_point = "ankle"
     for item in OVERRIDES:
         key, value = item.split("=", 1)
         section, name = key.split(".")
@@ -77,7 +82,7 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     video, ref = sync_pair.pair_files(pair)
     cfg.cameras = [
         CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"],
-                     "yolo-pose" if OVERVIEW_POSE else "yolo",
+                     OVERVIEW_DETECTOR,
                      {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE}),
         CameraConfig("angle0", str(video), "detail", str(ZONES / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
                      {"edge_sides": EDGE_SIDES["angle0"]}),
@@ -201,6 +206,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     log = PairLog(pair)
     cfg = dual_config(base, pair, offset_ms)
     floor = FloorMap.load(ZONES / "floor.yaml")
+    floor.foot_mode, floor.ankle_conf = cfg.zones.foot_point, cfg.zones.ankle_conf
     fz = FloorZoneMap(floor)
     m1, m0 = log.meta["angle1"], log.meta["angle0"]
     fz.resolve(m1["width"], m1["height"])
@@ -420,23 +426,29 @@ def main() -> int:
     ap.add_argument("--before", action="store_true",
                     help="C1·C12 를 보고 고치기 전 규칙으로 (손 접촉 1.0초 뒤 주인 결정, 다른 손님 손 뻗기는 안 지움)")
     ap.add_argument("--out", help="기록 폴더 이름 (outputs/ 아래, 기본 dual_eval) — 설정을 바꿔 따로 돌려 비교할 때")
+    ap.add_argument("--zones", help="구역 폴더 (floor.yaml·angle0.yaml, 기본 zones/store01_dual) — 구역 편집 페이지의 초안으로 판정할 때")
     ap.add_argument("--set", action="append", default=[], metavar="절.키=값",
                     help="config.yaml 값을 이번 실행만 바꿈, 예: identity.track_gap_recheck_seconds=1.0")
     ap.add_argument("--overview-pose", action="store_true",
-                    help="전체 카메라도 yolo-pose 로 돌리고 '전체 카메라 팔 뻗기'를 판정에 넣음 (run·judge 둘 다 같이 줄 것)")
+                    help="'전체 카메라 팔 뻗기'를 판정에 넣음 (기본 끔, D-19). 전체 카메라 관절 모델은 이제 기본")
+    ap.add_argument("--overview-detector", choices=["yolo-pose", "yolo"], default="yolo-pose",
+                    help="전체 카메라 탐지 모델 (run 단계, 기본 yolo-pose — 발목 발 점용). yolo 는 11-08 까지의 기본")
     ap.add_argument("--all-edges", action="store_true",
                     help="가장자리 규칙을 네 변 모두에 (늘 잘리는 변을 빼기 전, C-18 비교용)")
     ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
                     help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
     args = ap.parse_args()
-    global OUT, OVERRIDES, OVERVIEW_POSE, TENTATIVE
+    global OUT, OVERRIDES, OVERVIEW_POSE, OVERVIEW_DETECTOR, TENTATIVE, ZONES
     OVERVIEW_POSE = args.overview_pose
+    OVERVIEW_DETECTOR = args.overview_detector
     TENTATIVE = args.tentative
     if args.all_edges:
         for cam in EDGE_SIDES:
             EDGE_SIDES[cam] = ["left", "top", "right", "bottom"]
     if args.out:
         OUT = ROOT / "outputs" / args.out
+    if args.zones:
+        ZONES = Path(args.zones).resolve()
     OVERRIDES = args.set
     if args.stage == "run":
         run(args.only)

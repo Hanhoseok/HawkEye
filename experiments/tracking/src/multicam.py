@@ -233,6 +233,7 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
     if overview_cam is None or not overview_cam.zones:
         raise SystemExit("cameras 에 role: overview (전체 카메라) 와 그 바닥 지도(zones: floor.yaml)가 필요합니다")
     floor = FloorMap.load(overview_cam.zones)
+    floor.foot_mode, floor.ankle_conf = config.zones.foot_point, config.zones.ankle_conf
     floor_raw = yaml.safe_load(Path(overview_cam.zones).read_text(encoding="utf-8")) or {}
     embedder = build_embedder(config.tracker.reid)
 

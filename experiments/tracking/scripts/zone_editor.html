@@ -1,0 +1,1138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>구역 편집</title>
+<style>
+:root {
+  --bg: #f6f6f3; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --soft: #efeee9;
+  --accent: #2f6fdb; --ok: #1f8a4c; --bad: #c8382e; --warn: #c27c0e; --exp: #7a4fc9;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161615; --panel: #1f1f1d; --ink: #ecebe6; --muted: #9c9b95; --line: #34332f; --soft: #2a2926;
+          --accent: #6b9cf0; --ok: #4cc27f; --bad: #f0675c; --warn: #e9a63a; --exp: #a98af0; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.app { display: grid; grid-template-columns: 330px 1fr; height: 100vh; }
+aside { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
+aside header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 2; }
+aside h1 { font-size: 17px; margin: 0 0 2px; }
+.sub { color: var(--muted); font-size: 12px; }
+.status { font-size: 12px; margin-top: 6px; line-height: 1.6; }
+.status code { font-size: 11px; }
+.btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.btn { border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 4px 9px; cursor: pointer; font-size: 13px; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .45; cursor: default; }
+.group { padding: 10px 14px 2px; color: var(--muted); font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+.group .add { font-size: 11px; font-weight: 500; cursor: pointer; color: var(--accent); background: none; border: 0; padding: 0; }
+.layer { display: grid; grid-template-columns: 18px 12px 1fr auto; gap: 6px; align-items: center; padding: 4px 14px; cursor: pointer; border-left: 3px solid transparent; font-size: 13px; }
+.layer:hover { background: var(--soft); }
+.layer.on { background: var(--soft); border-left-color: var(--accent); }
+.layer .sw { width: 12px; height: 12px; border-radius: 3px; }
+.layer .tag { font-size: 11px; color: var(--muted); }
+.layer.changed .nm::after { content: " ●"; color: var(--warn); font-size: 10px; }
+.props { padding: 10px 14px 30px; border-top: 1px solid var(--line); margin-top: 8px; }
+.props h2 { font-size: 15px; margin: 0 0 6px; }
+.role { background: var(--soft); border-radius: 6px; padding: 6px 8px 6px 8px; font-size: 12.5px; margin: 6px 0 8px; }
+.role ul { margin: 0; padding-left: 16px; }
+.role li { margin: 3px 0; }
+.pill { display: inline-block; font-size: 10.5px; padding: 0 6px; border-radius: 8px; font-weight: 600; margin-left: 3px; white-space: nowrap; }
+.p-judge { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.p-rerun { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.p-off { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
+.field { display: grid; grid-template-columns: 52px 1fr; gap: 6px; align-items: center; margin: 4px 0; font-size: 13px; }
+.field input, .field select { border: 1px solid var(--line); border-radius: 5px; background: var(--panel); padding: 2px 6px; min-width: 0; }
+textarea { width: 100%; min-height: 70px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); padding: 4px 6px; font-size: 12.5px; resize: vertical; }
+.pts { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.pts td, .pts th { padding: 1px 3px; border-bottom: 1px solid var(--line); }
+.pts th { color: var(--muted); font-weight: 500; text-align: left; }
+.pts input { width: 100%; border: 1px solid transparent; background: transparent; font-family: var(--mono); font-size: 12px; padding: 1px 3px; }
+.pts input:hover, .pts input:focus { border-color: var(--line); background: var(--panel); }
+.pts .x { cursor: pointer; color: var(--muted); text-align: center; }
+main { overflow: auto; padding: 12px 18px 40px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.tabs { display: inline-flex; gap: 3px; }
+.tabs button { border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
+.tabs button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.toolbar select { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 3px 5px; }
+.toolbar label { font-size: 13px; color: var(--muted); display: inline-flex; gap: 3px; align-items: center; cursor: pointer; }
+.time { font-family: var(--mono); font-size: 13px; min-width: 64px; }
+input[type=range] { width: 260px; }
+.stagewrap { background: #2b2b29; border-radius: 8px; position: relative; overflow: hidden; user-select: none; }
+.stagewrap video { position: absolute; }
+.stagewrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hint { font-size: 12px; color: var(--muted); margin: 5px 0 0; }
+.hint b { color: var(--ink); font-weight: 600; }
+.lower { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr); gap: 12px; margin-top: 12px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.box h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.box h3 span { font-weight: 400; }
+#top { width: 100%; aspect-ratio: 1 / 1; display: block; cursor: crosshair; }
+table.t { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.t td, table.t th { padding: 3px 5px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+table.t th { color: var(--muted); font-weight: 500; font-size: 12px; }
+table.t td:first-child, table.t th:first-child { text-align: left; }
+table.t tr.diff td { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.up { color: var(--ok); font-weight: 600; } .down { color: var(--bad); font-weight: 600; }
+.ok { color: var(--ok); } .bad { color: var(--bad); }
+.msg { font-size: 12.5px; margin-top: 6px; }
+.msg .e { color: var(--bad); } .msg .w { color: var(--warn); }
+.judge { margin-top: 12px; }
+.judge .sum { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; margin: 4px 0 8px; }
+.judge .sum b { font-family: var(--mono); }
+details summary { cursor: pointer; font-size: 12.5px; color: var(--muted); margin: 6px 0; }
+.reason { font-size: 11.5px; color: var(--muted); white-space: normal; text-align: left !important; }
+code { font-family: var(--mono); font-size: 12px; background: var(--soft); padding: 0 4px; border-radius: 3px; }
+@media (max-width: 1000px) {
+  .app { grid-template-columns: 1fr; height: auto; }
+  aside { max-height: 55vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  .lower { grid-template-columns: 1fr; }
+  main { padding: 12px 16px 40px; }
+  input[type=range] { width: 160px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <header>
+      <h1>구역 편집</h1>
+      <div class="sub">store01 카메라 2대 · 고치기 → 초안 저장 → 판정 돌리기로 비교 → 적용</div>
+      <div class="status" id="status">불러오는 중…</div>
+      <div class="btns">
+        <button class="btn" id="bUndo" title="Ctrl+Z">되돌리기</button>
+        <button class="btn" id="bRedo" title="Ctrl+Y">다시</button>
+        <button class="btn" id="bSave">초안 저장</button>
+        <button class="btn primary" id="bJudge">판정 돌리기</button>
+        <button class="btn" id="bApply">적용</button>
+        <button class="btn danger" id="bDiscard">초안 버리기</button>
+      </div>
+      <div class="btns">
+        <select id="loadSel" class="btn"><option value="">불러오기…</option></select>
+      </div>
+      <div class="msg" id="msg"></div>
+    </header>
+    <div id="layers"></div>
+    <div class="props" id="props"></div>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <div class="tabs"><button data-cam="angle1" class="on">전체 카메라</button><button data-cam="angle0">선반 카메라</button></div>
+      <select id="pairSel" title="배경 영상"></select>
+      <button class="btn" id="bPlay">재생</button>
+      <input type="range" id="seek" min="0" max="1000" value="0">
+      <span class="time" id="tm">0.0s</span>
+      <label><input type="checkbox" id="cBoxes" checked>사람 상자</label>
+      <label><input type="checkbox" id="cDots" checked>발 점</label>
+      <label><input type="checkbox" class="cSet" value="N" checked>N</label>
+      <label><input type="checkbox" class="cSet" value="T">T</label>
+      <label><input type="checkbox" class="cSet" value="C">C</label>
+      <label><input type="checkbox" id="cOnly">이 영상만</label>
+      <select id="footSel" title="구역 판단에 쓰는 발 점"><option value="ankle">발 점: 발목 (지금 판정 · 관절 기록)</option><option value="bbox">발 점: 상자 아래 가운데 (11-08 까지 · 예전 기록)</option></select>
+    </div>
+    <div class="stagewrap" id="wrap"><video id="vid" muted playsinline preload="auto"></video><canvas id="cv"></canvas></div>
+    <p class="hint"><b>클릭</b> 구역 고르기 · <b>꼭짓점 끌기</b> 모양 바꾸기 · <b>안쪽 끌기</b> 통째로 옮기기 · <b>변 더블클릭</b> 꼭짓점 더하기 · <b>꼭짓점 오른쪽 클릭</b> 지우기 · 사각형 구역(사람 아님·칸)은 <b>변 가운데 네모</b>로 한 변만 · 발 점 색 = 그 점이 들어간 구역 (빨강 = 어느 구역도 아님)</p>
+    <div class="lower">
+      <div class="box" id="topBox"><h3>바닥에서 내려다본 모습 <span>cm · 끌어서 고칠 수 있음</span></h3><canvas id="top"></canvas></div>
+      <div class="box"><h3>지금 구역으로 본 발 점 <span id="statNote"></span></h3><div id="stats"></div></div>
+    </div>
+    <div class="box judge" id="judge"><h3>판정 비교 <span>기록은 그대로 두고 구역만 바꿔 38쌍을 다시 판정</span></h3><div id="judgeBody" class="sub">‘판정 돌리기’를 누르면 적용본과 초안으로 각각 다시 판정해 나란히 보여 줍니다 (한 번에 20초쯤).</div></div>
+  </main>
+</div>
+<script>
+// ====================================================================== 데이터
+const HE = { _index: null, _data: {} };
+HE.index = d => { HE._index = d; };
+HE.cases = () => {};
+HE.loaded = (key, d) => { HE._data[key] = d; };
+let RUN = 'ankle';
+const FOOT_RUN = { bbox: 'edgegap', ankle: 'ankle' };
+// 발 점: 상자 아래 가운데, 또는 발목(관절 기록에만 — kp 의 7·8번째 = 왼·오른 발목, review_export KP_KEEP)
+function footOf(r, tr) {
+  const [x1, y1, x2, y2] = [r[3], r[4], r[5], r[6]], kp = r[9] || [];
+  if (S.foot === 'ankle' && kp.length >= 24) {
+    const pad = 0.05 * (y2 - y1), pts = [];
+    for (const j of [6, 7]) {
+      const x = kp[3 * j], y = kp[3 * j + 1], c = kp[3 * j + 2];
+      if (c >= 30 && !(x === 0 && y === 0) && x >= x1 - pad && x <= x2 + pad && y >= y1 - pad && y <= y2 + pad) pts.push([x, y]);
+    }
+    if (pts.length) return [pts.reduce((a, p) => a + p[0], 0) / pts.length / tr.w, pts.reduce((a, p) => a + p[1], 0) / pts.length / tr.h, true];
+  }
+  return [(x1 + x2) / 2 / tr.w, y2 / tr.h, false];
+}
+const DATA = '../outputs/review/data/';
+function loadScript(src) {
+  return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(src); document.head.appendChild(s); });
+}
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+const clone = o => JSON.parse(JSON.stringify(o));
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ====================================================================== 구역 역할 (코드에서 쓰는 곳)
+// judge = 판정 다시 돌리기로 바로 확인 / rerun = 탐지·추적 단계에서 써서 영상을 다시 돌려야(dual_eval.py run) 반영 / off = 지금 기본 설정에서 안 씀
+const ROLE = {
+  'zone:SHELF': [
+    ['judge', '<b>손님 조건</b> — 발이 매장 안 바닥(shelf·counter·aisle)에 1초 이상 있어야 손님으로 센다 (<code>risk.inside_zones</code>, C-20)'],
+    ['judge', '<b>선반 앞 한 명</b> — 발이 여기 있는 전체 카메라 사람을 적어 두고, 선반 카메라 사건의 주인을 짝으로 못 정하면 "그때 선반 앞에 한 명뿐이면 그 사람" (<code>fusion.shelf_zone</code>, shelf_events.py)'],
+    ['judge', '<b>결제 취소</b> — 계산대에 서서 결제된 뒤 발이 다시 여기 오면 결제를 취소 (<code>risk.cancel_shelf_overlap</code>)'],
+    ['rerun', '<b>전체 카메라 손 뻗기 후보</b> — 발이 여기 3초 이상 천천히 머물면 집기 동작 후보 하나 (interaction dwell). 기록에 저장돼 있어 판정 다시 돌리기로는 안 바뀜'],
+  ],
+  'zone:CHECKOUT': [
+    ['judge', '<b>손님 조건</b> — 매장 안 바닥 (<code>risk.inside_zones</code>)'],
+    ['judge', '<b>결제</b> — 발이 여기 1.5초 이상 있으면 그때까지 가진 것을 모두 결제한 것으로 (결제 기록 없는 매장, <code>risk.payment_mode: dwell</code>)'],
+  ],
+  'zone:EXIT': [
+    ['judge', '<b>출구에 다가섬</b> — 발이 여기 0.5초 이상이면 판정: 이대로 나가면 HIGH_RISK 인 손님에게 WARNING (<code>risk.exit_min_seconds</code>)'],
+    ['judge', '<b>나감 확정</b> — 여기(마지막 2초 안)에서 사라져 3초 안 돌아오지 않으면 최종 판정. 영상이 끝날 때는 여기서 화면 끝에 걸친 사람만 나간 것으로'],
+    ['judge', '<b>신원 확인 값</b> — 출구·문턱에서는 모습이 크게 바뀌어 재지 않음'],
+  ],
+  'zone:OUTSIDE': [
+    ['judge', '<b>나감 확정</b> — 매장 안에 있던 사람의 발이 여기 0.5초 이상이면 "문 밖으로 나감" 최종 판정'],
+    ['judge', '<b>되돌림</b> — 나갔다고 본 사람이 여기 아닌 곳에서 다시 보이면 판정을 되돌림 (탐지가 끊겼던 것)'],
+  ],
+  'zone:OTHER': [
+    ['judge', '<b>손님 조건만</b> — 이름이 <code>aisle</code> 이면 매장 안 바닥 (<code>risk.inside_zones</code>). 다른 이름의 OTHER 구역은 아무 데도 안 쓰임'],
+  ],
+  calibration: [
+    ['judge', '<b>바닥 지도</b> — 화면 점 ↔ 바닥 cm 짝(4개 이상)으로 행렬을 구해 발 위치를 바닥으로 옮긴다. 모든 바닥 구역·띠의 바탕'],
+    ['judge', '옮기면 cm 로 적힌 구역이 화면에서 따라 움직인다 ("구역은 화면에 그대로" 를 켜면 화면 위치를 지키도록 cm 를 다시 계산)'],
+    ['rerun', '선반 앞 띠가 달라지므로 <code>dual_eval.py calibrate</code> 로 band_map 을 다시 맞춰야 함'],
+  ],
+  band: [
+    ['judge', '<b>두 카메라 짝의 공통 좌표</b> — 전체 카메라 발의 바닥 y 를 0~1 로 (시작 = 0, 끝 = 1). -0.3~1.3 밖이면 "위치 없음"이라 짝을 안 맺음 (cross_view.py)'],
+    ['rerun', '바꾸면 <code>dual_eval.py calibrate</code> 로 band_map(선반 카메라 x → 띠)을 다시 맞춰야 함'],
+  ],
+  ignore: [
+    ['rerun', '<b>사각형만</b> — 사람 상자와 겹침(IoU)을 사각형끼리 재서. 모서리를 끌면 옆 두 모서리가 같이, 변 가운데 네모를 끌면 그 변만'],
+    ['rerun', '<b>사람 아님 영역</b> — 전체 카메라 탐지 단계에서 이 상자와 0.5 이상 겹치는 사람 상자를 버린다 (masked.py). 외투·의자처럼 사람으로 잘못 잡히는 자리'],
+  ],
+  shelf_image: [
+    ['off', '<b>전체 카메라 팔 뻗기</b> — 손목이 이 안에 0.3초 들어가면 한 번 (<code>fusion.overview_reach_seconds</code>, 기본 0 = 끔, 관절 모델 기록 필요)'],
+    ['off', '발이 이 안인 사람은 팔 뻗기 대상에서 뺌 (선반 위 상품 그림의 가짜 사람)'],
+  ],
+  shelfbox: [
+    ['rerun', '<b>선반 방문</b> — 사람 상자가 이 영역과 겹치면 "가림". 가림이 끝나면 앞뒤 물건 탐지를 비교해 방문 하나(사라짐·생김 몇 개)를 만든다 (shelf/monitor.py)'],
+    ['rerun', '물건 탐지는 가운데가 이 영역 안인 물건만 센다'],
+    ['rerun', '다각형으로 고치면 파일에 <code>polygon</code> 이 생기고 <code>box</code> 는 그 둘레 사각형으로 같이 저장 (2026-11-08 전 기록은 사각형으로 돌린 것)'],
+  ],
+  slot: [
+    ['rerun', '<b>사각형만</b> — 칸 그림 비교가 칸을 사각형으로 잘라 비교해서. 모서리를 끌면 옆 두 모서리가 변을 따라 같이 움직이고, 변 가운데 네모를 끌면 그 변만 움직임'],
+    ['rerun', '<b>손-칸 접촉</b> — 선반 카메라 손목이 칸 안에 0.3초 이상 = 집기 동작 (<code>detail_interaction</code>, 설계 M-6)'],
+    ['rerun', '<b>칸 그림 비교</b> — 사람이 비킨 뒤 칸 안 그림이 바뀌었으면 물건이 사라짐·생김 (slot_diff.py). 바깥 사각형만 씀'],
+    ['judge', '센서 칸 이름·같은 선반 묶기 (<code>slot_shelf</code>)'],
+  ],
+  band_map: [
+    ['judge', '<b>선반 카메라 x → 띠 위치</b>: 띠 = a·x + b (x = 사람 상자 가운데, 화면 비율). 두 카메라 짝의 위치 점수에 쓴다'],
+    ['judge', '그리는 값이 아니라 <code>dual_eval.py calibrate</code> 가 정상(N) 영상으로 맞춘다'],
+  ],
+};
+const PILL = { judge: '<span class="pill p-judge">판정 다시 돌리기로 확인</span>', rerun: '<span class="pill p-rerun">영상 다시 돌려야 반영</span>', off: '<span class="pill p-off">지금 안 씀</span>' };
+const TYPE_NAME = { SHELF: '선반 앞', CHECKOUT: '계산대', EXIT: '출구', OUTSIDE: '문 밖', OTHER: '기타' };
+const TYPE_COLOR = { SHELF: '#2ecc71', CHECKOUT: '#ff9f1a', EXIT: '#3d7bff', OUTSIDE: '#d65cd6', OTHER: '#22c7d6' };
+const C_IGNORE = '#ff4d4d', C_SHELFIMG = '#f2f2f2', C_CAL = '#ffd60a', C_BAND = '#ffd60a', C_SLOT = '#ffd60a', C_SHELFBOX = '#f2f2f2';
+
+// ====================================================================== 바닥 지도 (호모그래피)
+function normT(pts) {
+  const n = pts.length, cx = pts.reduce((a, p) => a + p[0], 0) / n, cy = pts.reduce((a, p) => a + p[1], 0) / n;
+  const d = pts.reduce((a, p) => a + Math.hypot(p[0] - cx, p[1] - cy), 0) / n || 1, s = Math.SQRT2 / d;
+  return [[s, 0, -s * cx], [0, s, -s * cy], [0, 0, 1]];
+}
+const mul = (A, B) => A.map((r, i) => B[0].map((_, j) => r.reduce((a, _, k) => a + A[i][k] * B[k][j], 0)));
+const ap = (H, x, y) => { const w = H[2][0] * x + H[2][1] * y + H[2][2]; return [(H[0][0] * x + H[0][1] * y + H[0][2]) / w, (H[1][0] * x + H[1][1] * y + H[1][2]) / w, w]; };
+function inv3(m) {
+  const [a, b, c] = m[0], [d, e, f] = m[1], [g, h, i] = m[2];
+  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
+  return [[A / det, -(b * i - c * h) / det, (b * f - c * e) / det], [B / det, (a * i - c * g) / det, -(a * f - c * d) / det], [C / det, -(a * h - b * g) / det, (a * e - b * d) / det]];
+}
+function solve(A, b) {
+  const n = b.length, M = A.map((r, i) => [...r, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    if (Math.abs(M[c][c]) < 1e-12) return null;
+    for (let r = 0; r < n; r++) if (r !== c) { const f = M[r][c] / M[c][c]; for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]; }
+  }
+  return M.map((r, i) => r[n] / r[i]);
+}
+function fitH(src, dst) {
+  if (src.length < 4 || src.length !== dst.length) return null;
+  const Ta = normT(src), Tb = normT(dst);
+  const a = src.map(p => ap(Ta, p[0], p[1])), b = dst.map(p => ap(Tb, p[0], p[1]));
+  const AtA = Array.from({ length: 8 }, () => Array(8).fill(0)), Atb = Array(8).fill(0);
+  a.forEach(([x, y], i) => {
+    const [u, v] = b[i];
+    for (const [row, rhs] of [[[x, y, 1, 0, 0, 0, -u * x, -u * y], u], [[0, 0, 0, x, y, 1, -v * x, -v * y], v]])
+      for (let r = 0; r < 8; r++) { Atb[r] += row[r] * rhs; for (let c = 0; c < 8; c++) AtA[r][c] += row[r] * row[c]; }
+  });
+  const h = solve(AtA, Atb); if (!h) return null;
+  let H = mul(mul(inv3(Tb), [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]]), Ta);
+  const k = H[2][2]; H = H.map(r => r.map(v => v / k));
+  return H;
+}
+class Floor {
+  constructor(raw) {
+    const c = raw.calibration || {};
+    this.H = fitH(c.image || [], c.floor || []);
+    this.ok = !!this.H;
+    if (!this.ok) return;
+    this.Hi = inv3(this.H);
+    const p = c.image[0]; this.side = Math.sign(this.H[2][0] * p[0] + this.H[2][1] * p[1] + this.H[2][2]);
+  }
+  front(x, y) { return Math.sign(this.H[2][0] * x + this.H[2][1] * y + this.H[2][2]) === this.side; }
+  toFloor(x, y) { if (!this.front(x, y)) return null; const r = ap(this.H, x, y); return [r[0], r[1]]; }
+  toImg(fx, fy) { const r = ap(this.Hi, fx, fy); return this.front(r[0], r[1]) ? [r[0], r[1]] : null; }
+}
+function inPoly(poly, x, y) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [x1, y1] = poly[i], [x2, y2] = poly[j];
+    if ((y1 > y) !== (y2 > y) && x < x1 + (y - y1) / (y2 - y1) * (x2 - x1)) inside = !inside;
+  }
+  return inside;
+}
+const rectPoly = r => [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+const polyRect = p => [Math.min(...p.map(q => q[0])), Math.min(...p.map(q => q[1])), Math.max(...p.map(q => q[0])), Math.max(...p.map(q => q[1]))];
+
+// ====================================================================== 상태
+const S = {
+  Z: null,            // 지금 고치는 구역 {floor, angle0}
+  base: null,         // 적용본 (비교 기준)
+  saved: null,        // 마지막으로 저장(또는 불러온) 내용 — 저장 안 한 고침 표시
+  server: null,
+  cam: 'angle1', pair: null, sel: null, hoverV: null,
+  undo: [], redo: [],
+  pinZones: true, calEdit: false,
+  pairs: [], judge: null, foot: 'ankle',
+};
+const $ = id => document.getElementById(id);
+const vid = $('vid'), cv = $('cv'), wrap = $('wrap'), topc = $('top');
+
+function floorOf(Z = S.Z) { return new Floor(Z.floor); }
+function note(file, key) { return ((S.Z[file].notes || {})[key]) || ''; }
+function setNote(file, key, v) { S.Z[file].notes = S.Z[file].notes || {}; if (v) S.Z[file].notes[key] = v; else delete S.Z[file].notes[key]; }
+
+// 층(layer) 목록 — 화면에 그릴 것·고를 수 있는 것
+function layers(cam = S.cam) {
+  const out = [];
+  if (cam === 'angle1') {
+    (S.Z.floor.zones || []).forEach((z, i) => out.push({ id: 'fz:' + i, kind: 'floorpoly', name: z.name, type: z.type, color: TYPE_COLOR[z.type] || '#aaa', group: '바닥 구역 (cm)', role: 'zone:' + z.type, noteKey: z.name, file: 'floor' }));
+    (S.Z.floor.ignore_image || []).forEach((r, i) => out.push({ id: 'ig:' + i, kind: 'rect', name: '사람 아님 ' + (i + 1), color: C_IGNORE, group: '화면 영역 (비율)', role: 'ignore', noteKey: 'ignore_image', file: 'floor' }));
+    (S.Z.floor.shelf_image || []).forEach((p, i) => out.push({ id: 'si:' + i, kind: 'poly', name: '선반 영역 ' + (i + 1), color: C_SHELFIMG, group: '화면 영역 (비율)', role: 'shelf_image', noteKey: 'shelf_image', file: 'floor' }));
+    out.push({ id: 'band', kind: 'band', name: '선반 앞 띠', color: C_BAND, group: '바닥 지도', role: 'band', noteKey: 'band', file: 'floor' });
+    out.push({ id: 'cal', kind: 'calib', name: '보정점', color: C_CAL, group: '바닥 지도', role: 'calibration', noteKey: 'calibration', file: 'floor' });
+  } else {
+    (S.Z.angle0.shelves || []).forEach((s, i) => out.push({ id: 'sh:' + i, kind: 'poly', name: s.name, color: C_SHELFBOX, group: '선반 상자', role: 'shelfbox', noteKey: s.name, file: 'angle0' }));
+    (S.Z.angle0.zones || []).forEach((z, i) => out.push({ id: 'sl:' + i, kind: 'rect', name: z.name, type: z.type, color: C_SLOT, group: '선반 칸', role: 'slot', noteKey: z.name, file: 'angle0' }));
+    out.push({ id: 'bm', kind: 'info', name: 'band_map', color: C_BAND, group: '두 카메라 잇기', role: 'band_map', noteKey: 'band_map', file: 'angle0' });
+  }
+  return out;
+}
+const layerById = id => layers('angle1').concat(layers('angle0')).find(l => l.id === id);
+
+// 층의 점 (그 층 자신의 좌표: 바닥 cm 또는 화면 비율)
+function getPts(id) {
+  const [k, s] = id.split(':'), i = +s;
+  if (k === 'fz') return S.Z.floor.zones[i].polygon;
+  if (k === 'ig') return rectPoly(S.Z.floor.ignore_image[i]);
+  if (k === 'si') return S.Z.floor.shelf_image[i];
+  if (k === 'sh') return S.Z.angle0.shelves[i].polygon || rectPoly(S.Z.angle0.shelves[i].box);
+  if (k === 'sl') return rectPoly(polyRect(S.Z.angle0.zones[i].polygon));
+  if (k === 'cal') return S.Z.floor.calibration.image;
+  return [];
+}
+function setPts(id, pts) {
+  const [k, s] = id.split(':'), i = +s, r4 = v => +v.toFixed(4), r1 = v => +v.toFixed(1);
+  if (k === 'fz') S.Z.floor.zones[i].polygon = pts.map(p => [r1(p[0]), r1(p[1])]);
+  else if (k === 'ig') S.Z.floor.ignore_image[i] = polyRect(pts).map(v => r4(Math.min(1, Math.max(0, v))));
+  else if (k === 'si') S.Z.floor.shelf_image[i] = pts.map(p => [r4(p[0]), r4(p[1])]);
+  else if (k === 'sh') {   // 다각형 + 그 둘레 사각형 box (box 만 읽는 코드용)
+    const poly = pts.map(p => [r4(Math.min(1, Math.max(0, p[0]))), r4(Math.min(1, Math.max(0, p[1])))]);
+    S.Z.angle0.shelves[i].polygon = poly; S.Z.angle0.shelves[i].box = polyRect(poly);
+  }
+  else if (k === 'sl') S.Z.angle0.zones[i].polygon = rectPoly(polyRect(pts).map(v => r4(Math.min(1, Math.max(0, v)))));
+}
+const isRect = id => /^(ig|sl):/.test(id);
+// 사각형 손잡이: 모서리 4개 + 변 가운데 4개 (변 가운데를 끌면 그 변만 움직임)
+function handles(id, pts) {
+  if (!pts || !isRect(id)) return pts;
+  return pts.concat(pts.map((p, i) => { const q = pts[(i + 1) % 4]; return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]; }));
+}
+const isFloor = id => id.startsWith('fz:');
+
+// ====================================================================== 무대(영상 + 덮개) 좌표
+const PAD = 0.06;   // 화면 밖 꼭짓점도 보이게 영상 둘레에 여백
+let G = { W: 1, H: 1, vx: 0, vy: 0, vw: 1, vh: 1, dpr: 1 };
+function layout() {
+  const tr = trackOf(S.cam), aspect = tr ? tr.w / tr.h : 16 / 9;
+  const W = wrap.clientWidth, vw = W / (1 + 2 * PAD), vh = vw / aspect, H = vh + 2 * PAD * vw;
+  wrap.style.height = H + 'px';
+  G = { W, H, vx: PAD * vw, vy: PAD * vw, vw, vh, dpr: window.devicePixelRatio || 1 };
+  Object.assign(vid.style, { left: G.vx + 'px', top: G.vy + 'px', width: vw + 'px', height: vh + 'px' });
+  cv.width = W * G.dpr; cv.height = H * G.dpr;
+  const tw = topc.clientWidth; topc.width = tw * G.dpr; topc.height = tw * G.dpr;
+}
+const r2c = (x, y) => [G.vx + x * G.vw, G.vy + y * G.vh];
+const c2r = (px, py) => [(px - G.vx) / G.vw, (py - G.vy) / G.vh];
+
+// 층 → 화면 덮개 위 픽셀 점 (못 그리면 null)
+function screenPts(id, F) {
+  const pts = getPts(id);
+  if (isFloor(id)) {
+    const out = pts.map(p => F.toImg(p[0], p[1]));
+    return out.some(p => !p) ? null : out.map(p => r2c(p[0], p[1]));
+  }
+  return pts.map(p => r2c(p[0], p[1]));
+}
+
+// ====================================================================== 기록(발 점·사람 상자)
+function trackOf(cam, pair = S.pair) { const d = HE._data[RUN + '/' + pair]; return d && d.tracks[cam]; }
+const setOf = pair => pair[0];
+let SAMPLES = { angle1: [], angle0: [] };   // 판정 미리보기용 전체 표본
+function buildSamples() {
+  const a1 = [], a0 = [];
+  for (const pair of S.pairs) {
+    const d = HE._data[RUN + '/' + pair]; if (!d) continue;
+    const t1 = d.tracks.angle1, t0 = d.tracks.angle0;
+    for (const [idx, rows] of Object.entries(t1.frames)) {
+      for (const r of rows) {
+        if (r[1] <= 0) continue;
+        const [fx, fy] = footOf(r, t1);
+        a1.push({ pair, set: setOf(pair), pid: r[1], ms: idx * 1000 / t1.fps, x: fx, y: fy });
+      }
+    }
+    for (const [idx, rows] of Object.entries(t0.frames)) {
+      for (const r of rows) {
+        const kp = r[9] || [];
+        for (const j of [4, 5]) {   // 손목 (왼, 오) — KP_KEEP 의 5·6번째
+          if (kp.length >= 3 * (j + 1) && kp[3 * j + 2] >= 30)
+            a0.push({ pair, set: setOf(pair), pid: r[1], ms: idx * 1000 / t0.fps, x: kp[3 * j] / t0.w, y: kp[3 * j + 1] / t0.h });
+        }
+      }
+    }
+  }
+  a1.sort((p, q) => p.pair < q.pair ? -1 : p.pair > q.pair ? 1 : p.ms - q.ms);
+  SAMPLES = { angle1: a1, angle0: a0 };
+}
+
+// 발 점이 들어간 바닥 구역 이름들
+function zonesAt(Z, F, s) {
+  const f = F.toFloor(s.x, s.y); if (!f) return [];
+  return (Z.floor.zones || []).filter(z => inPoly(z.polygon, f[0], f[1])).map(z => z.name);
+}
+const INSIDE = ['shelf', 'counter', 'aisle'];
+// 판정 미리보기: 구역별 발 점 비율, 어느 구역도 아닌 점, 손님 수(근사: 매장 안 바닥에 1초 연속)
+function stats(Z) {
+  const F = new Floor(Z.floor); if (!F.ok) return null;
+  const names = (Z.floor.zones || []).map(z => z.name);
+  const cnt = { N: {}, T: {}, C: {} }, tot = { N: 0, T: 0, C: 0 }, none = { N: 0, T: 0, C: 0 };
+  const people = {};   // pair → Set(pid)
+  const run = {};      // pair/pid → 매장 안 연속 시작 ms
+  for (const s of SAMPLES.angle1) {
+    const zs = zonesAt(Z, F, s);
+    tot[s.set]++;
+    if (!zs.length) none[s.set]++;
+    zs.forEach(n => cnt[s.set][n] = (cnt[s.set][n] || 0) + 1);
+    const key = s.pair + '/' + s.pid;
+    (people[s.pair] = people[s.pair] || new Set());
+    if (people[s.pair].has(s.pid)) continue;
+    if (zs.some(n => INSIDE.includes(n))) {
+      if (run[key] === undefined) run[key] = s.ms;
+      if (s.ms - run[key] >= 1000) people[s.pair].add(s.pid);
+    } else run[key] = undefined;
+  }
+  const slots = { N: {}, T: {}, C: {} }, wtot = { N: 0, T: 0, C: 0 };
+  for (const s of SAMPLES.angle0) {
+    wtot[s.set]++;
+    (Z.angle0.zones || []).forEach(z => { if (inPoly(rectPoly(polyRect(z.polygon)), s.x, s.y)) slots[s.set][z.name] = (slots[s.set][z.name] || 0) + 1; });
+  }
+  const ppl = {}; for (const p of S.pairs) ppl[p] = people[p] ? people[p].size : 0;
+  return { names, cnt, tot, none, ppl, slots, wtot };
+}
+
+// ====================================================================== 그리기
+function hexA(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+function drawPoly(ctx, pts, color, sel, dashed) {
+  ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+  ctx.fillStyle = hexA(color, sel ? 0.22 : 0.10); ctx.fill();
+  ctx.setLineDash(dashed ? [6, 4] : []); ctx.lineWidth = sel ? 3 : 2; ctx.strokeStyle = color; ctx.stroke(); ctx.setLineDash([]);
+}
+function drawHandles(ctx, pts, color, rect) {
+  pts.forEach((p, i) => {
+    const big = S.hoverV === i;
+    if (rect && i >= 4) {   // 변 가운데: 네모
+      const r = big ? 6 : 4; ctx.fillStyle = '#fff'; ctx.fillRect(p[0] - r, p[1] - r, 2 * r, 2 * r);
+      ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.strokeRect(p[0] - r, p[1] - r, 2 * r, 2 * r); return;
+    }
+    ctx.beginPath(); ctx.arc(p[0], p[1], big ? 7 : 5, 0, 7);
+    ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.stroke();
+  });
+}
+function label(ctx, txt, x, y, color) {
+  ctx.font = '600 12px "Malgun Gothic", system-ui'; const w = ctx.measureText(txt).width;
+  ctx.fillStyle = 'rgba(0,0,0,.62)'; ctx.fillRect(x - 3, y - 13, w + 6, 17);
+  ctx.fillStyle = color; ctx.fillText(txt, x, y);
+}
+function draw() {
+  if (!S.Z) return;
+  const ctx = cv.getContext('2d'); ctx.setTransform(G.dpr, 0, 0, G.dpr, 0, 0); ctx.clearRect(0, 0, G.W, G.H);
+  ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1; ctx.strokeRect(G.vx, G.vy, G.vw, G.vh);
+  const F = floorOf();
+  const ls = layers();
+  // 발 점 / 손목 점
+  if ($('cDots').checked) {
+    const sets = [...document.querySelectorAll('.cSet')].filter(c => c.checked).map(c => c.value);
+    const only = $('cOnly').checked;
+    let k = 0;
+    for (const s of SAMPLES[S.cam]) {
+      if (!sets.includes(s.set) || (only && s.pair !== S.pair)) continue;
+      if ((k++ % 3) && !only) continue;   // 많이 겹치므로 3개 중 1개만 그림 (통계는 전부)
+      let col = '#ff3b30';
+      if (S.cam === 'angle1') {
+        const zs = zonesAt(S.Z, F, s), z = (S.Z.floor.zones || []).find(q => q.name === zs[0]);
+        // 겹친 곳은 좁은 구역 색을 먼저 (aisle 은 넓어 맨 나중)
+        const pick = (S.Z.floor.zones || []).filter(q => zs.includes(q.name)).sort((a, b) => (a.type === 'OTHER') - (b.type === 'OTHER'))[0] || z;
+        if (pick) col = TYPE_COLOR[pick.type] || '#aaa';
+      } else {
+        col = (S.Z.angle0.zones || []).some(z => inPoly(rectPoly(polyRect(z.polygon)), s.x, s.y)) ? C_SLOT : '#9ad0ff';
+      }
+      const [px, py] = r2c(s.x, s.y);
+      ctx.fillStyle = hexA(col, 0.75); ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    }
+  }
+  // 지평선 (바닥 지도가 끝나는 곳)
+  if (S.cam === 'angle1' && F.ok) {
+    const [a, b, c] = F.H[2];
+    if (Math.abs(b) > 1e-9) {
+      const y0 = -c / b, y1 = -(a + c) / b;
+      if (Math.min(y0, y1) > -PAD && Math.max(y0, y1) < 1 + PAD) {
+        const p = r2c(-PAD, -(a * -PAD + c) / b), q = r2c(1 + PAD, -(a * (1 + PAD) + c) / b);
+        ctx.setLineDash([3, 5]); ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); ctx.setLineDash([]);
+        label(ctx, '바닥 지도 끝 (이 위는 바닥으로 못 옮김)', G.vx + 8, Math.max(14, Math.min(p[1], q[1]) - 4), '#ff8a80');
+      }
+    }
+  }
+  // 구역
+  for (const l of ls) {
+    if (hidden.has(l.id)) continue;
+    const sel = S.sel === l.id;
+    if (l.kind === 'band') { drawBand(ctx, F, sel); continue; }
+    if (l.kind === 'calib') { if (sel || S.calEdit) drawCalib(ctx, sel); continue; }
+    if (l.kind === 'info') continue;
+    const pts = screenPts(l.id, F); if (!pts) continue;
+    drawPoly(ctx, pts, l.color, sel, l.kind === 'rect' && l.role === 'ignore');
+    const lx = Math.min(...pts.map(p => p[0])), ly = Math.min(...pts.map(p => p[1]));
+    label(ctx, l.name, lx + 4, ly + 15, l.color);
+  }
+  // 사람 상자 (지금 시각)
+  if ($('cBoxes').checked) {
+    const tr = trackOf(S.cam);
+    if (tr) {
+      const idx = nearestFrame(tr, vid.currentTime);
+      for (const r of (tr.frames[idx] || [])) {
+        const [x1, y1] = r2c(r[3] / tr.w, r[4] / tr.h), [x2, y2] = r2c(r[5] / tr.w, r[6] / tr.h);
+        ctx.strokeStyle = r[1] > 0 ? '#ffffff' : '#9a9a9a'; ctx.lineWidth = 1.5; ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        const ft = S.cam === 'angle1' ? footOf(r, tr) : [(r[3] + r[5]) / 2 / tr.w, r[6] / tr.h, false], fp = r2c(ft[0], ft[1]);
+        ctx.beginPath(); ctx.arc(fp[0], fp[1], 6, 0, 7); ctx.fillStyle = ft[2] ? '#3dff6e' : '#fff'; ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+        let where = '';
+        if (S.cam === 'angle1') where = ' ' + (zonesAt(S.Z, F, { x: ft[0], y: ft[1] }).join('+') || '구역 없음') + (S.foot === 'ankle' ? (ft[2] ? ' (발목)' : ' (발목 없음→상자)') : '');
+        label(ctx, (r[1] > 0 ? '신원 ' + r[1] : '보류') + where, x1 + 3, Math.max(y1 + 15, 15), '#fff');
+      }
+    }
+  }
+  // 고른 구역 꼭짓점
+  if (S.sel && !['band', 'bm'].includes(S.sel) && layerById(S.sel) && layerById(S.sel).kind !== 'calib') {
+    const l = layerById(S.sel); if (l && (S.cam === 'angle1') === (l.file === 'floor')) { const pts = screenPts(S.sel, F); if (pts) drawHandles(ctx, handles(S.sel, pts), l.color, isRect(S.sel)); }
+  }
+  drawTop();
+}
+function drawBand(ctx, F, sel) {
+  const b = S.Z.floor.band; if (!b || !F.ok) return;
+  for (const [y, t] of [[b.start, '띠 시작 0'], [b.end, '띠 끝 1']]) {
+    const p = F.toImg(-60, y), q = F.toImg(220, y); if (!p || !q) continue;
+    const P = r2c(...p), Q = r2c(...q);
+    ctx.setLineDash([8, 5]); ctx.strokeStyle = C_BAND; ctx.lineWidth = sel ? 3 : 1.5; ctx.beginPath(); ctx.moveTo(...P); ctx.lineTo(...Q); ctx.stroke(); ctx.setLineDash([]);
+    if (sel) label(ctx, t + ` (y ${y}cm)`, Q[0] + 4, Q[1], C_BAND);
+  }
+}
+function drawCalib(ctx, sel) {
+  const c = S.Z.floor.calibration;
+  const pts = c.image.map(p => r2c(p[0], p[1]));
+  ctx.setLineDash([2, 3]); ctx.strokeStyle = C_CAL; ctx.lineWidth = 1;
+  ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+  pts.forEach((p, i) => {
+    ctx.beginPath(); ctx.arc(p[0], p[1], S.hoverV === i && sel ? 8 : 6, 0, 7); ctx.fillStyle = S.calEdit ? C_CAL : 'rgba(255,214,10,.5)'; ctx.fill();
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+    label(ctx, `${i + 1} (${c.floor[i][0]}, ${c.floor[i][1]})cm`, p[0] + 9, p[1] - 6, C_CAL);
+  });
+}
+
+// ---------------------------------------------------------------------- 내려다본 그림
+let TV = null;   // 내려다본 그림 변환
+function topView() {
+  const F = floorOf(); if (!F.ok) return null;
+  const pts = [];
+  (S.Z.floor.zones || []).forEach(z => pts.push(...z.polygon));
+  pts.push(...S.Z.floor.calibration.floor);
+  let x0 = Math.min(...pts.map(p => p[0])), x1 = Math.max(...pts.map(p => p[0])), y0 = Math.min(...pts.map(p => p[1])), y1 = Math.max(...pts.map(p => p[1]));
+  const span = Math.max(x1 - x0, y1 - y0) * 1.12, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const W = topc.width / G.dpr, s = W / span;
+  return { s, W, f2c: (fx, fy) => [W / 2 + (fx - cx) * s, W / 2 - (fy - cy) * s], c2f: (px, py) => [cx + (px - W / 2) / s, cy - (py - W / 2) / s] };
+}
+function drawTop() {
+  const ctx = topc.getContext('2d'); ctx.setTransform(G.dpr, 0, 0, G.dpr, 0, 0);
+  const W = topc.width / G.dpr; ctx.clearRect(0, 0, W, W);
+  $('topBox').style.display = S.cam === 'angle1' ? '' : 'none';
+  if (S.cam !== 'angle1') return;
+  TV = topView(); if (!TV) return;
+  const F = floorOf();
+  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--soft'); ctx.fillRect(0, 0, W, W);
+  // 1m 격자
+  ctx.strokeStyle = 'rgba(128,128,128,.25)'; ctx.lineWidth = 1;
+  const [gx0, gy1] = TV.c2f(0, 0), [gx1, gy0] = TV.c2f(W, W);
+  for (let x = Math.ceil(gx0 / 100) * 100; x <= gx1; x += 100) { const [px] = TV.f2c(x, 0); ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, W); ctx.stroke(); }
+  for (let y = Math.ceil(gy0 / 100) * 100; y <= gy1; y += 100) { const [, py] = TV.f2c(0, y); ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke(); }
+  // 화면 테두리가 바닥에 닿는 범위
+  const edge = []; for (let i = 0; i <= 20; i++) edge.push([i / 20, 1]); for (let i = 20; i >= 0; i--) edge.push([i / 20, 0.0]);
+  const fe = []; for (const [x, y] of edge) { let yy = y; let f = F.toFloor(x, yy); while (!f && yy < 1) { yy += 0.02; f = F.toFloor(x, yy); } if (f) fe.push(TV.f2c(...f)); }
+  if (fe.length > 2) { ctx.beginPath(); fe.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.closePath(); ctx.strokeStyle = 'rgba(128,128,128,.7)'; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]); }
+  // 발 점
+  if ($('cDots').checked) {
+    const sets = [...document.querySelectorAll('.cSet')].filter(c => c.checked).map(c => c.value), only = $('cOnly').checked;
+    let k = 0;
+    for (const s of SAMPLES.angle1) {
+      if (!sets.includes(s.set) || (only && s.pair !== S.pair)) continue;
+      if ((k++ % 3) && !only) continue;
+      const f = F.toFloor(s.x, s.y); if (!f) continue;
+      const zs = zonesAt(S.Z, F, s);
+      const pick = (S.Z.floor.zones || []).filter(q => zs.includes(q.name)).sort((a, b) => (a.type === 'OTHER') - (b.type === 'OTHER'))[0];
+      const [px, py] = TV.f2c(...f); ctx.fillStyle = hexA(pick ? TYPE_COLOR[pick.type] : '#ff3b30', 0.7); ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    }
+  }
+  (S.Z.floor.zones || []).forEach((z, i) => {
+    const id = 'fz:' + i; if (hidden.has(id)) return;
+    const pts = z.polygon.map(p => TV.f2c(...p)), col = TYPE_COLOR[z.type] || '#aaa';
+    drawPoly(ctx, pts, col, S.sel === id);
+    const c = pts.reduce((a, p) => [a[0] + p[0] / pts.length, a[1] + p[1] / pts.length], [0, 0]);
+    label(ctx, z.name, c[0] - 14, c[1] + 4, col);
+    if (S.sel === id) drawHandles(ctx, pts, col);
+  });
+  const b = S.Z.floor.band;
+  if (b && !hidden.has('band')) for (const y of [b.start, b.end]) {
+    const [, py] = TV.f2c(0, y); ctx.setLineDash([8, 5]); ctx.strokeStyle = C_BAND; ctx.lineWidth = S.sel === 'band' ? 3 : 1.5;
+    ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke(); ctx.setLineDash([]);
+    label(ctx, (y === b.start ? '띠 시작 ' : '띠 끝 ') + y + 'cm', 6, py - 4, '#b38f00');
+  }
+  // 카메라 쪽 표시
+  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--muted'); ctx.font = '12px system-ui';
+  ctx.fillText('↓ 카메라 쪽 (화면 아래)', 6, W - 6);
+}
+
+// ====================================================================== 마우스
+const hidden = new Set();
+let drag = null;
+function pos(e, el) { const r = el.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+function nearVertex(pts, p, r = 9) { let best = -1, bd = r; pts.forEach((q, i) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; best = i; } }); return best; }
+function area(pts) { let a = 0; pts.forEach((p, i) => { const q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }); return Math.abs(a) / 2; }
+function snapshot() { S.undo.push(JSON.stringify(S.Z)); if (S.undo.length > 200) S.undo.shift(); S.redo = []; }
+// view: 'img' (영상 위) 또는 'top' (내려다본 그림). 층 점 ↔ 보기 점 변환
+function viewPts(id, view, F) {
+  if (view === 'top') return isFloor(id) ? getPts(id).map(p => TV.f2c(...p)) : null;
+  if (id === 'cal') return S.Z.floor.calibration.image.map(p => r2c(...p));
+  return screenPts(id, F);
+}
+function fromView(id, view, F, px, py) {   // 보기 점 → 층 좌표
+  if (view === 'top') return TV.c2f(px, py);
+  const r = c2r(px, py);
+  if (isFloor(id)) return F.toFloor(r[0], r[1]);
+  return r;
+}
+function hitLayer(view, p, F) {
+  const cands = (view === 'top' ? layers('angle1').filter(l => l.kind === 'floorpoly') : layers().filter(l => ['floorpoly', 'rect', 'poly'].includes(l.kind)))
+    .filter(l => !hidden.has(l.id));
+  let best = null, ba = Infinity;
+  for (const l of cands) {
+    const pts = viewPts(l.id, view, F); if (!pts) continue;
+    if (inPoly(pts, p[0], p[1])) { const a = area(pts) * (l.id === S.sel ? 0.001 : 1); if (a < ba) { ba = a; best = l; } }
+  }
+  return best;
+}
+function onDown(e, view) {
+  if (e.button !== 0) return;
+  const el = view === 'top' ? topc : cv, p = pos(e, el), F = floorOf();
+  if (view === 'top' && !TV) return;
+  // 띠 선 끌기 (내려다본 그림)
+  if (view === 'top' && S.Z.floor.band && !hidden.has('band')) {
+    for (const k of ['start', 'end']) {
+      const [, py] = TV.f2c(0, S.Z.floor.band[k]);
+      if (Math.abs(py - p[1]) < 6) { snapshot(); select('band'); drag = { type: 'band', k, view }; return; }
+    }
+  }
+  // 보정점
+  if (view === 'img' && S.cam === 'angle1' && S.calEdit && !hidden.has('cal')) {
+    const i = nearVertex(viewPts('cal', view, F), p);
+    if (i >= 0) { snapshot(); select('cal'); drag = { type: 'cal', i, view, keep: pinnedImage(F) }; return; }
+  }
+  if (S.sel && layerById(S.sel) && ['floorpoly', 'rect', 'poly'].includes(layerById(S.sel).kind)) {
+    const pts = handles(S.sel, viewPts(S.sel, view, F));
+    if (pts) {
+      const i = nearVertex(pts, p);
+      if (i >= 0) { snapshot(); drag = { type: 'vertex', id: S.sel, i, view }; return; }
+    }
+  }
+  const l = hitLayer(view, p, F);
+  if (!l) { select(null); return; }
+  if (l.id !== S.sel) select(l.id);
+  const start = fromView(l.id, view, F, ...p); if (!start) return;
+  snapshot(); drag = { type: 'move', id: l.id, view, start, orig: clone(getPts(l.id)) };
+}
+function pinnedImage(F) {   // 보정점을 옮길 때 구역을 화면에 고정하려고 지금 화면 위치를 적어 둔다
+  if (!S.pinZones) return null;
+  return (S.Z.floor.zones || []).map(z => z.polygon.map(p => F.toImg(p[0], p[1])));
+}
+function onMove(e, view) {
+  const el = view === 'top' ? topc : cv, p = pos(e, el), F = floorOf();
+  if (!drag) {
+    // 꼭짓점 위에 올리면 크게
+    let hv = null;
+    if (S.sel && (view === 'img' || isFloor(S.sel))) {
+      const pts = view === 'top' && TV ? viewPts(S.sel, 'top', F) : (view === 'img' ? viewPts(S.sel, 'img', F) : null);
+      if (pts) { const i = nearVertex(handles(S.sel, pts), p); if (i >= 0) hv = i; }
+    }
+    if (hv !== S.hoverV) { S.hoverV = hv; schedule(); }
+    el.style.cursor = hv !== null ? 'grab' : 'crosshair';
+    return;
+  }
+  if (drag.view !== view) return;
+  if (drag.type === 'band') {
+    const [, fy] = TV.c2f(...p); S.Z.floor.band[drag.k] = +fy.toFixed(1);
+  } else if (drag.type === 'cal') {
+    const r = c2r(...p); S.Z.floor.calibration.image[drag.i] = [+r[0].toFixed(5), +r[1].toFixed(5)];
+    const F2 = floorOf();
+    if (drag.keep && F2.ok) (S.Z.floor.zones || []).forEach((z, zi) => {
+      const back = drag.keep[zi].map(q => q && F2.toFloor(q[0], q[1]));
+      if (back.every(Boolean)) z.polygon = back.map(q => [+q[0].toFixed(1), +q[1].toFixed(1)]);
+    });
+  } else {
+    const q = fromView(drag.id, view, F, ...p); if (!q) return;
+    if (drag.type === 'vertex') {
+      const pts = clone(getPts(drag.id));
+      if (isRect(drag.id) && drag.i >= 4) {   // 사각형 변 가운데: 그 변만 (위·오른쪽·아래·왼쪽)
+        const r = polyRect(pts), side = drag.i - 4;
+        if (side === 0) r[1] = q[1]; else if (side === 1) r[2] = q[0]; else if (side === 2) r[3] = q[1]; else r[0] = q[0];
+        setPts(drag.id, rectPoly(polyRect(rectPoly(r))));
+      } else if (isRect(drag.id)) {   // 사각형 모서리: 이 모서리와 마주 보는 모서리로 다시 만든다 (옆 두 모서리는 변을 따라 같이 움직임)
+        const opp = pts[(drag.i + 2) % 4];
+        setPts(drag.id, [q, [opp[0], q[1]], opp, [q[0], opp[1]]]);
+      } else { pts[drag.i] = q; setPts(drag.id, pts); }
+    } else {
+      const dx = q[0] - drag.start[0], dy = q[1] - drag.start[1];
+      setPts(drag.id, drag.orig.map(o => [o[0] + dx, o[1] + dy]));
+    }
+  }
+  changed();
+}
+function onUp() { if (drag) { drag = null; changed(true); } }
+function onDbl(e, view) {
+  if (!S.sel || !['floorpoly', 'poly'].includes((layerById(S.sel) || {}).kind)) return;
+  const el = view === 'top' ? topc : cv, p = pos(e, el), F = floorOf(), pts = viewPts(S.sel, view, F); if (!pts) return;
+  let best = -1, bd = 12;
+  pts.forEach((a, i) => {
+    const b = pts[(i + 1) % pts.length], dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L));
+    const d = Math.hypot(a[0] + t * dx - p[0], a[1] + t * dy - p[1]); if (d < bd) { bd = d; best = i; }
+  });
+  if (best < 0) return;
+  const q = fromView(S.sel, view, F, ...p); if (!q) return;
+  snapshot(); const own = clone(getPts(S.sel)); own.splice(best + 1, 0, q); setPts(S.sel, own); changed(true);
+}
+function onCtx(e, view) {
+  if (!S.sel || !['floorpoly', 'poly'].includes((layerById(S.sel) || {}).kind)) return;
+  const el = view === 'top' ? topc : cv, p = pos(e, el), pts = viewPts(S.sel, view, floorOf()); if (!pts) return;
+  const i = nearVertex(pts, p); if (i < 0) return;
+  e.preventDefault();
+  if (pts.length <= 3) { msg([], ['꼭짓점은 3개보다 적게 할 수 없습니다']); return; }
+  snapshot(); const own = clone(getPts(S.sel)); own.splice(i, 1); setPts(S.sel, own); changed(true);
+}
+for (const [el, view] of [[cv, 'img'], [topc, 'top']]) {
+  el.addEventListener('mousedown', e => onDown(e, view));
+  el.addEventListener('mousemove', e => onMove(e, view));
+  el.addEventListener('dblclick', e => onDbl(e, view));
+  el.addEventListener('contextmenu', e => onCtx(e, view));
+}
+window.addEventListener('mouseup', onUp);
+window.addEventListener('keydown', e => {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
+  else if (e.key === 'Escape') select(null);
+  else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+});
+function undo() { if (!S.undo.length) return; S.redo.push(JSON.stringify(S.Z)); S.Z = JSON.parse(S.undo.pop()); fixSel(); changed(true); }
+function redo() { if (!S.redo.length) return; S.undo.push(JSON.stringify(S.Z)); S.Z = JSON.parse(S.redo.pop()); fixSel(); changed(true); }
+function fixSel() { if (S.sel && !layerById(S.sel)) S.sel = null; }
+
+// ====================================================================== 화면 갱신
+let pending = false;
+function schedule() { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; draw(); }); } }
+let statTimer = null;
+function changed(full) {
+  schedule();
+  if (full) { renderLayers(); renderProps(); renderStatus(); }
+  clearTimeout(statTimer); statTimer = setTimeout(renderStats, full ? 0 : 120);
+}
+function select(id) {
+  S.sel = id; S.hoverV = null;
+  const l = id && layerById(id);
+  if (l && l.file === 'floor' && S.cam !== 'angle1') setCam('angle1');
+  if (l && l.file === 'angle0' && S.cam !== 'angle0') setCam('angle0');
+  renderLayers(); renderProps(); schedule();
+}
+function layerChanged(l) {
+  if (!S.base) return false;
+  const pick = Z => { try { const k = l.id.split(':'); return JSON.stringify(k[0] === 'cal' ? Z.floor.calibration : k[0] === 'band' ? Z.floor.band : k[0] === 'bm' ? Z.angle0.band_map : getPtsFrom(Z, l.id)); } catch (e) { return ''; } };
+  return pick(S.Z) !== pick(S.base);
+}
+function getPtsFrom(Z, id) { const keep = S.Z; S.Z = Z; try { return getPts(id); } finally { S.Z = keep; } }
+function renderLayers() {
+  const box = $('layers'); let html = '', g = null;
+  const add = { '바닥 구역 (cm)': 'addFloor', '화면 영역 (비율)': 'addIgnore', '선반 칸': 'addSlot' };
+  const ls = layers('angle1').concat(layers('angle0'));
+  for (const l of ls) {
+    if (l.group !== g) {
+      g = l.group;
+      const cam = l.file === 'floor' ? '전체' : '선반';
+      html += `<div class="group"><span>${cam} · ${esc(g)}</span>${add[g] ? `<button class="add" data-add="${add[g]}">+ 더하기</button>` : ''}</div>`;
+    }
+    const tag = l.kind === 'floorpoly' ? TYPE_NAME[l.type] || l.type : l.role === 'shelfbox' ? '다각형' : l.kind === 'rect' ? (l.role === 'ignore' ? '빼기 · 사각형' : '사각형') : l.kind === 'calib' ? (S.calEdit ? '편집 중' : '잠김') : '';
+    html += `<div class="layer${S.sel === l.id ? ' on' : ''}${layerChanged(l) ? ' changed' : ''}" data-id="${l.id}">
+      <input type="checkbox" data-vis="${l.id}" ${hidden.has(l.id) ? '' : 'checked'} title="보이기">
+      <span class="sw" style="background:${l.color}"></span><span class="nm">${esc(l.name)}</span><span class="tag">${esc(tag)}</span></div>`;
+  }
+  box.innerHTML = html;
+  box.querySelectorAll('.layer').forEach(el => el.addEventListener('click', e => { if (e.target.dataset.vis) return; select(el.dataset.id); }));
+  box.querySelectorAll('[data-vis]').forEach(el => el.addEventListener('change', () => { el.checked ? hidden.delete(el.dataset.vis) : hidden.add(el.dataset.vis); schedule(); }));
+  box.querySelectorAll('[data-add]').forEach(el => el.addEventListener('click', () => ADD[el.dataset.add]()));
+}
+const ADD = {
+  addFloor() {
+    const F = floorOf(), c = F.toFloor(0.5, 0.75) || [60, 60];
+    snapshot(); let n = 1; while ((S.Z.floor.zones || []).some(z => z.name === 'zone' + n)) n++;
+    S.Z.floor.zones.push({ name: 'zone' + n, type: 'OTHER', polygon: [[c[0] - 40, c[1] - 40], [c[0] + 40, c[1] - 40], [c[0] + 40, c[1] + 40], [c[0] - 40, c[1] + 40]].map(p => p.map(v => +v.toFixed(1))) });
+    select('fz:' + (S.Z.floor.zones.length - 1)); changed(true);
+  },
+  addIgnore() { snapshot(); (S.Z.floor.ignore_image = S.Z.floor.ignore_image || []).push([0.45, 0.45, 0.55, 0.55]); select('ig:' + (S.Z.floor.ignore_image.length - 1)); changed(true); },
+  addSlot() {
+    snapshot(); let n = 1; while ((S.Z.angle0.zones || []).some(z => z.name === 'slot' + n)) n++;
+    (S.Z.angle0.zones = S.Z.angle0.zones || []).push({ name: 'slot' + n, type: 'SHELF', polygon: rectPoly([0.4, 0.5, 0.48, 0.65]) });
+    select('sl:' + (S.Z.angle0.zones.length - 1)); changed(true);
+  },
+};
+function roleHtml(l) {
+  const items = ROLE[l.role] || [];
+  return `<div class="role"><ul>${items.map(([k, t]) => `<li>${t} ${PILL[k]}</li>`).join('')}</ul></div>`;
+}
+function renderProps() {
+  const box = $('props'), l = S.sel && layerById(S.sel);
+  if (!l) {
+    box.innerHTML = `<div class="sub">구역을 고르면 코드에서 하는 일과 꼭짓점이 여기 나옵니다.<br>
+      <span class="pill p-judge">판정 다시 돌리기로 확인</span> 은 아래 '판정 돌리기'로 바로 비교되고,
+      <span class="pill p-rerun">영상 다시 돌려야 반영</span> 은 탐지·추적 단계에서 쓰는 구역이라 <code>dual_eval.py run</code> 을 다시 해야 결과가 바뀝니다.</div>`;
+    return;
+  }
+  const [k, s] = l.id.split(':'), i = +s;
+  let html = `<h2>${esc(l.name)} <span class="sub">${l.kind === 'floorpoly' ? esc(l.type) + ' · 바닥 cm' : l.file === 'angle0' ? '선반 카메라 · 화면 비율' : l.kind === 'calib' || l.kind === 'band' ? '바닥 지도' : '전체 카메라 · 화면 비율'}</span></h2>`;
+  html += roleHtml(l);
+  if (k === 'fz' || k === 'sl' || k === 'sh') {
+    const obj = k === 'fz' ? S.Z.floor.zones[i] : k === 'sl' ? S.Z.angle0.zones[i] : S.Z.angle0.shelves[i];
+    html += `<div class="field"><span>이름</span><input id="pName" value="${esc(obj.name)}"></div>`;
+    if (k === 'fz') html += `<div class="field"><span>종류</span><select id="pType">${Object.keys(TYPE_NAME).map(t => `<option value="${t}" ${obj.type === t ? 'selected' : ''}>${t} · ${TYPE_NAME[t]}</option>`).join('')}</select></div>`;
+    if (k === 'fz' && ['shelf', 'counter', 'aisle', 'door', 'outside'].includes(obj.name)) html += `<div class="sub">이름을 바꾸면 설정의 <code>risk.inside_zones</code>·<code>fusion.shelf_zone</code> 이 이 구역을 못 찾습니다.</div>`;
+  }
+  if (k === 'cal') {
+    html += `<label class="sub"><input type="checkbox" id="pCalEdit" ${S.calEdit ? 'checked' : ''}> 보정점 옮기기 허용</label><br>
+      <label class="sub"><input type="checkbox" id="pPin" ${S.pinZones ? 'checked' : ''}> 옮길 때 구역은 화면에 그대로 (cm 를 다시 계산)</label>`;
+    const c = S.Z.floor.calibration;
+    html += `<table class="pts"><tr><th>#</th><th>화면 x</th><th>화면 y</th><th>바닥 x cm</th><th>바닥 y cm</th><th></th></tr>` +
+      c.image.map((p, j) => `<tr><td>${j + 1}</td>${[p[0], p[1], c.floor[j][0], c.floor[j][1]].map((v, m) => `<td><input data-cal="${j},${m}" value="${v}"></td>`).join('')}<td class="x" data-caldel="${j}" title="지우기">×</td></tr>`).join('') +
+      `</table><button class="btn" id="pCalAdd" style="margin-top:6px">+ 보정점</button> <span class="sub">실측한 바닥 점이 있으면 5개 이상 권장 — 화면 점을 끌고 cm 를 적습니다.</span>`;
+  } else if (k === 'band') {
+    const b = S.Z.floor.band || { start: 0, end: 100 };
+    html += `<div class="field"><span>시작 cm</span><input id="pBs" value="${b.start}"></div><div class="field"><span>끝 cm</span><input id="pBe" value="${b.end}"></div>
+      <div class="sub">바닥 y(통로 방향) 값. 내려다본 그림의 노란 점선을 끌어도 됩니다.</div>`;
+  } else if (k === 'bm') {
+    const m = S.Z.angle0.band_map || [1, 0];
+    html += `<div class="field"><span>a</span><input id="pMa" value="${m[0]}"></div><div class="field"><span>b</span><input id="pMb" value="${m[1]}"></div>`;
+  } else {
+    const pts = getPts(l.id), unit = isFloor(l.id) ? 'cm' : '비율';
+    html += `<table class="pts"><tr><th>#</th><th>x (${unit})</th><th>y (${unit})</th><th></th></tr>` +
+      pts.map((p, j) => `<tr><td>${j + 1}</td><td><input data-pt="${j},0" value="${p[0]}"></td><td><input data-pt="${j},1" value="${p[1]}"></td><td class="x" ${isRect(l.id) ? '' : `data-ptdel="${j}"`}>${isRect(l.id) ? '' : '×'}</td></tr>`).join('') + `</table>`;
+    if (k === 'fz') {
+      const F = floorOf(), px = pts.map(p => F.toImg(...p)), tr = trackOf('angle1');
+      if (tr && px.every(Boolean)) html += `<div class="sub">화면 픽셀: ${px.map(q => `(${Math.round(q[0] * tr.w)}, ${Math.round(q[1] * tr.h)})`).join(' ')}</div>`;
+    }
+  }
+  html += `<div style="margin-top:8px" class="sub">메모 — 어떻게 정했는지·왜 바꿨는지 (파일 <code>notes.${esc(l.noteKey)}</code>)</div><textarea id="pNote">${esc(note(l.file, l.noteKey))}</textarea>`;
+  if (['fz', 'ig', 'si', 'sl'].includes(k)) html += `<button class="btn danger" id="pDel" style="margin-top:6px">이 구역 지우기</button>`;
+  box.innerHTML = html;
+  const on = (id, ev, f) => { const el = $(id); if (el) el.addEventListener(ev, f); };
+  on('pName', 'change', e => {
+    const v = e.target.value.trim(); if (!v) return;
+    const list = k === 'fz' ? S.Z.floor.zones : k === 'sl' ? S.Z.angle0.zones : S.Z.angle0.shelves;
+    if (list.some((o, j) => j !== i && o.name === v)) { msg(['같은 이름이 이미 있습니다']); return; }
+    snapshot(); const old = list[i].name, file = l.file, n = S.Z[file].notes || {};
+    if (n[old] !== undefined) { n[v] = n[old]; delete n[old]; }
+    list[i].name = v; changed(true);
+  });
+  on('pType', 'change', e => { snapshot(); S.Z.floor.zones[i].type = e.target.value; changed(true); });
+  on('pNote', 'change', e => { snapshot(); setNote(l.file, l.noteKey, e.target.value.trim()); changed(true); });
+  on('pDel', 'click', () => {
+    snapshot();
+    if (k === 'fz') S.Z.floor.zones.splice(i, 1); else if (k === 'ig') S.Z.floor.ignore_image.splice(i, 1);
+    else if (k === 'si') S.Z.floor.shelf_image.splice(i, 1); else if (k === 'sl') S.Z.angle0.zones.splice(i, 1);
+    S.sel = null; changed(true);
+  });
+  on('pCalEdit', 'change', e => { S.calEdit = e.target.checked; renderLayers(); schedule(); });
+  on('pPin', 'change', e => { S.pinZones = e.target.checked; });
+  on('pCalAdd', 'click', () => {
+    const F = floorOf(), f = F.toFloor(0.5, 0.8) || [0, 0]; snapshot();
+    S.Z.floor.calibration.image.push([0.5, 0.8]); S.Z.floor.calibration.floor.push([+f[0].toFixed(1), +f[1].toFixed(1)]); S.calEdit = true; changed(true);
+  });
+  on('pBs', 'change', e => { snapshot(); S.Z.floor.band.start = +e.target.value; changed(true); });
+  on('pBe', 'change', e => { snapshot(); S.Z.floor.band.end = +e.target.value; changed(true); });
+  on('pMa', 'change', e => { snapshot(); S.Z.angle0.band_map[0] = +e.target.value; changed(true); });
+  on('pMb', 'change', e => { snapshot(); S.Z.angle0.band_map[1] = +e.target.value; changed(true); });
+  box.querySelectorAll('[data-pt]').forEach(el => el.addEventListener('change', () => {
+    const [j, m] = el.dataset.pt.split(',').map(Number), v = +el.value; if (!isFinite(v)) return;
+    snapshot(); const pts = clone(getPts(l.id));
+    if (isRect(l.id)) { const r = polyRect(pts); const idx = [[0, 1], [2, 1], [2, 3], [0, 3]][j][m]; r[idx] = v; setPts(l.id, rectPoly(r)); }
+    else { pts[j][m] = v; setPts(l.id, pts); }
+    changed(true);
+  }));
+  box.querySelectorAll('[data-ptdel]').forEach(el => el.addEventListener('click', () => {
+    const pts = clone(getPts(l.id)); if (pts.length <= 3) { msg([], ['꼭짓점은 3개보다 적게 할 수 없습니다']); return; }
+    snapshot(); pts.splice(+el.dataset.ptdel, 1); setPts(l.id, pts); changed(true);
+  }));
+  box.querySelectorAll('[data-cal]').forEach(el => el.addEventListener('change', () => {
+    const [j, m] = el.dataset.cal.split(',').map(Number), v = +el.value; if (!isFinite(v)) return;
+    snapshot(); const c = S.Z.floor.calibration; if (m < 2) c.image[j][m] = v; else c.floor[j][m - 2] = v; changed(true);
+  }));
+  box.querySelectorAll('[data-caldel]').forEach(el => el.addEventListener('click', () => {
+    const c = S.Z.floor.calibration; if (c.image.length <= 4) { msg([], ['보정점은 4개 이상 있어야 합니다']); return; }
+    snapshot(); c.image.splice(+el.dataset.caldel, 1); c.floor.splice(+el.dataset.caldel, 1); changed(true);
+  }));
+}
+const dirty = () => JSON.stringify(S.Z) !== JSON.stringify(S.saved);
+function renderStatus() {
+  const sv = S.server || {};
+  const d = dirty(), same = JSON.stringify(S.Z) === JSON.stringify(S.base);
+  $('status').innerHTML = `적용본 <code>${esc(sv.paths?.applied)}</code> <code>${esc(sv.applied_hash)}</code><br>` +
+    (sv.draft_hash ? `초안 <code>${esc(sv.paths?.draft)}</code> <code>${esc(sv.draft_hash)}</code>` : '초안 없음') +
+    (d ? ' · <b style="color:var(--warn)">저장 안 한 고침 있음</b>' : '') + (same ? ' · 적용본과 같음' : '');
+  $('bUndo').disabled = !S.undo.length; $('bRedo').disabled = !S.redo.length;
+  $('bApply').disabled = !sv.draft_hash || d; $('bDiscard').disabled = !sv.draft_hash && !d;
+  const sel = $('loadSel');
+  sel.innerHTML = `<option value="">불러오기…</option><option value="applied">적용본</option>${sv.draft_hash ? '<option value="draft">초안</option>' : ''}` +
+    (sv.backups || []).map(b => `<option value="bk:${esc(b)}">백업 ${esc(b)} → 초안으로</option>`).join('');
+}
+function msg(errors = [], warns = [], info = '') {
+  $('msg').innerHTML = (info ? `<div>${info}</div>` : '') + errors.map(e => `<div class="e">✕ ${esc(e)}</div>`).join('') + warns.map(w => `<div class="w">! ${esc(w)}</div>`).join('');
+}
+
+// ---------------------------------------------------------------------- 발 점 통계
+let BASE_STATS = null;
+function pct(a, b) { return b ? (100 * a / b).toFixed(1) : '–'; }
+function delta(now, was, digits = 1, higherGood = null) {
+  const d = now - was; if (Math.abs(d) < Math.pow(10, -digits) / 2) return '';
+  const cls = higherGood === null ? 'sub' : (d > 0) === higherGood ? 'up' : 'down';
+  return ` <span class="${cls}">${d > 0 ? '+' : ''}${d.toFixed(digits)}</span>`;
+}
+function renderStats() {
+  if (!S.Z || !SAMPLES.angle1.length) return;
+  const st = stats(S.Z), bs = BASE_STATS; if (!st) { $('stats').innerHTML = '<div class="bad">보정점으로 바닥 지도를 못 만듭니다</div>'; return; }
+  const truth = (HE._index || {}).truth || {};
+  let html = '';
+  if (S.cam === 'angle1') {
+    $('statNote').textContent = `전체 카메라 발 점 N ${st.tot.N} · T ${st.tot.T} · C ${st.tot.C}`;
+    const p = (s, set, n) => s ? +pct(n === null ? s.none[set] : (s.cnt[set][n] || 0), s.tot[set]) : 0;
+    html += `<table class="t"><tr><th>구역</th><th>N %</th><th>T %</th><th>C %</th></tr>`;
+    for (const n of st.names) {
+      const z = S.Z.floor.zones.find(q => q.name === n);
+      html += `<tr><td><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${TYPE_COLOR[z.type]}"></span> ${esc(n)}</td>` +
+        ['N', 'T', 'C'].map(set => `<td>${pct(st.cnt[set][n] || 0, st.tot[set])}${bs ? delta(p(st, set, n), p(bs, set, n)) : ''}</td>`).join('') + '</tr>';
+    }
+    const dead = S.Z.floor.zones.filter(z => ['EXIT', 'CHECKOUT', 'OUTSIDE'].includes(z.type) && (st.cnt.N[z.name] || 0) < 0.005 * st.tot.N);
+    const deadHtml = dead.length ? `<div class="msg bad">⚠ ${dead.map(z => esc(z.name)).join(', ')} 에 정상(N) 영상 발 점이 거의 없습니다 (0.5% 미만) — 구역은 물건이 아니라 <b>사람이 서는 발 자리</b>여야 합니다 (상자 아래 가운데 점).</div>` : '';
+    html += `<tr><td class="bad">어느 구역도 아님</td>${['N', 'T', 'C'].map(set => `<td>${pct(st.none[set], st.tot[set])}${bs ? delta(p(st, set, null), p(bs, set, null), 1, false) : ''}</td>`).join('')}</tr></table>`;
+    html += deadHtml;
+    // 손님 수 근사
+    const ok = s => S.pairs.filter(pp => truth[pp] && s.ppl[pp] === truth[pp].people).length;
+    const diffs = S.pairs.filter(pp => bs && bs.ppl[pp] !== st.ppl[pp]);
+    html += `<div class="msg">손님 수 미리보기 (매장 안 바닥 shelf·counter·aisle 에 1초 연속, 근사): 정답과 같은 영상 <b>${ok(st)}</b>/${S.pairs.length}` +
+      (bs ? ` (적용본 ${ok(bs)})` : '') + `</div>`;
+    if (diffs.length) html += `<div class="msg w">적용본과 손님 수가 달라진 영상: ${diffs.map(pp => `${pp} ${bs.ppl[pp]}→${st.ppl[pp]} (정답 ${truth[pp]?.people ?? '?'})`).join(', ')}</div>`;
+    html += `<div class="sub" style="margin-top:6px">근사는 판정 코드의 번호 합치기를 따라 하지 않아 실제 판정과 1~2 다를 수 있습니다. 확정은 ‘판정 돌리기’로.</div>`;
+  } else {
+    $('statNote').textContent = `선반 카메라 손목 점 N ${st.wtot.N} · T ${st.wtot.T} · C ${st.wtot.C}`;
+    html += `<table class="t"><tr><th>칸</th><th>N %</th><th>T %</th><th>C %</th></tr>`;
+    for (const z of S.Z.angle0.zones || [])
+      html += `<tr><td>${esc(z.name)}</td>${['N', 'T', 'C'].map(set => `<td>${pct(st.slots[set][z.name] || 0, st.wtot[set])}${bs ? delta(+pct(st.slots[set][z.name] || 0, st.wtot[set]), +pct(bs.slots[set][z.name] || 0, bs.wtot[set])) : ''}</td>`).join('')}</tr>`;
+    html += `</table><div class="sub" style="margin-top:6px">손목 점 = 선반 카메라 관절(신뢰도 0.3 이상) 손목. 칸 안 0.3초 이상이면 손-칸 접촉 — 칸을 바꾸면 영상을 다시 돌려야 판정에 반영됩니다.</div>`;
+  }
+  $('stats').innerHTML = html;
+}
+
+// ---------------------------------------------------------------------- 판정 비교
+function renderJudge(j) {
+  const body = $('judgeBody');
+  if (!j) return;
+  if (j.running) { body.innerHTML = `<b>${esc(j.step || '준비 중')}</b> · ${j.elapsed}초`; return; }
+  if (j.error) { body.innerHTML = `<div class="bad">판정 실패</div><pre style="white-space:pre-wrap;font-size:11px">${esc(j.error)}</pre>`; return; }
+  const A = j.applied, D = j.draft;
+  if (!A && !D) { body.innerHTML = `아직 판정한 적 없음 (${S.foot === 'ankle' ? '발목 발 점 · 지금 기록' : '상자 발 점 · 예전 기록'})`; return; }
+  const kinds = ['정상', '절도', '복합 정상'];
+  const tot = R => R ? Object.fromEntries(kinds.map(k => [k, [R.rows.filter(r => r.kind === k && r.correct).length, R.rows.filter(r => r.kind === k).length]])) : null;
+  const ta = tot(A), td = tot(D);
+  const all = R => R ? R.rows.filter(r => r.correct).length + '/' + R.rows.length : '–';
+  let html = `<div class="sub">${S.foot === 'ankle' ? '발목 발 점 · 지금 기본 기록(dual_eval_pose3, 전체 카메라 관절 모델)' : '상자 아래 가운데 발 점 · 11-08 까지의 기본 기록(dual_eval_edgegap, 기존 탐지 모델) — 기록이 달라 발목 쪽 점수와 바로 비교하지 말 것'}</div><div class="sum">` + kinds.map(k => `<span>${k} <b>${ta ? ta[k].join('/') : '–'}</b>${td ? ` → <b>${td[k].join('/')}</b>` : ''}</span>`).join('') +
+    `<span>모두 <b>${all(A)}</b>${D ? ` → <b>${all(D)}</b>` : ''}</span></div>`;
+  // 판정이 아예 없으면 정상·복합 정상은 '경보 없음'으로 맞은 것처럼 보인다 — 따로 센다
+  const silent = R => R ? R.rows.filter(r => !r.verdicts.length).length : 0;
+  const paid = R => R ? R.rows.reduce((a, r) => a + (r.payments || 0), 0) : 0;
+  html += `<div class="sum"><span>판정이 하나도 없는 영상 <b>${silent(A)}</b>${D ? ` → <b>${silent(D)}</b>` : ''}</span>` +
+    `<span>계산대 결제 합 <b>${paid(A)}</b>${D ? ` → <b>${paid(D)}</b>` : ''}</span></div>`;
+  if (D && silent(D) > silent(A) + 2)
+    html += `<div class="bad" style="margin-bottom:6px">⚠ 초안에서 판정이 사라진 영상이 많습니다 — 손님이 출구(EXIT)·문 밖(OUTSIDE) 구역에 발을 들이지 않아 나감 판정이 안 나온 것입니다. 정상 영상이 '맞음'으로 늘어난 것은 경보가 없어서일 뿐입니다.</div>`;
+  if (!D) html += `<div class="sub">초안이 없어 적용본만 판정했습니다.</div>`;
+  const rows = (A || D).rows.map(r => r.pair), byA = Object.fromEntries((A?.rows || []).map(r => [r.pair, r])), byD = Object.fromEntries((D?.rows || []).map(r => [r.pair, r]));
+  const sig = r => r ? [r.verdicts.join(','), r.correct, r.people, r.links, r.payments, r.cancels, r.unowned_takes].join('|') : '';
+  const diff = rows.filter(p => D && sig(byA[p]) !== sig(byD[p])), same = rows.filter(p => !diff.includes(p));
+  const truth = (HE._index || {}).truth || {};
+  const line = (p, show) => {
+    const a = byA[p], d = byD[p];
+    const cell = (r, o) => r ? `<span class="${r.correct ? 'ok' : 'bad'}">${r.correct ? 'OK' : 'XX'}</span> ${esc(r.verdicts.join(',') || '판정 없음')}` : '–';
+    const num = (k) => a && d && a[k] !== d[k] ? `${a[k]} → <b>${d[k]}</b>` : (a || d)[k];
+    let s = `<tr class="${show ? 'diff' : ''}"><td>${p}</td><td style="text-align:left">${cell(a)}</td>${D ? `<td style="text-align:left">${cell(d)}</td>` : ''}<td>${num('people')} <span class="sub">/ ${truth[p]?.people ?? '?'}</span></td><td>${num('links')}</td><td>${num('payments')}</td></tr>`;
+    if (show && d && !d.correct) s += `<tr class="diff"><td></td><td colspan="5" class="reason">${(d.reasons || []).map(esc).join('<br>')}</td></tr>`;
+    return s;
+  };
+  const head = `<tr><th>영상</th><th style="text-align:left">적용본</th>${D ? '<th style="text-align:left">초안</th>' : ''}<th>손님 / 정답</th><th>짝</th><th>계산대 결제</th></tr>`;
+  if (D) html += diff.length ? `<table class="t">${head}${diff.map(p => line(p, true)).join('')}</table>` : `<div class="ok">38쌍 모두 판정·손님 수·짝 수·결제 수가 적용본과 같습니다.</div>`;
+  html += `<details ${D ? '' : 'open'}><summary>${D ? '같은 영상' : '모든 영상'} ${(D ? same : rows).length}개</summary><table class="t">${head}${(D ? same : rows).map(p => line(p, false)).join('')}</table></details>`;
+  html += `<div class="sub" style="margin-top:6px">평가 규칙: 구역은 정상(N) 영상을 보고 정하고 T·C 는 채점에만 씁니다. T·C 결과를 보고 고친 것은 기록에 적어 주세요. ` +
+    `${A ? `적용본 ${esc(A.when)}` : ''}${D ? ` · 초안 ${esc(D.when)}` : ''}</div>`;
+  body.innerHTML = html;
+}
+async function pollJudge() {
+  const j = await api(S.foot === 'ankle' ? '/api/judge/ankle' : '/api/judge'); S.judge = j; renderJudge(j);
+  if (j.running) setTimeout(pollJudge, 1500); else $('bJudge').disabled = false;
+}
+
+// ====================================================================== 버튼
+async function refreshServer() { S.server = await api('/api/zones'); }
+async function saveDraft() {
+  const r = await api('/api/zones/draft', { floor: S.Z.floor, angle0: S.Z.angle0 });
+  if (!r.ok) { msg(r.errors, r.warnings); return false; }
+  await refreshServer(); S.saved = clone(S.Z);
+  msg([], r.warnings, `초안 저장함 <code>${esc(r.draft_hash)}</code>`); renderStatus(); return true;
+}
+$('bSave').onclick = saveDraft;
+$('bUndo').onclick = undo; $('bRedo').onclick = redo;
+$('bJudge').onclick = async () => {
+  if (dirty() && JSON.stringify(S.Z) !== JSON.stringify(S.base)) { if (!(await saveDraft())) return; }
+  $('bJudge').disabled = true;
+  const r = await api('/api/judge', { foot: S.foot }); if (!r.ok) msg(r.errors); pollJudge();
+};
+$('bApply').onclick = async () => {
+  if (!confirm('초안을 zones/store01_dual/ 에 덮어씁니다. 지금 적용본은 outputs/zone_editor/backup/ 에 남깁니다. 적용할까요?')) return;
+  const r = await api('/api/zones/apply', {}); if (!r.ok) { msg(r.errors); return; }
+  await refreshServer(); S.base = clone(S.server.applied); S.Z = clone(S.base); S.saved = clone(S.base); S.undo = []; S.redo = [];
+  BASE_STATS = stats(S.base); msg([], [], `적용함 · 이전 적용본은 <code>${esc(r.backup)}</code>`); changed(true); pollJudge();
+};
+$('bDiscard').onclick = async () => {
+  if (!confirm('초안과 저장 안 한 고침을 버리고 적용본으로 돌아갑니다.')) return;
+  await api('/api/zones/discard', {}); await refreshServer();
+  S.Z = clone(S.server.applied); S.saved = clone(S.Z); snapshot(); msg([], [], '초안을 버렸습니다'); fixSel(); changed(true);
+};
+$('loadSel').onchange = async e => {
+  const v = e.target.value; e.target.value = ''; if (!v) return;
+  if (dirty() && !confirm('저장 안 한 고침이 있습니다. 버리고 불러올까요?')) return;
+  if (v.startsWith('bk:')) { const r = await api('/api/zones/restore', { name: v.slice(3) }); if (!r.ok) { msg(r.errors); return; } await refreshServer(); S.Z = clone(S.server.draft); }
+  else { await refreshServer(); S.Z = clone(S.server[v]); }
+  snapshot(); S.saved = clone(S.Z); fixSel(); changed(true);
+};
+
+// ====================================================================== 영상
+function nearestFrame(tr, sec) {
+  const step = tr.stride || 1; return String(Math.max(0, Math.round(sec * tr.fps / step) * step));
+}
+function setCam(cam) {
+  S.cam = cam;
+  const sl = S.sel && layerById(S.sel);
+  if (sl && (sl.file === 'floor') !== (cam === 'angle1')) { S.sel = null; renderLayers(); renderProps(); }
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.cam === cam));
+  loadVideo(); layout(); renderStats(); schedule();
+}
+function loadVideo() {
+  const d = HE._data[RUN + '/' + S.pair]; if (!d) return;
+  const src = encodeURI(d.video[S.cam]);
+  if (vid.getAttribute('src') !== src) { const t = vid.currentTime || 0; vid.src = src; vid.addEventListener('loadedmetadata', () => { vid.currentTime = Math.min(t, vid.duration || t); }, { once: true }); }
+}
+function togglePlay() { vid.paused ? vid.play() : vid.pause(); }
+$('bPlay').onclick = togglePlay;
+vid.addEventListener('play', () => { $('bPlay').textContent = '멈춤'; tick(); });
+vid.addEventListener('pause', () => { $('bPlay').textContent = '재생'; });
+vid.addEventListener('seeked', () => { updTime(); schedule(); });
+vid.addEventListener('loadeddata', () => { updTime(); schedule(); });
+function updTime() { $('tm').textContent = vid.currentTime.toFixed(1) + 's'; if (vid.duration) $('seek').value = Math.round(1000 * vid.currentTime / vid.duration); }
+function tick() { updTime(); schedule(); if (!vid.paused) requestAnimationFrame(tick); }
+$('seek').addEventListener('input', e => { if (vid.duration) vid.currentTime = vid.duration * e.target.value / 1000; });
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => setCam(b.dataset.cam)));
+$('pairSel').addEventListener('change', e => { S.pair = e.target.value; vid.currentTime = 0; loadVideo(); schedule(); });
+['cBoxes', 'cDots', 'cOnly'].forEach(id => $(id).addEventListener('change', schedule));
+document.querySelectorAll('.cSet').forEach(c => c.addEventListener('change', schedule));
+window.addEventListener('resize', () => { layout(); schedule(); });
+window.addEventListener('beforeunload', e => { if (S.Z && dirty()) { e.preventDefault(); e.returnValue = ''; } });
+
+async function loadRun() {
+  RUN = FOOT_RUN[S.foot];
+  await Promise.all(S.pairs.filter(p => !HE._data[RUN + '/' + p]).map(p => loadScript(DATA + RUN + '/' + encodeURIComponent(p) + '.js').catch(() => null)));
+  buildSamples(); BASE_STATS = stats(S.base);
+}
+$('footSel').addEventListener('change', async e => {
+  S.foot = e.target.value; $('statNote').textContent = '불러오는 중…';
+  await loadRun(); loadVideo(); changed(true); pollJudge();
+});
+
+// ====================================================================== 시작
+(async function start() {
+  try {
+    await loadScript(DATA + 'index.js');
+    S.pairs = HE._index.pairs;
+    $('pairSel').innerHTML = S.pairs.map(p => `<option>${p}</option>`).join('');
+    S.pair = S.pairs.includes('N1') ? 'N1' : S.pairs[0]; $('pairSel').value = S.pair;
+    await refreshServer();
+    S.base = clone(S.server.applied);
+    S.Z = clone(S.server.draft || S.server.applied); S.saved = clone(S.Z);
+    renderStatus(); renderLayers(); renderProps();
+    await loadRun();
+    loadVideo(); layout(); changed(true);
+    if (S.server.draft) msg([], [], '저장해 둔 초안을 불러왔습니다');
+    pollJudge();
+  } catch (e) {
+    $('status').innerHTML = `<span class="bad">불러오지 못함: ${esc(e)}</span><br>서버를 <code>python scripts/review_serve.py</code> 로 열고, 보기 페이지 데이터(<code>python scripts/review_export.py</code>)가 있어야 합니다.`;
+  }
+})();
+</script>
+</body>
+</html>

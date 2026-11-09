@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..zones.geometry import contains_point, overlap_ratio
+
 
 @dataclass(frozen=True)
 class ShelfItem:
@@ -235,9 +237,14 @@ class ShelfMonitor:
         match_gate: float = 0.8,
         map_score: float = 0.0,
         weak_presence: float = 0.3,
+        polygon: tuple[tuple[float, float], ...] | None = None,
     ) -> None:
         self.name = name
         self.box = shelf_box
+        """선반 영역을 감싸는 사각형 (그리기·물건 탐지 범위)."""
+        self.polygon = tuple(polygon) if polygon else None
+        """선반 영역 다각형 (픽셀). 주면 '가림'·'선반 안 물건'을 사각형 대신 이 모양으로 판단한다 —
+        비스듬히 찍힌 선반에서 사각형 구석(바닥·옆 진열대)에 선 사람까지 '가림'으로 치지 않게 (2026-11-08)."""
         self.stable_ms = stable_seconds * 1000.0
         self.match_gate = match_gate
         self.weak_presence = weak_presence
@@ -268,10 +275,14 @@ class ShelfMonitor:
 
     def _inside(self, item: ShelfItem) -> bool:
         x, y = item.center
+        if self.polygon:
+            return contains_point(self.polygon, x, y)
         x1, y1, x2, y2 = self.box
         return x1 <= x <= x2 and y1 <= y <= y2
 
     def _overlaps(self, bbox) -> bool:
+        if self.polygon:
+            return overlap_ratio(self.polygon, bbox) > 0.0
         x1, y1, x2, y2 = self.box
         a1, b1, a2, b2 = bbox
         return min(x2, a2) > max(x1, a1) and min(y2, b2) > max(y1, b1)

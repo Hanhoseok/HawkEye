@@ -204,6 +204,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | **`docs/scale-limits.md`** | **사람이 몇 px 이하면 무너지는가 → 카메라 설치 기준, 화각별 검증** |
 | **`docs/identity-registry.md`** | **계층 2 — 매장 단위 신원. tracker 가 끊겨도 person_id 유지** |
 | **`docs/zones.md`** | **구역 인프라 — SHELF/EXIT 정의와 판정 방식** |
+| **`docs/zones-store01.md`** | **카메라 2대 구역 — 구역마다 코드에서 하는 일, 구역 편집 페이지(`scripts/zone_editor.html`)** |
 | **`docs/take-candidates.md`** | **계층 3 — 선반 앞 멈춤으로 TAKE 후보 판정, 그 한계** |
 | **`docs/labeling.md`** | **행동 라벨링 — 무엇을 왜 어떻게 찍는가** |
 | **`docs/pose-signals.md`** | **Pose 신호 — 손 높이는 되고 팔 뻗음·손 위치는 안 된다** |
