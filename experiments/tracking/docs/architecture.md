@@ -3,7 +3,8 @@
 팀원 공유용. **구조 → 모델을 어떻게 쓰나 → 판단 로직 → 설정·실행 → 파일 지도** 순서.
 결과는 `docs/results-summary.md`, 안 되는 것은 `docs/limitations.md`, 각 층의 설계 이유·실험은 층별 문서(아래 표)에 있다.
 숫자는 2026-10-19 코드 기준 실제 설정값이다 (`config.yaml`, `src/core/config.py`).
-카메라 2대·실시간·선반 센서 구조는 §6 (2026-11-03 1단계 구현), 설계는 `docs/multiview-design.md`, 근거 논문은 `docs/multiview-papers.md`, 구현 중 생긴 일은 `docs/multiview-progress.md`.
+카메라 2대·실시간·선반 센서 구조는 §6 (2026-11-03 1단계 구현, **2026-11-10 에 그 뒤 바뀐 기본 설정까지 반영**), 설계는 `docs/multiview-design.md`, 근거 논문은 `docs/multiview-papers.md`, 구현 중 생긴 일은 `docs/multiview-progress.md`.
+§1~§4 는 카메라 1대 실행 기준이다. 카메라 2대에서 달라지는 규칙(발 점·손님 조건·신원)은 §6 에 따로 적었다.
 
 ---
 
@@ -218,9 +219,10 @@ python run_tracking.py --source <영상> --zones <구역 파일> \
 ## 5. 파일 지도
 
 ```
-run_tracking.py                진입점 (config.yaml + 명령행)
-config.yaml                    모든 설정값
-zones/                         카메라별 구역 파일 (store-aisle, merl, pexels_*, store01_* …)
+run_tracking.py                진입점 (config.yaml + 명령행, 카메라 2대는 --dual-config)
+config.yaml                    모든 설정값 (카메라 1대 기본)
+configs/store01_dual.yaml      카메라 2대 설정 — config.yaml 위에 얹는다 (§6)
+zones/                         카메라별 구역 파일 (store-aisle, merl, pexels_*, store01_* …), store01_dual/ 은 카메라 2대
 src/
   core/types.py                층 사이 데이터 형식 (팀 공통 계약 — 바꾸면 팀에 공유)
   core/config.py               설정 로더 (기본값과 근거 주석)
@@ -244,25 +246,52 @@ src/
   sinks/                       기록 파일, 결과 영상, 경보 전송(alert_sink.py → app-pos)
   viz/                         화면 표시 (사람 상자, 선반 지도 shelf_overlay, 상황판 live_panel)
   pipeline.py                  전체 조립 (장면마다 작업자 ①~④ → ⑤⑥ → 출력)
-scripts/                       평가·실험 도구 (store_eval, merl_eval, retailaction_*, screen_videos, transfer_zones, replay_risk,
-                               calibrate_floor 바닥 보정, sync_pair 두 각도 시차 맞추기 …)
-tests/                         층별 규칙 테스트 (148개)
-labels/                        정답표 (store01 매장 영상 등)
+  multicam.py                  카메라 2대 조립 (두 영상을 공통 시각 순서로, §6)
+  inputs/live_source.py        실시간 입력 (최신 장면만, 끊기면 다시 연결)
+  detectors/masked.py          사람 아님 영역과 겹치는 사람 상자 버리기
+  shelf/slot_diff.py           칸 그림 비교 (칸 안 그림이 방문 전후로 바뀌었나)
+  fusion/cross_view.py         ⑦ 두 화면 사람 잇기
+  fusion/shelf_events.py       ⑦ 선반 사건 묶기 (주인 정하기, 센서 입력 자리)
+  fusion/judge.py              ⑦ 합치기 + 판정 (실시간·재실행 공용)
+scripts/                       평가·실험 도구 — 쓰임별 분류는 README §3 'scripts — 쓰임별로'
+tests/                         층별 규칙 테스트 (2026-10-19 148개 → 2026-11-10 테스트 함수 185개)
+labels/                        정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서)
 docs/                          설계·실험 문서
 ```
 
-## 6. 카메라 2대 실행 (2026-11-03, 1단계)
+## 6. 카메라 2대 실행 (2026-11-03 1단계, 기본 설정은 2026-11-09)
 
 전체 카메라(angle1, 높은 구석)와 선반 카메라(angle0, 선반 높이)를 함께 돌린다. 설계는 `docs/multiview-design.md`.
 
 ```
-angle1 전체 카메라 → 작업자: 사람(사람 아님 영역 제외) → 화면 신원 → 바닥 좌표(FloorZoneMap) → 선반 앞 머묾 ─┐
-angle0 선반 카메라 → 작업자: 사람+관절 → 화면 신원 → 손-칸 접촉(손목이 칸 안) / 선반 지도 + 칸 그림 비교 ─┼→ ⑦ DualJudge
-선반 센서(있으면) ─────────────────────────────────────────────────────────────────────────────┘
-⑦ 교차 화면 연결(위치 1순위 + 외형) → 매장 신원 = 전체 카메라 신원
+angle1 전체 카메라 → 작업자: 사람+관절(사람 아님 영역 제외) → 화면 신원 → 발목을 바닥 좌표로(FloorZoneMap) → 선반 앞 머묾 ─┐
+angle0 선반 카메라 → 작업자: 사람+관절 → 화면 신원 → 손-칸 접촉(손목이 칸 안) / 선반 지도 + 칸 그림 비교 ───────────────┼→ ⑦ DualJudge
+선반 센서(있으면) ───────────────────────────────────────────────────────────────────────────────────────────┘
+⑦ 교차 화면 연결(위치 1순위 + 외형, 후보가 한 명이면 외형만으로) → 매장 신원 = 전체 카메라 신원
    선반 사건 묶기(가린 사람의 짝 → 손-칸 접촉 → 선반 앞 한 명) → 전체 카메라 손님의 집기·방문으로
 → ⑤ 손님 장부 → ⑥ 위험 판정 (구역은 모두 바닥 좌표)
 ```
+
+### 카메라 1대(§3)와 달라지는 규칙 — `configs/store01_dual.yaml`
+
+| 무엇 | 카메라 1대 기본 | 카메라 2대 기본 | 설정 | 왜 |
+|---|---|---|---|---|
+| 전체 카메라 사람 탐지 | YOLOv8n | **YOLOv8n-pose** (관절) | 카메라 `detector: yolo-pose` | 발목을 쓰려고 (11-09). 선반 카메라는 처음부터 관절 모델 |
+| 계산대·출구 판단의 발 점 | 상자 아래 가운데 | **발목** (안 잡히면 상자 아래 가운데, 관측의 약 26%) | `zones.foot_point: ankle` | 상자 아래 가운데는 팔을 뻗거나 다리가 가려지면 실제 발에서 수십 px 벗어난다 (B-15) |
+| 구역 | 화면 비율 좌표 | **바닥 cm 좌표** (바닥 지도로 옮김), 구역 편집 페이지에서 실제 자리에 맞춰 그림 | `zones/store01_dual/floor.yaml` | 발이 보이는 전체 카메라가 결제·출구를 맡는다. 구역마다 하는 일은 `zones-store01.md` |
+| 손님으로 세는 조건 | 문 밖 구역이 아니면 매장 안 | 발이 **선반 앞·계산대·통로에 1초 이상** | `risk.inside_zones`, `inside_seconds: 1.0` | 문 앞 조각·창밖 행인·외투가 손님이 되던 것 (C-20) |
+| 가장자리 규칙 (§3 ②) | 네 변 모두 | 화각 때문에 늘 잘리는 변은 뺌 — 전체 카메라는 위쪽, 선반 카메라는 아래쪽 | 카메라 `identity.edge_sides` | 전체 카메라는 머리가 늘 잘려 새 번호 거의 전부가 대조 없이 새 손님이 됐다 (C-21) |
+| 되살아난 추적 번호 | 그 번호의 신원 그대로 | 1초 넘게 끊겼다 되살아나면 **신원 다시 판정** | `identity.track_gap_recheck_seconds: 1.0` | 추적기가 끊긴 번호를 다른 사람에게 되살림 (C-22) |
+| 선반 카메라 손 뻗기 | 선반 앞 3초 머묾 | **손목이 칸 안에 0.3초** | `detail_interaction.signal: hand` | 짧은 집기를 잡으려고 (설계 M-6) |
+| '변화 없음'으로 손 뻗기 지우기 | 물건 탐지가 그대로면 | 물건 탐지와 **칸 그림이 모두 그대로**일 때만 | `src/shelf/slot_diff.py` | 선반이 못 본 물건 때문에 진짜 집기를 지우던 것 (D-17) |
+| 결제 | 기록 또는 계산대 체류 | 계산대 체류 1.5초 (평가에서는 결제 라벨도 가능) | `risk.payment_mode: dwell` | 결제 기록 없음 (E-13) |
+
+재 보고 **기본에서 뺀 것** (설정은 남아 있다): 전체 카메라 팔 뻗기 `fusion.overview_reach_seconds`(복합 정상 거짓 경보), 임시 신원 `identity.tentative_seconds`(C14 나빠짐),
+구역 잠깐 벗어남 허용 `risk.zone_grace_seconds`(계산대를 스친 도둑이 결제로 잡힘). 과정은 `multiview-progress.md` 후속 3·5·7.
+
+두 화면 사람 잇기의 기준: 0.5초 조각마다 위치(선반 앞 띠 위 좌표)와 외형(OSNet 평균)으로 헝가리안 짝 맞추기. 선반 앞 후보가 한 명뿐이면 위치가 어긋나도 외형 0.85 이상이면 잇는다(`fusion.solo_appearance_min`).
+
+### 코드와 설정
 
 | 무엇 | 코드 | 설정 |
 |---|---|---|
@@ -275,7 +304,9 @@ angle0 선반 카메라 → 작업자: 사람+관절 → 화면 신원 → 손-�
 | 합치기 + 판정 (실시간·재실행 공용) | `src/fusion/judge.py` (`DualJudge`) | |
 | 칸 그림 비교 | `src/shelf/slot_diff.py` | |
 | 사람 아님 영역 | `src/detectors/masked.py` | `floor.yaml` 의 `ignore_image` |
-| 평가 | `scripts/dual_eval.py` (run / sync / calibrate / judge) | `labels/store01_dual/` (정답·시차·가짜 센서) |
+| 평가 | `scripts/dual_eval.py` (run / sync / calibrate / judge) — 기본 기록 폴더 `outputs/dual_eval_pose3`, `--out`·`--zones`·`--set 절.키=값` 으로 설정을 바꿔 비교, `judge --payments` 는 결제 라벨을 결제 기록으로 | `labels/store01_dual/` (정답 `truth.csv`·시차 `sync.csv`·결제 라벨 `payments.csv`·가짜 센서) |
+| 결제 라벨 적기 | `scripts/label_payments.py` (두 화면을 보며 결제 시각·개수·시차 입력) | `labels/store01_dual/payments.csv` |
+| 오판 장면 보기 · 구역 편집 | `scripts/review_serve.py` 로 여는 로컬 페이지 (`review_viewer.html`, `zone_editor.html`) — 기록을 원본 영상 위에 그림 / 구역 초안으로 38쌍 판정을 돌려 비교한 뒤 적용 | `outputs/review/`, `outputs/zone_editor/` (git 제외) |
 
 ```bash
 python run_tracking.py --dual-config configs/store01_dual.yaml \
