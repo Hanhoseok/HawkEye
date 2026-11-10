@@ -11,8 +11,26 @@
 
 ## 현재 상태
 
-> **최신 결과 종합: [`docs/results-summary.md`](docs/results-summary.md)** — 기능별 결과(직접 찍은 매장 영상 40편)와 다음 단계를 한 장에.
-> **구현 설명: [`docs/architecture.md`](docs/architecture.md)** — 프로그램이 어떻게 돌아가는지 (구조·모델·판단 규칙).
+> **최신 결과 종합: [`docs/results-summary.md`](docs/results-summary.md)** — 지금 상태(카메라 2대, 2차 촬영 38쌍)와 1차 평가(카메라 1대, 40편), 다음 단계를 한 장에.
+> **구현 설명: [`docs/architecture.md`](docs/architecture.md)** — 프로그램이 어떻게 돌아가는지 (구조·모델·판단 규칙, 카메라 2대는 §6).
+
+**지금 (2026-11-10)**: 카메라 2대(전체 카메라 + 선반 카메라) 구조로 2차 촬영 38쌍을 평가하고 있다.
+기본 설정은 관절 모델 + 발목 + 직접 그린 구역(11-09). 판정은 **31/38** (정상 11/12 · 절도 4/9 · 복합 정상 16/17, 손님 수 38/38),
+사람이 적은 결제 라벨을 넣으면 30/38 — 결제가 정확해도 집은 개수를 틀리면 판정이 틀린다.
+
+| 카메라 2대 (2차 촬영 38쌍) | 상태 | 문서 |
+|---|---|---|
+| 두 영상 함께 처리 · 시차 · 바닥 지도 구역 | ✅ 시차는 32쌍을 사람이 맞춤, 바닥 보정점은 추정값 | `docs/multiview-progress.md`, `docs/zones-store01.md` |
+| 손님 수 · 신원 | ✅ 38/38 쌍 (가장자리 변 + 되살아난 번호 다시 판정). 비슷한 옷 2명은 약함 | `docs/multiview-progress.md` 후속 1·2 |
+| 두 화면 사람 잇기 | 🔶 0.5초 조각의 55% 가 짝을 맺음. 프레임 단위 정답이 없어 정확도는 못 잼 | `docs/multiview-progress.md` 후속 6 |
+| 선반 사건 (손-칸 접촉 · 선반 지도 · 칸 그림 비교) | 🔶 병 무리에서 1개 빠진 것을 놓침(T2) | `docs/multiview-progress.md` 후속 4 |
+| 절도 판정 | 🔶 절도 4/9. 판정이 안 나온 쌍 8개(영상 끝) | `docs/results-summary.md` §0 |
+| 결제 | 🔶 계산대 체류 = 결제. 결제 라벨 도구(`scripts/label_payments.py`)로 재평가, 실제 결제 연동은 아직 | `docs/multiview-progress.md` 후속 8 |
+| 선반 센서 | ⬜ 입력 자리와 가짜 기록 시험만. 실제 센서(`experiments/arduino`) 미연결 | `docs/multiview-design.md` M-8 |
+| 실시간 | 🔶 녹화본을 카메라 속도로 흘린 흉내만. 실제 카메라 미확인, 카메라당 초당 4~5장 | `docs/multiview-progress.md` 1-7 |
+| 확인 도구 | ✅ 오판 장면 보기 · 구역 편집 페이지 (`python scripts/review_serve.py`) | `docs/multiview-progress.md` 후속 4·7 |
+
+아래 표는 층별 상태다 (카메라 1대 기준, 2026-10-14 까지).
 
 | 계층 | 상태 | 문서 |
 |---|---|---|
@@ -29,7 +47,8 @@
 | 결제 (기록 없는 매장) | ✅ 계산대 체류 = 결제, 선반으로 돌아가면 취소 (`--pay-by-dwell`) | `docs/store-test.md` 3차 |
 | RETURN (되돌려놓기) | ⬜ 미착수 → 🔶 2026-10-06: 지켜보는 선반에서는 '다시 참'으로 개수에서 뺌. 그 밖은 미착수 | `docs/shelf-map.md` |
 
-**처음 보는 사람은 `docs/진행경과-정리.md` 부터 읽는다.** 왜 이런 구조가 됐는지가 수치와 함께 정리되어 있다.
+**처음 보는 사람이 읽는 순서**: `docs/results-summary.md`(지금 결과) → `docs/architecture.md`(어떻게 돌아가나) → `docs/limitations.md`(무엇이 안 되나).
+왜 이런 구조가 됐는지는 `docs/진행경과-정리.md` — 9월 추적기 단계까지 자세히, 그 뒤는 맨 끝 §12 의 날짜표로 각 문서를 가리킨다.
 **지금 무엇이 안 되는지는 `docs/limitations.md`** — 부딪힌 한계와 실패를 모두 모아 상태(미해결·우회·해결)로 관리한다.
 
 ---
@@ -162,29 +181,57 @@ python run_tracking.py --source data/videos/store-aisle-detection.mp4   --start-
 ## 3. 디렉터리
 
 ```
-run_tracking.py            진입점 (config.yaml + 명령행 인자)
-config.yaml                모든 설정값
-zones/                     카메라별 구역 파일 (SHELF / CHECKOUT / EXIT / OUTSIDE)
+run_tracking.py            진입점 (config.yaml + 명령행 인자, 카메라 2대는 --dual-config)
+config.yaml                모든 설정값 (카메라 1대 기본)
+configs/store01_dual.yaml  카메라 2대 설정 — config.yaml 위에 얹는다
+zones/                     카메라별 구역 파일 (SHELF / CHECKOUT / EXIT / OUTSIDE), store01_dual/ 은 카메라 2대(바닥 지도·칸)
 src/
   core/                    types.py(층 사이 형식) · config.py(설정) · protocols.py(인터페이스)
-  inputs/                  영상 읽기
-  detectors/               ① 사람 탐지(YOLO / YOLO-pose), 선반 물건 탐지기
+  inputs/                  영상 읽기, 두 카메라 시차(sync.py), 실시간 입력(live_source.py)
+  detectors/               ① 사람 탐지(YOLO / YOLO-pose), 선반 물건 탐지기, 사람 아님 영역(masked.py)
   trackers/                ① BoT-SORT / ByteTrack 어댑터, 교체 지점 factory.py
   identity/                ② 매장 단위 신원, 외형 모델 어댑터
-  zones/                   구역 읽기, 사람-구역 관계
+  zones/                   구역 읽기, 사람-구역 관계, 바닥 지도(floor.py)
   interaction/             ③ 손 뻗기, 자세 특징
-  shelf/                   ④ 선반 지도(monitor.py), 파이프라인 연결(watcher.py)
+  shelf/                   ④ 선반 지도(monitor.py), 파이프라인 연결(watcher.py), 칸 그림 비교(slot_diff.py)
+  fusion/                  ⑦ 두 화면 사람 잇기(cross_view.py), 선반 사건 묶기·센서(shelf_events.py), 합친 판정(judge.py)
   risk/                    ⑤ 손님 장부·결제(customers.py, payments.py), ⑥ 위험 판정(engine.py)
   sinks/                   기록 파일, 결과 영상, 경보 전송(alert_sink.py)
   viz/                     사람 상자, 선반 지도, 상황판
-  pipeline.py              전체 조립
-scripts/                   평가·실험 도구 (store_eval, merl_eval, retailaction_*, screen_videos, transfer_zones …)
+  camera_worker.py         카메라 한 대 몫의 ①~④
+  pipeline.py              전체 조립 (카메라 1대)
+  multicam.py              전체 조립 (카메라 2대)
+scripts/                   평가·실험 도구 — 아래 표
 tests/                     층별 규칙 테스트
-labels/                    정답표
+labels/                    정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서)
 data/videos/, outputs/     입력 영상·결과물 (git 제외)
 ```
 
 파일별 설명은 `docs/architecture.md` 5절.
+
+### scripts — 쓰임별로
+
+파일은 모두 `scripts/` 한 폴더에 있다. 문서 곳곳의 실행 명령이 이 경로를 쓰고 있어 폴더는 나누지 않고 여기서 분류만 한다.
+
+| 쓰임 | 파일 | 한 줄 |
+|---|---|---|
+| **카메라 2대 평가** | `dual_eval.py` | 2차 촬영 38쌍: `run`(기록) · `sync`(시차) · `calibrate`(띠 축) · `judge`(판정만 다시) |
+| | `sync_pair.py` · `calibrate_floor.py` | 두 화면을 보며 시차 확정 · 바닥 보정점으로 바닥 지도 만들기 |
+| | `label_payments.py` | 두 화면을 보며 결제 시각·개수·시차를 적는 도구 (`labels/store01_dual/payments.csv`) |
+| | `fake_sensor.py` · `live_sim.py` | 가짜 선반 센서 기록 만들기 · 녹화본을 카메라 속도로 흘리는 실시간 흉내 |
+| **확인 페이지** | `review_serve.py` | 오판 장면 보기·구역 편집 페이지를 여는 로컬 서버 (내 컴퓨터에서만 열림) |
+| | `review_export.py` · `review_viewer.html` · `review_cases.js` | 오판 장면 보기 — 기록을 다시 판정하며 상자·신원·관절·짝·판정을 원본 영상 위에 그림 |
+| | `zone_editor.py` · `zone_editor.html` | 구역 편집 — 영상 위에서 구역을 고치고 초안으로 38쌍 판정을 돌려 비교한 뒤 적용 |
+| | `review_swapcheck.py` | 두 손님이 겹친 전후로 신원이 뒤바뀌었는지 몸통 색으로 점검 |
+| **1차 매장 영상 (카메라 1대)** | `store_eval.py` | 1차 촬영 40편 일괄 평가: `run` · `judge` |
+| | `transfer_zones.py` · `screen_videos.py` | 카메라가 조금 움직였을 때 구역 옮기기 · 검증 영상 고르기(사람·물건이 얼마나 보이나) |
+| **기록으로 다시 돌리기 (영상 없이)** | `replay_identity.py` · `replay_risk.py` | 저장된 추적 기록으로 신원만 · 신원 기록으로 판정만 다시 |
+| | `take_sweep.py` · `identity_calibration.py` · `remap_identities.py` | 손 뻗기 기준값 훑기 · 신원 판정 방식 비교 · 두 실행 사이 손님 번호 대응표 |
+| **공개 데이터 평가** | `merl_to_labels.py` · `merl_batch.py` · `merl_eval.py` · `merl_feature_check.py` | MERL: 라벨 변환 · 묶어 돌리기 · train/test 평가 · 자세 특징 판별력 |
+| | `retailaction_eval.py` · `retailaction_hands.py` · `eval_takes.py` | RetailAction: 자세만으로 집기 · 손 사진으로 집음/놓음 · 손 뻗기 후보를 라벨과 대조 |
+| **라벨·구역 준비** | `label_actions.py` · `export_frame.py` · `zone_report.py` | 행동 구간 라벨링 · 격자 입힌 장면 저장 · 신원별 구역 체류 집계 |
+| **추적 분석 (초기 단계)** | `analyze_observations.py` · `detect_id_jumps.py` · `find_crossings.py` | 추적 번호 단위 요약 · 번호가 남에게 옮겨 간 지점 · 두 사람이 겹친 구간 |
+| **시연·시험용** | `shelf_demo.py` · `make_sample_video.py` | 선반 지도 1단계 시연 · 영상 입출력만 확인하는 합성 영상 |
 
 ---
 
@@ -192,9 +239,12 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 
 | 문서 | 내용 |
 |---|---|
-| **`docs/진행경과-정리.md`** | **팀원 공유용 전체 정리.** 왜 ByteTrack에서 BoT-SORT로 갔는지, 수치 포함 |
+| **`docs/results-summary.md`** | **결과 종합 — 팀원 공유용 한 장. 지금 상태(카메라 2대)와 1차 평가** |
 | **`docs/architecture.md`** | **구현 설명 — 구조, 모델 사용, 판단 규칙과 기준값, 설정·실행, 파일 지도** |
-| **`docs/results-summary.md`** | **결과 종합 — 팀원 공유용 한 장** |
+| **`docs/진행경과-정리.md`** | 9월 추적기 단계 정리 — 왜 ByteTrack에서 BoT-SORT로 갔는지, 수치 포함. 맨 끝 §12 에 그 뒤 경과 날짜표 |
+| **`docs/multiview-design.md`** | **카메라 2대 + 실시간 + 선반 센서 구조 설계 (M-1~M-12, 단계별 계획)** |
+| `docs/multiview-papers.md` | 위 설계의 근거 논문 6편(P1~P6) |
+| **`docs/multiview-progress.md`** | **카메라 2대 1단계 진행 기록 — 2차 촬영 38쌍 결과, 후속 1~8. 맨 위에 지금 상태** |
 | **`docs/limitations.md`** | **한계 총정리 — 부딪힌 한계·실패와 현재 상태. 해결돼도 지우지 않는다** |
 | **`docs/store-test.md`** | **직접 찍은 무인매장 영상 첫 시험 — 정상 2편으로 설정, 절도 2편으로 시험** |
 | **`docs/validation-set.md`** | **검증 영상 세트 — 기능별 고르는 기준, 가진 영상 149편 분류, 촬영할 선반 장면** |
@@ -217,6 +267,9 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 ## 5. Phase 진행 체크리스트
 
 문서 §6 의 "권장 구현 순서와 확인 항목"을 그대로 옮긴 것이다.
+
+> 9월 초기 단계(영상 입출력 ~ 추적기 교체)의 기록이다. 그 뒤 단계는 여기에 더하지 않았다 —
+> 손 뻗기·선반 지도·판정은 위 '현재 상태' 표, 카메라 2대 1단계(1-0~1-7)와 2단계 계획은 `docs/multiview-design.md` §6 을 본다.
 
 - [x] **Phase 0. 영상 I/O** — 원본 영상이 끝까지 처리되고 출력 영상이 생성됨
 - [x] **Phase 1. YOLO** — `store-aisle-detection.mp4` 에서 person bbox 확인 (conf 0.8~0.9)
@@ -286,5 +339,12 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 | 2026-10-14 | 직접 찍은 무인매장 영상 첫 시험 (정상 N01·N01-1 로 설정, 절도 T01·T02 는 설정 그대로 시험) | 정상 2편 CLEAR(결제 연결), T01 HIGH_RISK ✅, **T02 놓침**(선반 유령 '놓음'이 집기를 지움). 영상 끝 규칙·구역 옮기기 도구 추가 | `docs/store-test.md` |
 | 2026-10-14 | 같은 매장 40편 평가 — 정상 13편으로 보정·고정, 절도 10·복합 정상 17편 시험 (`scripts/store_eval.py`) | **절도 4/10, 복합 정상 4/17 (거짓 경보 13)**. 원인: 선반 '그대로'가 진짜 집기를 지움(6), 구경도 머묾으로 경보(11). 선반 없이 손 뻗기만이면 절도 9/10 이지만 거짓 경보는 그대로 | `docs/store-test.md` 2차 |
 | 2026-10-14 | 기능별 평가 (C 는 추적용, 결제 = 계산대 체류·선반으로 돌아가면 취소) | 추적: N·T 23/23, C 깨끗 9/17(뒤바뀜 5·쪼개짐 3, 재입장 2/4). 손 뻗기 21/25. 선반 사라짐: 병 8/8·흰 상자 4/10·흰 카드 0/5. 절도 4/10 (선반이 못 보는 물건이면 손 뻗기를 지움) | `docs/store-test.md` 3차 |
+| 2026-11-03 | 카메라 2대 구조 설계(논문 6편 근거)와 1단계 구현 — 카메라 작업자, 바닥 지도 구역, 두 화면 사람 잇기, 칸 그림 비교, 선반 사건 묶기, 가짜 센서, 실시간 입력. 2차 촬영 38쌍 평가 (`scripts/dual_eval.py`) | 정상 11/12 · 절도 6/9 · 복합 정상 15/17, 손님 수 12/38. '매장 안 바닥 1초 = 손님'으로 손님 수 36/38, 절도는 5/9 (T2 는 우연히 맞았던 것) | `docs/multiview-design.md`, `docs/multiview-progress.md` |
+| 2026-11-04 | 재입장·신원 조각 조사 — 카메라별 가장자리 변 + 되살아난 번호 다시 판정. 전체 카메라 관절·팔 뻗기 시험 | 손님 수 36 → **38/38**, 판정 그대로 → 기본 채택. 팔 뻗기는 복합 정상 거짓 경보 4개라 기본 꺼짐 | `docs/multiview-progress.md` 후속 2·3 |
+| 2026-11-05 | 오판 장면 보기 페이지 — 기록을 원본 영상 위에 그려 틀린 장면 확인. 겹침 뒤바뀜·가짜 사람 점검, 임시 신원 시험 | T2 는 가림이 아니라 병 무리 중 1개 변화가 기준(8%)에 0.7%p 모자람. 겹친 62곳 모두 번호 그대로. T9 는 맞혔지만 이유가 틀림. 임시 신원은 C11 좋아지고 C14 나빠져 기본 끔 | `docs/multiview-progress.md` 후속 4·5 |
+| 2026-11-07 | 두 화면 짝: 선반 앞 후보가 한 명이면 외형 0.85 이상으로 잇기 | 짝 47 → 55%, 판정 그대로, C14·N5 방문 주인 고쳐짐 | `docs/multiview-progress.md` 후속 6 |
+| 2026-11-08 ~ 09 | 구역 편집 페이지, 발목 발 점, 관절 모델로 38쌍 다시 돌리기 | 구역을 실제 자리에 맞추면 상자 발 점으로는 27/38, 발목과 함께 31/38. **카메라 2대 기본을 관절 모델 + 발목 + 직접 그린 구역으로 바꿈** — 31/38 (절도 4/9, T8 은 결제 연동 때) | `docs/multiview-progress.md` 후속 7, `docs/zones-store01.md` |
+| 2026-11-10 | (한호석) 결제 라벨 도구로 38쌍 결제 시각·개수와 시차 32쌍을 적고 다시 판정 | 계산대 체류 31/38, 결제 라벨 30/38 — 결제가 정확해도 집은 개수를 틀리면 판정이 틀림. 틀린 8쌍 원인 정리 | `docs/multiview-progress.md` 후속 8 |
 
-**다음에 확인할 것**: 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
+**다음에 확인할 것** (2026-10-14 에 적은 것): 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
+→ 2026-11-10: 계산하고 나가는 손님은 1차·2차 촬영 정상 영상으로 확인(정상 11/12). 상품 탐지 모델은 아직 안 함. **지금의 다음 단계는 `docs/results-summary.md` §0-5.**
