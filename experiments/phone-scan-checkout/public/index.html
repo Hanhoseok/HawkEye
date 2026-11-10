@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>셀프 계산대</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>🛒 셀프 계산대 <span id="status" class="badge open">열림</span></h1>
+    <nav>
+      <a href="/admin">상품 등록</a>
+      <a href="/samples" target="_blank">샘플 바코드</a>
+    </nav>
+  </header>
+
+  <main class="grid">
+    <section class="card qr">
+      <h2>휴대폰으로 QR을 찍으세요</h2>
+      <img id="qr" alt="QR 코드" src="">
+      <p class="muted">계산대 ID: <span id="sid" class="mono">-</span></p>
+      <p class="mono" id="scanUrl"></p>
+      <div class="row" style="justify-content:center">
+        <button id="copyUrl" class="sm">주소 복사</button>
+      </div>
+      <p class="muted">한 번 연결한 휴대폰은 결제 후에도 계속 스캔할 수 있습니다.</p>
+      <div id="qrWarn"></div>
+
+      <details style="margin-top:14px; text-align:left">
+        <summary class="muted">공개 접속 주소 설정 (QR에 들어갈 주소)</summary>
+        <p class="muted">휴대폰이 접속할 수 있는 주소를 넣으세요. 예: <span class="mono">https://xxxx.trycloudflare.com</span>. 비우면 같은 Wi-Fi의 LAN IP(http)를 사용합니다.</p>
+        <div class="row">
+          <input id="publicUrl" type="url" placeholder="https://...">
+          <button id="savePublicUrl" class="primary sm">저장</button>
+        </div>
+        <p class="muted" id="publicUrlInfo"></p>
+      </details>
+
+      <details style="margin-top:8px; text-align:left">
+        <summary class="muted">휴대폰 연결 초기화</summary>
+        <p class="muted">새 QR을 발급하고 지금 연결된 휴대폰을 모두 끊습니다. 다른 휴대폰으로 바꿀 때만 사용하세요.</p>
+        <button id="newCart" class="danger sm">QR 재발급 (연결 끊기)</button>
+      </details>
+    </section>
+
+    <section>
+      <div class="card">
+        <h2>장바구니</h2>
+        <table>
+          <thead>
+            <tr><th>상품명</th><th class="num">단가</th><th class="num">수량</th><th class="num">합계</th><th></th></tr>
+          </thead>
+          <tbody id="items"></tbody>
+        </table>
+        <div id="empty" class="empty">휴대폰으로 상품 바코드를 스캔하면 여기에 표시됩니다.</div>
+        <div class="event" id="event"></div>
+        <div class="total"><span>총 <span id="count">0</span>개</span><span id="total">0원</span></div>
+        <div class="actions">
+          <button id="pay" class="primary big" disabled>테스트 결제</button>
+          <button id="clearCart" class="sm" disabled>비우기</button>
+        </div>
+        <p class="muted">모의 결제입니다. 실제 카드 정보 입력이나 청구는 없습니다. 결제하면 품목과 금액이 서버 주문 기록에 저장되고 장바구니가 비워집니다.</p>
+      </div>
+
+      <div class="card" style="margin-top:20px">
+        <h2>최근 결제 내역 <span class="muted" id="orderCount"></span></h2>
+        <table>
+          <thead><tr><th>주문</th><th>시각</th><th>품목</th><th class="num">수량</th><th class="num">결제 금액</th></tr></thead>
+          <tbody id="orders"></tbody>
+        </table>
+        <div id="ordersEmpty" class="empty">아직 결제 내역이 없습니다.</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="paidOverlay" class="overlay">
+    <div class="card">
+      <h2>✅ 결제 완료 (테스트)</h2>
+      <p>주문번호 <b id="orderId"></b> · <span id="paidAt" class="muted"></span></p>
+      <table>
+        <thead><tr><th>상품명</th><th class="num">수량</th><th class="num">금액</th></tr></thead>
+        <tbody id="receiptItems"></tbody>
+      </table>
+      <div class="total"><span>결제 금액</span><span id="receiptTotal"></span></div>
+      <p class="muted">품목과 금액이 서버에 저장되었습니다. 휴대폰은 그대로 다음 손님 상품을 스캔할 수 있습니다.</p>
+      <div class="actions">
+        <button id="nextCart" class="primary big">다음 손님</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="closedOverlay" class="overlay">
+    <div class="card">
+      <h2 style="color:var(--warn)">이 계산대 연결은 종료되었습니다</h2>
+      <p class="muted">다른 창에서 QR을 재발급했습니다. 현재 계산대를 불러옵니다.</p>
+      <div class="actions"><button id="reloadCurrent" class="primary big">현재 계산대 열기</button></div>
+    </div>
+  </div>
+
+  <script src="/js/checkout.js"></script>
+</body>
+</html>
