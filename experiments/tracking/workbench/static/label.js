@@ -61,7 +61,7 @@ Player.prototype.labelRows = function () {
       tone: p.result === "paid" ? "ok" : "warn", tip: `${PAY_NAME[p.result]} ${p.items}개` })) },
   ];
   const take = this.s.lenses.take.rows, verdict = this.s.lenses.verdict.rows;
-  for (const name of ["손 접촉", "선반 가림·비교", "행동 판정"]) {
+  for (const name of ["손 접촉", "선반 가림·비교", "칸 그림 변화", "행동 판정"]) {
     const r = take.find(x => x.label === name);
     if (r) rows.push({ ...r, group: ref });
   }
