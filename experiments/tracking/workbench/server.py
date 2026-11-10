@@ -9,6 +9,7 @@
 
 /api/wb/index   갤러리 목록 + 만드는 중인지. 바뀐 짝이 있으면 뒤에서 다시 만들기 시작한다.
 /api/wb/status  만드는 중 상태만.
+/api/wb/tune    수치 조정 (workbench/tune.py): GET 칸 목록·기록, POST run(초안 판정) / result(전후 비교) / apply(적용).
 """
 
 from __future__ import annotations
@@ -27,10 +28,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from review_serve import RangeHandler  # noqa: E402
 from workbench.data import OUT, Builder  # noqa: E402
+from workbench.tune import Tuner  # noqa: E402
 
 STATIC = "/" + (ROOT / "workbench" / "static").relative_to(REPO).as_posix() + "/"
 DATA = "/" + OUT.relative_to(REPO).as_posix() + "/"
 BUILDER = Builder()
+TUNER = Tuner(BUILDER)
 
 
 def index_payload() -> dict:
@@ -56,12 +59,29 @@ class Handler(RangeHandler):
         if not self._same_origin():
             self.send_error(403)
             return
+        body = {}
+        if method == "POST":
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+            except json.JSONDecodeError:
+                return self._json(400, {"error": "요청을 읽지 못했습니다"})
         try:
-            if path == "/api/wb/index":
+            if method == "GET" and path == "/api/wb/index":
                 return self._json(200, index_payload())
-            if path == "/api/wb/status":
-                return self._json(200, {"build": dict(BUILDER.state)})
+            if method == "GET" and path == "/api/wb/status":
+                return self._json(200, {"build": dict(BUILDER.state), "job": dict(TUNER.job)})
+            if method == "GET" and path == "/api/wb/tune":
+                return self._json(200, TUNER.page())
+            if method == "POST" and path == "/api/wb/tune/run":
+                return self._json(200, TUNER.start(body.get("values") or {}, body.get("scope") or "normal"))
+            if method == "POST" and path == "/api/wb/tune/result":
+                return self._json(200, TUNER.result(body.get("values") or {}))
+            if method == "POST" and path == "/api/wb/tune/apply":
+                return self._json(200, TUNER.apply(body.get("values") or {}))
             self.send_error(404)
+        except ValueError as e:   # 화면에서 고칠 수 있는 것 (바뀐 값 없음, 범위 밖 …)
+            self._json(400, {"error": str(e)})
         except Exception as e:  # noqa: BLE001 — 화면에 그대로 보여 준다
             self._json(500, {"error": repr(e)})
 

@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from src.core.config import AppConfig, CameraConfig, InteractionConfig  # noqa: E402
+from src.core.config import AppConfig, CameraConfig, InteractionConfig, apply_judge_overrides  # noqa: E402
 from src.core.types import Frame, RiskLevel, TakeCandidate  # noqa: E402
 from src.fusion.judge import DualJudge  # noqa: E402
 from src.fusion.shelf_events import TimeAxis, load_sensor_events  # noqa: E402
@@ -51,6 +51,8 @@ OUT = ROOT / "outputs" / "dual_eval_pose3"
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
+JUDGE_FILE: Path | None = ROOT / "configs" / "store01_dual_judge.yaml"
+"""분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다."""
 OVERRIDES: list[str] = []
 OVERVIEW_POSE = False
 OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
@@ -162,7 +164,14 @@ def pairs(pattern: str | None) -> list[str]:
     return [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
 
 
-def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig:
+_UNSET = object()
+
+
+def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_UNSET, overrides=_UNSET) -> AppConfig:
+    """judge_file·overrides 를 안 주면 모듈 값(JUDGE_FILE·OVERRIDES)을 쓴다. 주면 그 값으로만 — 모듈 값을 건드리지 않고
+    '적용한 값 없이'·'--set 없이' 설정을 보고 싶을 때 (분석 도구의 수치 조정)."""
+    judge_file = JUDGE_FILE if judge_file is _UNSET else judge_file
+    overrides = OVERRIDES if overrides is _UNSET else overrides
     cfg = deepcopy(base)
     # 끊겼다 되살아난 추적 번호는 다시 판정 (C-22) — 가장자리 변과 함께 켜면 손님 수 36→38/38, 판정 변화 없음
     # (2026-11-04 3차 비교). --set identity.track_gap_recheck_seconds=0 으로 끌 수 있다.
@@ -170,10 +179,7 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     # 바닥 구역 판단의 발 점 = 발목 (B-15, 2026-11-09 채택) — 사용자가 실제 바닥 자리에 맞춰 그린 구역과 짝.
     # 관절이 없는 예전 기록은 상자 아래 가운데로 대신한다. --set zones.foot_point=bbox 로 예전 방식.
     cfg.zones.foot_point = "ankle"
-    for item in OVERRIDES:
-        key, value = item.split("=", 1)
-        section, name = key.split(".")
-        setattr(getattr(cfg, section), name, yaml.safe_load(value))
+    _apply_set(cfg, overrides)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair)
     cfg.cameras = [
         CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"],
@@ -194,7 +200,18 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     cfg.shelves.log_items = True
     from fake_sensor import UNIT_G
     cfg.fusion.sensor_unit_g = dict(UNIT_G)
+    # 여기까지가 코드의 기본. 그 위에 적용한 판정 값(수치 조정), 그 위에 이번 실행만의 --set 을 얹는다.
+    # (2026-11-10 까지는 --set 을 위에서 먼저 얹어, risk.inside_seconds·payment_mode 는 바로 아래 기본값에 덮여 무시됐다.)
+    apply_judge_overrides(cfg, judge_file)
+    _apply_set(cfg, overrides)
     return cfg
+
+
+def _apply_set(cfg: AppConfig, overrides: list[str]) -> None:
+    for item in overrides:
+        key, value = item.split("=", 1)
+        section, name = key.split(".")
+        setattr(getattr(cfg, section), name, yaml.safe_load(value))
 
 
 # ---------------------------------------------------------------------- run

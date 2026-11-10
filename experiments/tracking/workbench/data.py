@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 1
+VERSION = 3
 """보기 데이터의 모양이 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다."""
 RUN_KEY = "current"
 
@@ -36,6 +36,21 @@ def natural(pair: str) -> tuple:
     """N1, N2, …, N10 순서 (글자 순이면 N10 이 N2 앞에 온다). 세트는 정상 → 절도 → 복합."""
     digits = "".join(c if c.isdigit() else " " for c in pair).split()
     return ("NTC".find(pair[0]) % 9, [int(d) for d in digits])
+
+
+def totals(cards: list[dict]) -> dict:
+    """카드 묶음의 점수 — 갤러리 위쪽 숫자와 수치 조정의 전후 비교가 함께 쓴다 (dual_eval.summarize 와 같은 셈)."""
+    right = [c for c in cards if c["correct"]]
+    counted = [c for c in cards if c["people_ok"] is not None]
+    return {
+        "n": len(cards), "correct": len(right),
+        "correct_decided": sum(not c["no_verdict"] for c in right),
+        "no_verdict": sum(c["no_verdict"] for c in cards),
+        "correct_last": sum(c["correct_last"] for c in cards),
+        "people_ok": sum(c["people_ok"] for c in counted), "people_n": len(counted),
+        "by_set": {s: {"n": sum(c["set"] == s for c in cards), "correct": sum(c["set"] == s and c["correct"] for c in cards)}
+                   for s in ("normal", "theft", "complex")},
+    }
 
 
 class Builder:
@@ -71,13 +86,21 @@ class Builder:
         """이 짝의 결과를 바꿀 수 있는 파일들의 크기·수정 시각."""
         files = [ROOT / "config.yaml", ROOT / "zones" / "store01_dual" / "floor.yaml",
                  ROOT / "zones" / "store01_dual" / "angle0.yaml", ROOT / "labels" / "store01_dual" / "sync.csv",
-                 ROOT / "labels" / "store01_dual" / "truth.csv", self.records_dir() / pair / ".done",
+                 ROOT / "labels" / "store01_dual" / "truth.csv", ROOT / "configs" / "store01_dual_judge.yaml",
+                 self.records_dir() / pair / ".done",
                  self.records_dir() / pair / "meta.json"]
         h = hashlib.sha1(f"v{VERSION}".encode())
         for f in files:
             st = f.stat() if f.exists() else None
             h.update(f"{f.name}:{st.st_size if st else -1}:{int(st.st_mtime) if st else 0};".encode())
         return h.hexdigest()[:16]
+
+    def settings_signature(self) -> str:
+        """모든 짝에 걸친 것(설정·구역·시차·정답표·적용한 값·기록 목록)의 지문 — 수치 조정의 초안이 어느 기준 위의 것인지."""
+        h = hashlib.sha1()
+        for pair in self.pairs():
+            h.update(self.signature(pair).encode())
+        return h.hexdigest()[:12]
 
     def stale(self) -> list[str]:
         index = self.read_index()
@@ -117,7 +140,21 @@ class Builder:
         threading.Thread(target=self.build, daemon=True).start()
         return True
 
-    def _build(self, todo: list[str]) -> None:
+    def build_draft(self, out: Path, pairs: list[str], overrides: list[str]) -> list[str]:
+        """초안 값(--set 과 같은 '절.키=값')으로 pairs 를 다시 판정해 out 에 둔다 → 실패 목록. 이미 있는 짝은 건너뛴다."""
+        with self.lock:
+            todo = [p for p in pairs if not (out / "cards" / f"{p}.json").exists()]
+            self.state.update(running=True, done=0, total=len(todo), current="", errors=[], seconds=0.0)
+            started = time.time()
+            try:
+                if todo:
+                    self._build(todo, out, overrides)
+            finally:
+                self.state.update(running=False, current="", seconds=round(time.time() - started, 1))
+            return list(self.state["errors"])
+
+    def _build(self, todo: list[str], out: Path = OUT, overrides: list[str] | None = None) -> None:
+        main = out == OUT
         c = self.ctx()
         de, rx = c["dual_eval"], c["review_export"]
         base = c["AppConfig"].load(ROOT / "config.yaml")
@@ -127,34 +164,40 @@ class Builder:
             truth = {r["pair"]: {"people": int(r["people"]), "expected": r["expected"], "notes": r["notes"], "set": r["set"]}
                      for r in c["csv"].DictReader(f)}
         run_dir = self.records_dir().name
-        (OUT / "pairs").mkdir(parents=True, exist_ok=True)
-        (OUT / "cards").mkdir(parents=True, exist_ok=True)
+        (out / "pairs").mkdir(parents=True, exist_ok=True)
+        (out / "cards").mkdir(parents=True, exist_ok=True)
+        opts = {"set": list(overrides)} if overrides else {}
         for pair in todo:
             self.state["current"] = pair
             try:
-                built = rx.pair_data(RUN_KEY, run_dir, {}, pair, base, table, band, truth)
+                built = rx.pair_data(RUN_KEY, run_dir, opts, pair, base, table, band, truth)
                 if built is None:
                     continue
                 data, result = built
-                dwell = base.risk.dwell_pay_seconds
+                cfg = de.dual_config(base, pair)   # 방금 판정에 쓴 값 그대로 (적용한 값·초안 포함)
+                dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" else None
                 summary = analyze(data, result, dwell)
                 data["summary"] = summary
-                (OUT / "pairs" / f"{pair}.json").write_text(
+                (out / "pairs" / f"{pair}.json").write_text(
                     json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
                 item = card(summary)
                 item["signature"] = self.signature(pair)
-                item["thumb"] = self._thumb(pair, data)
+                item["thumb"] = self._thumb(pair, data)   # 장면 그림은 기록에만 달려 있어 초안도 같은 것을 쓴다
                 item["score"] = {k: result[k] for k in ("correct", "correct_last", "no_verdict", "people_ok",
                                                          "expected_source")}
-                (OUT / "cards" / f"{pair}.json").write_text(json.dumps(item, ensure_ascii=False), encoding="utf-8")
+                (out / "cards" / f"{pair}.json").write_text(json.dumps(item, ensure_ascii=False), encoding="utf-8")
             except Exception as e:  # noqa: BLE001 — 한 짝이 실패해도 나머지는 만든다. 화면에 그대로 보인다
                 self.state["errors"].append(f"{pair}: {e!r}")
             self.state["done"] += 1
-            self._write_index()   # 만드는 동안에도 다 된 짝부터 갤러리에 보인다
+            if main:
+                self._write_index()   # 만드는 동안에도 다 된 짝부터 갤러리에 보인다
 
     def _thumb(self, pair: str, data: dict) -> str | None:
         """전체 카메라 영상의 한 장면을 작은 그림으로. 손님이 가장 크게 보이는 때를 고른다."""
         path = OUT / "thumbs" / f"{pair}.jpg"
+        done = self.records_dir() / pair / ".done"
+        if path.exists() and done.exists() and path.stat().st_mtime >= done.stat().st_mtime:
+            return f"thumbs/{pair}.jpg"   # 기록이 그대로면 다시 만들지 않는다 (영상을 처음부터 읽어야 해서 느리다)
         try:
             import cv2
             track = data["tracks"]["angle1"]
@@ -193,22 +236,10 @@ class Builder:
             path = OUT / "cards" / f"{pair}.json"
             if path.exists():
                 cards.append(json.loads(path.read_text(encoding="utf-8")))
-        n = len(cards)
-        right = [c for c in cards if c["correct"]]
-        counted = [c for c in cards if c["people_ok"] is not None]
-        totals = {
-            "n": n, "correct": len(right),
-            "correct_decided": sum(not c["no_verdict"] for c in right),
-            "no_verdict": sum(c["no_verdict"] for c in cards),
-            "correct_last": sum(c["correct_last"] for c in cards),
-            "people_ok": sum(c["people_ok"] for c in counted), "people_n": len(counted),
-            "by_set": {s: {"n": sum(c["set"] == s for c in cards), "correct": sum(c["set"] == s and c["correct"] for c in cards)}
-                       for s in ("normal", "theft", "complex")},
-        }
         OUT.mkdir(parents=True, exist_ok=True)
         (OUT / "index.json").write_text(json.dumps(
             {"version": VERSION, "built": time.strftime("%Y-%m-%d %H:%M"), "records": self.records_dir().name,
-             "payment": "계산대 체류 = 결제", "cards": cards, "totals": totals}, ensure_ascii=False), encoding="utf-8")
+             "payment": "계산대 체류 = 결제", "cards": cards, "totals": totals(cards)}, ensure_ascii=False), encoding="utf-8")
 
 
 def main() -> int:
