@@ -10,6 +10,7 @@ const LENSES = [
   { key: "verdict", name: "결제·판정", ask: "결제와 나감을 보고 맞게 판정하나" },
 ];
 const LEGEND = {
+  label: [["take", "집음"], ["put", "놓음"], ["bad", "경보 대상"], ["plain", "같은 사람"], ["ok", "결제"], ["quiet", "프로그램이 본 것은 참고용"]],
   track: [["who", "색 상자 = 손님 (번호마다 다른 색)"], ["quiet", "회색 = 손님이 아닌 것으로 거른 신원"], ["plain", "선반 카메라 사람"]],
   link: [["who", "두 화면에서 같은 색 = 같은 사람으로 이음"], ["ghost", "가는 줄 = 보였지만 짝 없음"], ["warn", "손님이 아닌 신원과 이음"]],
   take: [["take", "사라짐·집음"], ["put", "생김·놓음"], ["quiet", "변화 없음"], ["who", "색 = 그 손님 것으로 봄"], ["warn", "주인 못 정함"]],
@@ -86,6 +87,7 @@ const FILTERS = [
   ["all", "전체", () => true],
   ["wrong", "틀린 것", c => !c.correct],
   ["silent", "판정 없음", c => c.no_verdict],
+  ["labeled", "정답 적은 것", c => Boolean(c.labeled)],
   null,
   ["normal", "정상", c => c.set === "normal"],
   ["theft", "절도", c => c.set === "theft"],
@@ -138,7 +140,8 @@ function drawGallery(index) {
     stat("맞은 영상", t.correct, t.n, `판정이 실제로 나와서 맞은 것은 ${t.correct_decided}`),
     stat("절도를 잡음", theft.correct, theft.n, `정상 ${normal.correct}/${normal.n} · 복합 ${complex.correct}/${complex.n}`),
     stat("판정이 안 나온 영상", t.no_verdict, t.n, "영상이 끝날 때 손님이 아직 화면에 있음"),
-    stat("손님 수 맞음", t.people_ok, t.people_n, "정답표의 손님 수와 비교")));
+    stat("손님 수 맞음", t.people_ok, t.people_n, "정답표의 손님 수와 비교"),
+    labelStat(t.labeled, t.n)));
   kids.push(h("div", { class: "filters" }, FILTERS.map(f => f === null ? h("span", { class: "gap" }) :
     h("button", { class: "chip", "aria-pressed": String(app.filter === f[0]), onclick: () => { app.filter = f[0]; drawGallery(index); } },
       f[1], h("span", { class: "n" }, String(cards.filter(f[2]).length))))));
@@ -147,6 +150,21 @@ function drawGallery(index) {
   kids.push(shown.length ? h("div", { class: "grid" }, shown.map(c => card(c, index))) : h("div", { class: "empty" }, "여기에 해당하는 영상이 없습니다."));
   view.replaceChildren(...kids);
   if (index.build.running) drawBuilding(index.build);
+}
+
+function labelStat(L, total) {
+  if (!L || !L.n) {
+    return h("div", { class: "stat" }, h("div", { class: "k" }, "사람이 적은 정답"),
+      h("div", { class: "v" }, "0", h("small", {}, ` / ${total}`)),
+      h("div", { class: "s" }, "영상을 열어 '정답 적기'로 적으면 집은 개수·두 화면 짝이 채점됩니다"));
+  }
+  const bits = [];
+  if (L.take_n) bits.push(`집은 개수 ${L.take_ok}/${L.take_n}`);
+  if (L.link_n) bits.push(`두 화면 짝 ${L.link_ok}/${L.link_n}`);
+  if (L.culprit_n) bits.push(`경보 대상 ${L.culprit_ok}/${L.culprit_n}`);
+  return h("div", { class: "stat" }, h("div", { class: "k" }, "사람이 적은 정답"),
+    h("div", { class: "v" }, String(L.n), h("small", {}, ` / ${total} 영상`)),
+    h("div", { class: "s" }, bits.join(" · ") || "채점할 만큼 적지 않음"));
 }
 
 function stat(k, a, b, s) {
@@ -189,7 +207,7 @@ async function showPair(pair, lens, draft) {
     return showError(e);
   }
   const s = data.summary;
-  if (!LENSES.some(l => l.key === lens)) {
+  if (!LENSES.some(l => l.key === lens) && !(lens === "label" && !draft)) {
     lens = (LENSES.find(l => s.lenses[l.key].status === "bad") || { key: "verdict" }).key;
   }
   crumbs.replaceChildren("›", h("b", {}, pair), meta ? h("span", { class: "pill warn" }, "초안 값") : null);
@@ -206,6 +224,7 @@ class Player {
     for (const cam of ["angle1", "angle0"]) this.keys[cam] = Object.keys(data.tracks[cam].frames).map(Number).sort((a, b) => a - b);
     this.itemKeys = data.shelf_items.map(r => r[0]);
     this.showZones = lens === "verdict" || lens === "take";
+    this.initLabels();
     this.build();
     this.onKey = e => this.key(e);
     document.addEventListener("keydown", this.onKey);
@@ -230,7 +249,9 @@ class Player {
     const go = d => { const c = cards[i + d]; if (c) location.hash = `#/pair/${encodeURIComponent(c.pair)}`; };
     this.vA = h("video", { src: this.data.video.angle1, preload: "auto", muted: true, playsinline: true });
     this.vB = h("video", { src: this.data.video.angle0, preload: "auto", muted: true, playsinline: true });
-    this.cA = h("canvas"); this.cB = h("canvas");
+    this.cA = h("canvas", { onclick: e => this.clickVideo("angle1", e) });
+    this.cB = h("canvas", { onclick: e => this.clickVideo("angle0", e) });
+    this.msgA = h("div", { class: "pickmsg", hidden: true }); this.msgB = h("div", { class: "pickmsg", hidden: true });
     this.offB = h("div", { class: "off", hidden: true }, "이 시각에는 선반 카메라 영상이 없습니다");
     for (const [v, name] of [[this.vA, "전체 카메라"], [this.vB, "선반 카메라"]]) {
       v.addEventListener("error", () => v.parentElement.append(h("div", { class: "off" }, `${name} 영상을 열 수 없습니다: ${v.getAttribute("src")}`)));
@@ -266,8 +287,8 @@ class Player {
       h("div", { class: "work" },
         h("div", {},
           h("div", { class: "videos" },
-            h("div", { class: "screen" }, this.vA, this.cA, h("span", { class: "label" }, "전체 카메라")),
-            h("div", { class: "screen" }, this.vB, this.cB, h("span", { class: "label" }, "선반 카메라"), this.offB)),
+            h("div", { class: "screen" }, this.vA, this.cA, h("span", { class: "label" }, "전체 카메라"), this.msgA),
+            h("div", { class: "screen" }, this.vB, this.cB, h("span", { class: "label" }, "선반 카메라"), this.offB, this.msgB)),
           h("div", { class: "transport" },
             this.playBtn,
             h("button", { class: "btn", "aria-label": "한 장면 뒤로", onclick: () => this.step(-1) }, "‹"),
@@ -290,17 +311,35 @@ class Player {
       const back = view.querySelector(".draftbar a");
       if (back) back.setAttribute("href", `#/pair/${encodeURIComponent(this.s.pair)}/${lens}`);
     }
-    const L = this.s.lenses;
-    this.lensBar.replaceChildren(...LENSES.map((l, n) => h("button", {
-      class: "lens", role: "tab", "aria-selected": String(l.key === lens), "data-tip": `${l.ask} — ${statusWord(L[l.key].status)}`,
-      onclick: () => this.setLens(l.key),
-    }, h("span", { class: `dot ${L[l.key].status}` }), l.name, h("kbd", {}, String(n + 1)))));
+    if (lens !== "label" && this.pick) { this.pick = null; this.showPick(); }
+    this.drawLensBar();
     this.legend.replaceChildren(...LEGEND[lens].map(([tone, text]) => h("span", {},
       h("i", { style: tone === "who" ? `background:${PALETTE[0]}` : "", class: tone === "who" ? "" : `tl-seg ${tone}`, }), text)));
     for (const i of this.legend.querySelectorAll("i.tl-seg")) i.style.position = "static";
-    this.drawTimeline(L[lens]);
-    this.drawFacts(L[lens]);
+    this.logBox.hidden = lens === "label";
+    if (lens === "label") {
+      this.drawTimeline({ rows: this.labelRows() });
+      this.drawLabelPanel();
+    } else {
+      this.drawTimeline(this.s.lenses[lens]);
+      this.drawFacts(this.s.lenses[lens]);
+    }
     this.draw();
+  }
+
+  drawLensBar() {
+    const L = this.s.lenses, lens = this.lens;
+    const tabs = LENSES.map((l, n) => h("button", {
+      class: "lens", role: "tab", "aria-selected": String(l.key === lens), "data-tip": `${l.ask} — ${statusWord(L[l.key].status)}`,
+      onclick: () => this.setLens(l.key),
+    }, h("span", { class: `dot ${L[l.key].status}` }), l.name, h("kbd", {}, String(n + 1))));
+    if (!this.draft) {
+      tabs.push(h("span", { class: "lens-gap" }), h("button", {
+        class: "lens write", role: "tab", "aria-selected": String(lens === "label"),
+        "data-tip": "영상을 보며 정답을 적습니다 — 적은 것으로 위 질문들이 채점됩니다", onclick: () => this.setLens("label"),
+      }, "정답 적기", this.labelCount() ? h("span", { class: "count" }, String(this.labelCount())) : null, h("kbd", {}, "5")));
+    }
+    this.lensBar.replaceChildren(...tabs);
   }
 
   /* -- 타임라인 */
@@ -422,17 +461,20 @@ class Player {
     this.raf = requestAnimationFrame(() => this.tick());
   }
   key(e) {
-    if (e.target.matches("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey) return;
+    if ((e.target.matches && e.target.matches("input, select, textarea")) || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === " ") { e.preventDefault(); this.toggle(); }
     else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       e.preventDefault();
       this.step(e.key === "ArrowLeft" ? -1 : 1, e.shiftKey ? 1000 : 0);
     } else if ("1234".includes(e.key) && e.key.length === 1) this.setLens(LENSES[Number(e.key) - 1].key);
+    else if (e.key === "5" && !this.draft) this.setLens("label");
+    else if (this.lens === "label") this.labelKey(e);
   }
 
   /* -- 그 시각의 기록 찾기 */
-  rowsAt(cam) {
-    const tr = this.data.tracks[cam], local = cam === "angle0" ? this.t - this.offset : this.t;
+  rowsAt(cam, at) {
+    const now = at == null ? this.t : at;
+    const tr = this.data.tracks[cam], local = cam === "angle0" ? now - this.offset : now;
     const f = local * tr.fps / 1000, keys = this.keys[cam];
     let lo = 0, hi = keys.length - 1;
     if (hi < 0) return [];
@@ -486,6 +528,7 @@ class Player {
     }
     this.drawOverview();
     this.drawDetail();
+    this.drawTruth();
   }
 
   pen(canvas, track) {
@@ -571,6 +614,7 @@ class Player {
       if (lens === "track") text += ` · 추적 t${r[2]}`;
       else if (lens === "link") { const l = this.linkTo(rid); text += l ? ` ⇄ 선반 화면 ${l.detail}` : " · 짝 없음"; }
       else if (lens === "take") text += ` · 물건 ${this.itemsOf(rid)}`;
+      else if (lens === "label") text += "";
       else {
         const v = this.verdictOf(rid);
         text += ` · 물건 ${this.itemsOf(rid)} · 결제 ${this.paidOf(rid)}` + (v ? ` · ${LEVEL_NAME[v.level] || v.level}` : "");
@@ -614,4 +658,3 @@ class Player {
   }
 }
 
-route();
