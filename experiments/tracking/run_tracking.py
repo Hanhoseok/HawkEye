@@ -131,7 +131,7 @@ def parse_args() -> argparse.Namespace:
 def apply_dual(config: AppConfig, args: argparse.Namespace) -> AppConfig:
     """카메라 2대 설정 파일을 기본 설정 위에 얹는다. risk·identity·zones 는 적힌 칸만 바꾼다."""
     import yaml
-    from src.core.config import CameraConfig, FusionConfig, InteractionConfig
+    from src.core.config import CameraConfig, FusionConfig, InteractionConfig, apply_judge_overrides
 
     raw = yaml.safe_load(Path(args.dual_config).read_text(encoding="utf-8")) or {}
     config.cameras = [CameraConfig(**c) for c in raw.get("cameras") or []]
@@ -142,6 +142,9 @@ def apply_dual(config: AppConfig, args: argparse.Namespace) -> AppConfig:
     for section in ("risk", "identity", "zones"):
         for key, value in (raw.get(section) or {}).items():
             setattr(getattr(config, section), key, value)
+    # 분석 도구의 '수치 조정'에서 적용한 판정 값 (<설정 이름>_judge.yaml) — 평가(dual_eval)와 같은 값으로 돌게
+    dual_path = Path(args.dual_config)
+    apply_judge_overrides(config, dual_path.with_name(dual_path.stem + "_judge.yaml"))
     for spec in args.camera or []:
         name, _, source = spec.partition("=")
         for cam in config.cameras:

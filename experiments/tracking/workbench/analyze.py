@@ -6,6 +6,7 @@
           정답이 없는 것(두 화면 짝, 집은 시각)은 info·warn 으로만 말한다 — 눈으로 확인하라는 뜻.
 - rows  : 타임라인 줄. segs(구간)와 marks(순간). who 는 전체 카메라 손님 번호(색을 정함), tone 은 뜻(ok·bad·warn·take·put·quiet).
 - log   : 시간 순서 기록 (누르면 그 시각으로).
+facts 의 knob 은 그 사실을 좌우하는 판정 값의 이름(workbench/tune.py KNOBS) — 화면이 '이 기준 바꿔 보기'로 잇는다.
 
 영상·모델 라이브러리를 쓰지 않는다 — 기록만으로 계산하므로 시험할 수 있다 (tests/test_workbench_analyze.py).
 입력 data 는 scripts/review_export.py pair_data 가 만든 모양, result 는 scripts/dual_eval.py judge_pair 의 채점 결과.
@@ -90,13 +91,13 @@ def lens_track(data: dict, result: dict, customers: set[int]) -> dict:
     if expected is None:
         facts.append({"level": "info", "text": f"손님 {people}명으로 셈 (정답표에 손님 수 없음)"})
     else:
-        facts.append({"level": "ok" if people == expected else "bad",
+        facts.append({"level": "ok" if people == expected else "bad", "knob": None if people == expected else "risk.inside_seconds",
                       "text": f"손님 수: 프로그램 {people}명 · 정답 {expected}명"})
     extra = [pid for pid in over if pid not in customers]
     if extra:
         facts.append({"level": "info",
                       "text": f"전체 카메라에 생긴 신원 {len(over)}개 중 {len(extra)}개는 손님이 아닌 것으로 걸러짐 "
-                              "(매장 안 바닥에 1초 이상 서지 않음 — 외투·문밖 행인·입장 순간 조각)"})
+                              "(매장 안 바닥에 충분히 오래 서지 않음 — 외투·문밖 행인·입장 순간 조각)"})
     marks: dict[int, list[dict]] = {}
     for b in data["births"]["angle1"]:
         edge = " · 화면 끝에서 등장" if b.get("edge") else ""
@@ -141,7 +142,7 @@ def lens_link(data: dict, customers: set[int]) -> dict:
     if pct is None:
         facts.append({"level": "info", "text": "선반 카메라에 사람이 보이지 않음"})
     else:
-        facts.append({"level": "info",
+        facts.append({"level": "info", "knob": "fusion.min_score",
                       "text": f"선반 카메라에 사람이 보인 시간의 {pct}% 에 전체 카메라 짝이 있음 "
                               f"({visible / 1000:.1f}초 중 {linked / 1000:.1f}초)"})
     for d in sorted(detail, key=lambda p: detail[p][0][0]):
@@ -288,7 +289,7 @@ def lens_verdict(data: dict, result: dict, customers: set[int], dwell_seconds: f
         log.append({"ms": e["ms"], "level": tone, "text": text})
     if result["no_verdict"]:
         tail = " 정상 영상이라 채점에서는 맞음에 들어가지만 통과까지 확인된 것은 아님." if expected != "HIGH_RISK" else ""
-        facts.append({"level": "warn",
+        facts.append({"level": "warn", "knob": "risk.exit_confirm_seconds",
                       "text": "판정이 하나도 없음 — 영상이 끝날 때까지 손님이 나갔다고 확정되지 않음 "
                               f"(끝 장면에 아직 화면에 보임).{tail}"})
     if result["correct"] != result["correct_last"]:
@@ -319,7 +320,8 @@ def lens_verdict(data: dict, result: dict, customers: set[int], dwell_seconds: f
     bits = [f"결제 {len(paid)}건"] + ([f"취소 {len(cancels)}건"] if cancels else []) + ([f"연결 못 한 결제 {len(unmatched)}건"] if unmatched else [])
     basis = (f"결제 기록이 없어 '계산대에 {dwell_seconds:g}초 이상 서 있으면 결제'로 봄 — 실제 결제가 아님"
              if dwell_seconds else "결제 기록 사용")
-    facts.append({"level": "info", "text": f"{' · '.join(bits)}. {basis}"})
+    facts.append({"level": "info", "knob": "risk.dwell_pay_seconds" if dwell_seconds else None,
+                  "text": f"{' · '.join(bits)}. {basis}"})
     status = "bad" if not result["correct"] else ("warn" if result["no_verdict"] else "ok")
     return {"status": status, "facts": facts, "rows": rows, "log": sorted(log, key=lambda r: r["ms"])}
 

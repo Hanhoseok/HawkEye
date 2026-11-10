@@ -9,11 +9,16 @@
 <body>
 <header class="top">
   <a class="brand" href="#/">HawkEye 분석</a>
+  <nav class="tabs" aria-label="화면">
+    <a href="#/" data-tab="gallery">갤러리</a>
+    <a href="#/tune" data-tab="tune">수치 조정</a>
+  </nav>
   <nav id="crumbs" class="crumbs" aria-label="현재 위치"></nav>
   <span id="context" class="context"></span>
 </header>
 <main id="view" class="view" tabindex="-1"></main>
 <div id="tip" class="tip" hidden></div>
+<script src="tune.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

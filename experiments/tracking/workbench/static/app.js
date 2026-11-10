@@ -63,8 +63,13 @@ function route() {
   clearInterval(app.poll);
   if (app.player) { app.player.destroy(); app.player = null; }
   tipBox.hidden = true;
-  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
-  if (parts[0] === "pair" && parts[1]) showPair(parts[1], parts[2]);
+  const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
+  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  const query = Object.fromEntries(new URLSearchParams(qs || ""));
+  const tab = parts[0] === "tune" ? "tune" : "gallery";
+  for (const a of document.querySelectorAll(".tabs a")) a.setAttribute("aria-current", String(a.dataset.tab === tab));
+  if (parts[0] === "pair" && parts[1]) showPair(parts[1], parts[2], query.draft);
+  else if (parts[0] === "tune") showTune(query);
   else showGallery();
 }
 window.addEventListener("hashchange", route);
@@ -171,27 +176,29 @@ function showError(e) {
 }
 
 /* ------------------------------------------------------------------ 한 쌍 분석 */
-async function showPair(pair, lens) {
+async function showPair(pair, lens, draft) {
   view.replaceChildren(h("div", { class: "empty" }, "불러오는 중"));
-  let index, data;
+  let index, data, meta = null;
   try {
     index = app.index || await loadIndex();
-    data = await getJSON(`${index.data}pairs/${encodeURIComponent(pair)}.json`);
+    const base = draft ? `${index.data}drafts/${encodeURIComponent(draft)}/` : index.data;
+    data = await getJSON(`${base}pairs/${encodeURIComponent(pair)}.json`);
+    if (draft) meta = await getJSON(`${base}meta.json`);
   } catch (e) {
-    crumbs.replaceChildren(h("a", { href: "#/" }, "갤러리"));
+    crumbs.replaceChildren("›", h("b", {}, pair));
     return showError(e);
   }
   const s = data.summary;
   if (!LENSES.some(l => l.key === lens)) {
     lens = (LENSES.find(l => s.lenses[l.key].status === "bad") || { key: "verdict" }).key;
   }
-  crumbs.replaceChildren(h("a", { href: "#/" }, "갤러리"), "›", h("b", {}, pair));
-  app.player = new Player(index, data, lens);
+  crumbs.replaceChildren("›", h("b", {}, pair), meta ? h("span", { class: "pill warn" }, "초안 값") : null);
+  app.player = new Player(index, data, lens, meta);
 }
 
 class Player {
-  constructor(index, data, lens) {
-    this.index = index; this.data = data; this.s = data.summary; this.lens = lens;
+  constructor(index, data, lens, draft) {
+    this.index = index; this.data = data; this.s = data.summary; this.lens = lens; this.draft = draft;
     this.offset = data.offset_ms; this.duration = this.s.duration_ms; this.t = 0; this.playing = false;
     this.customers = new Set(this.s.customers);
     this.colors = new Map(this.s.customers.map((pid, i) => [pid, PALETTE[i % PALETTE.length]]));
@@ -247,10 +254,14 @@ class Player {
         h("h1", {}, s.pair), h("span", { class: "tag" }, s.set_name),
         h("span", { class: `pill ${OUTCOME_TONE[s.outcome]}` }, s.headline),
         h("span", { class: "muted" }, s.reason),
-        h("div", { class: "nav" },
+        this.draft ? null : h("div", { class: "nav" },
           h("button", { class: "btn", disabled: i <= 0, onclick: () => go(-1) }, "‹ 이전 영상"),
           h("button", { class: "btn", disabled: i < 0 || i >= cards.length - 1, onclick: () => go(1) }, "다음 영상 ›"))),
       h("p", { class: "scenario" }, s.notes ? `정답표 메모: ${s.notes}` : ""),
+      this.draft ? h("div", { class: "draftbar" },
+        h("span", {}, "초안 값으로 다시 판정한 결과입니다 — ", h("b", {}, this.draft.changes.join(" · "))),
+        h("a", { class: "btn", href: `#/pair/${encodeURIComponent(s.pair)}/${this.lens}` }, "지금 값으로 보기"),
+        h("a", { class: "btn", href: "#/tune" }, "수치 조정으로")) : null,
       this.lensBar,
       h("div", { class: "work" },
         h("div", {},
@@ -275,7 +286,9 @@ class Player {
     if (!first) {
       this.showZones = lens === "verdict" || lens === "take";
       this.zoneBox.checked = this.showZones;
-      history.replaceState(null, "", `#/pair/${encodeURIComponent(this.s.pair)}/${lens}`);
+      history.replaceState(null, "", `#/pair/${encodeURIComponent(this.s.pair)}/${lens}` + (this.draft ? `?draft=${this.draft.draft}` : ""));
+      const back = view.querySelector(".draftbar a");
+      if (back) back.setAttribute("href", `#/pair/${encodeURIComponent(this.s.pair)}/${lens}`);
     }
     const L = this.s.lenses;
     this.lensBar.replaceChildren(...LENSES.map((l, n) => h("button", {
@@ -350,7 +363,9 @@ class Player {
     const lens = LENSES.find(l => l.key === this.lens);
     this.facts.replaceChildren(h("h2", {}, lens.ask), ...L.facts.map(f => h("div", { class: `fact ${f.level}` },
       h("span", { class: `dot ${f.level}` }),
-      h("div", {}, h("span", { class: "t" }, f.text), f.ms != null ? [" ", h("button", { class: "jump", onclick: () => this.seek(f.ms - 300) }, `▶ ${sec(f.ms)}`)] : null))));
+      h("div", {}, h("span", { class: "t" }, f.text),
+        f.ms != null ? [" ", h("button", { class: "jump", onclick: () => this.seek(f.ms - 300) }, `▶ ${sec(f.ms)}`)] : null,
+        f.knob ? [" ", h("a", { class: "jump", href: `#/tune?focus=${f.knob}` }, "이 기준 바꿔 보기")] : null))));
     this.logItems = L.log.map(r => {
       const el = h("button", { onclick: () => this.seek(r.ms - 300) }, h("span", { class: "ms" }, sec(r.ms)), h("span", { class: r.level }, r.text));
       el.dataset.ms = r.ms;
