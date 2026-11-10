@@ -27,7 +27,7 @@ const view = document.getElementById("view");
 const crumbs = document.getElementById("crumbs");
 const context = document.getElementById("context");
 const tipBox = document.getElementById("tip");
-const app = { index: null, filter: "all", player: null, poll: null };
+const app = { index: null, filter: "all", batch: null, player: null, poll: null };
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -100,16 +100,20 @@ async function showGallery() {
   let index;
   try { index = await loadIndex(); } catch (e) { return showError(e); }
   drawGallery(index);
-  if (index.build.running) {
-    app.poll = setInterval(async () => {
-      const s = await getJSON("/api/wb/status").catch(() => null);
-      if (!s) return;
-      if (!s.build.running) clearInterval(app.poll);
-      const fresh = await loadIndex().catch(() => null);
-      if (fresh && (fresh.cards.length !== shownCards || !s.build.running)) drawGallery(fresh);
-      else drawBuilding(s.build);
-    }, 1000);
-  }
+  galleryPoll(index);
+}
+
+// 뒤에서 일이 도는 동안(보기 데이터 만들기, 추가한 영상 처리)만 주기적으로 다시 읽는다
+function galleryPoll(index) {
+  clearInterval(app.poll);
+  const busy = i => i.build.running || (i.pending || []).some(p => ["queued", "running", "finishing"].includes(p.state));
+  if (!busy(index)) return;
+  app.poll = setInterval(async () => {
+    const fresh = await loadIndex().catch(() => null);
+    if (!fresh) return;
+    if (!busy(fresh)) clearInterval(app.poll);
+    drawGallery(fresh);
+  }, 1500);
 }
 
 function drawBuilding(build) {
@@ -121,33 +125,40 @@ function drawBuilding(build) {
     h("div", { class: "bar" }, h("i", { style: `width:${pct}%` })));
 }
 
-let shownCards = 0;
 function drawGallery(index) {
-  const cards = index.cards || [], t = index.totals;
-  shownCards = cards.length;
+  const all = index.cards || [], batches = index.batches || [], pending = index.pending || [];
+  const batch = batches.find(x => x.key === app.batch) || batches[0] || null;
+  const cards = batch && batches.length > 1 ? all.filter(c => (c.batch || "shoot2") === batch.key) : all;
+  const t = batch && batches.length > 1 ? batch.totals : index.totals;
   const kids = [];
   if (index.build.running) kids.push(h("div", { class: "building", id: "building" }));
   if (index.build.errors && index.build.errors.length) kids.push(h("div", { class: "errors" }, "만들지 못한 짝:\n" + index.build.errors.join("\n")));
-  if (!cards.length) {
+  if (!all.length && !pending.length && !add.open) {
     kids.push(h("div", { class: "empty" }, index.build.running ? "처음 여는 중이라 잠시 걸립니다 (짝마다 몇 초)." :
-      "기록이 없습니다. python scripts/dual_eval.py run 으로 영상을 먼저 돌려 두세요."));
-    view.replaceChildren(...kids);
-    if (index.build.running) drawBuilding(index.build);
-    return;
+      "아직 영상이 없습니다. 아래에서 두 각도 영상을 추가하세요."));
   }
-  const theft = t.by_set.theft, normal = t.by_set.normal, complex = t.by_set.complex;
-  kids.push(h("div", { class: "stats" },
-    stat("맞은 영상", t.correct, t.n, `판정이 실제로 나와서 맞은 것은 ${t.correct_decided}`),
-    stat("절도를 잡음", theft.correct, theft.n, `정상 ${normal.correct}/${normal.n} · 복합 ${complex.correct}/${complex.n}`),
-    stat("판정이 안 나온 영상", t.no_verdict, t.n, "영상이 끝날 때 손님이 아직 화면에 있음"),
-    stat("손님 수 맞음", t.people_ok, t.people_n, "정답표의 손님 수와 비교"),
-    labelStat(t.labeled, t.n)));
-  kids.push(h("div", { class: "filters" }, FILTERS.map(f => f === null ? h("span", { class: "gap" }) :
-    h("button", { class: "chip", "aria-pressed": String(app.filter === f[0]), onclick: () => { app.filter = f[0]; drawGallery(index); } },
-      f[1], h("span", { class: "n" }, String(cards.filter(f[2]).length))))));
+  if (batches.length > 1) {
+    kids.push(h("div", { class: "filters batches" }, batches.map(x => h("button", {
+      class: "chip", "aria-pressed": String(x.key === batch.key), onclick: () => { app.batch = x.key; drawGallery(index); },
+    }, x.name, h("span", { class: "n" }, String(x.totals.n))))));
+  }
+  if (cards.length) {
+    const theft = t.by_set.theft, normal = t.by_set.normal, complex = t.by_set.complex;
+    kids.push(h("div", { class: "stats" },
+      stat("맞은 영상", t.correct, t.n, `판정이 실제로 나와서 맞은 것은 ${t.correct_decided}`),
+      stat("절도를 잡음", theft.correct, theft.n, `정상 ${normal.correct}/${normal.n} · 복합 ${complex.correct}/${complex.n}`),
+      stat("판정이 안 나온 영상", t.no_verdict, t.n, "영상이 끝날 때 손님이 아직 화면에 있음"),
+      stat("손님 수 맞음", t.people_ok, t.people_n, "정답표의 손님 수와 비교"),
+      labelStat(t.labeled, t.n)));
+    kids.push(h("div", { class: "filters" }, FILTERS.map(f => f === null ? h("span", { class: "gap" }) :
+      h("button", { class: "chip", "aria-pressed": String(app.filter === f[0]), onclick: () => { app.filter = f[0]; drawGallery(index); } },
+        f[1], h("span", { class: "n" }, String(cards.filter(f[2]).length))))));
+  }
+  if (add.open) kids.push(addForm(index));
   const test = FILTERS.find(f => f && f[0] === app.filter)[2];
   const shown = cards.filter(test);
-  kids.push(shown.length ? h("div", { class: "grid" }, shown.map(c => card(c, index))) : h("div", { class: "empty" }, "여기에 해당하는 영상이 없습니다."));
+  kids.push(h("div", { class: "grid" }, addCard(index), pending.map(x => pendingCard(x)), shown.map(c => card(c, index))));
+  if (cards.length && !shown.length) kids.push(h("div", { class: "empty" }, "여기에 해당하는 영상이 없습니다."));
   view.replaceChildren(...kids);
   if (index.build.running) drawBuilding(index.build);
 }
@@ -181,7 +192,9 @@ function card(c, index) {
     h("div", { class: "thumb", style: c.thumb ? `background-image:url("${index.data}${c.thumb}")` : "" },
       h("span", { class: `pill ${tone}` }, c.headline)),
     h("div", { class: "body" },
-      h("div", { class: "name" }, c.pair, h("span", { class: "tag" }, c.set_name)),
+      h("div", { class: "name" }, c.pair, h("span", { class: "tag" }, c.set_name),
+        c.batch === "added" && c.sync_method !== "manual"
+          ? h("span", { class: "pill warn", "data-tip": "두 영상의 시차가 자동 추정값입니다 — 영상을 열어 '정답 적기'에서 확인하세요" }, "시차 확인") : null),
       h("div", { class: "why" }, c.reason),
       h("div", { class: "meta" }, meta.join(" · "),
         h("span", { class: "lens-dots", "data-tip": LENSES.map(l => `${l.name}: ${statusWord(c.status[l.key])}`).join("  ·  ") },
@@ -210,14 +223,14 @@ async function showPair(pair, lens, draft) {
   if (!LENSES.some(l => l.key === lens) && !(lens === "label" && !draft)) {
     lens = (LENSES.find(l => s.lenses[l.key].status === "bad") || { key: "verdict" }).key;
   }
-  crumbs.replaceChildren("›", h("b", {}, pair), meta ? h("span", { class: "pill warn" }, "초안 값") : null);
+  crumbs.replaceChildren("›", h("b", {}, pair), meta ? h("span", { class: "pill warn" }, "초안 값") : "");
   app.player = new Player(index, data, lens, meta);
 }
 
 class Player {
   constructor(index, data, lens, draft) {
     this.index = index; this.data = data; this.s = data.summary; this.lens = lens; this.draft = draft;
-    this.offset = data.offset_ms; this.duration = this.s.duration_ms; this.t = 0; this.playing = false;
+    this.offset = data.offset_ms; this.savedOffset = data.offset_ms; this.duration = this.s.duration_ms; this.t = 0; this.playing = false;
     this.customers = new Set(this.s.customers);
     this.colors = new Map(this.s.customers.map((pid, i) => [pid, PALETTE[i % PALETTE.length]]));
     this.keys = {};
@@ -282,7 +295,7 @@ class Player {
       this.draft ? h("div", { class: "draftbar" },
         h("span", {}, "초안 값으로 다시 판정한 결과입니다 — ", h("b", {}, this.draft.changes.join(" · "))),
         h("a", { class: "btn", href: `#/pair/${encodeURIComponent(s.pair)}/${this.lens}` }, "지금 값으로 보기"),
-        h("a", { class: "btn", href: "#/tune" }, "수치 조정으로")) : null,
+        h("a", { class: "btn", href: "#/tune" }, "수치 조정으로")) : "",
       this.lensBar,
       h("div", { class: "work" },
         h("div", {},

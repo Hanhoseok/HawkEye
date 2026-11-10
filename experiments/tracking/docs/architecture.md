@@ -255,8 +255,8 @@ src/
   fusion/shelf_events.py       ⑦ 선반 사건 묶기 (주인 정하기, 센서 입력 자리)
   fusion/judge.py              ⑦ 합치기 + 판정 (실시간·재실행 공용)
 scripts/                       평가·실험 도구 — 쓰임별 분류는 README §3 'scripts — 쓰임별로'
-workbench/                     분석 도구 (server.py 서버 · data.py 기록→보기 데이터 · analyze.py 질문별 요약·정답 채점 · labels.py 정답 적기 · tune.py 수치 조정 · static/ 화면) — workbench/README.md
-tests/                         층별 규칙 테스트 (2026-10-19 148개 → 2026-11-10 228개, 227 통과 · 1 건너뜀)
+workbench/                     분석 도구 (server.py 서버 · data.py 기록→보기 데이터 · analyze.py 질문별 요약·정답 채점 · labels.py 정답 적기 · intake.py 새 영상 추가 · tune.py 수치 조정 · static/ 화면) — workbench/README.md
+tests/                         층별 규칙 테스트 (2026-10-19 148개 → 2026-11-10 235개, 234 통과 · 1 건너뜀)
 labels/                        정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서, events/<짝>.json 집음·짝·경보 대상)
 docs/                          설계·실험 문서
 ```

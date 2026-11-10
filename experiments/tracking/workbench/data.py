@@ -28,9 +28,22 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 4
+VERSION = 6
 """보기 데이터의 모양이 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다."""
 RUN_KEY = "current"
+
+
+ADDED = ROOT / "labels" / "store01_dual" / "added.csv"
+BATCH_NAME = {"shoot2": "2차 촬영", "added": "추가한 영상"}
+
+
+def added_names() -> set[str]:
+    """분석 도구에서 추가한 영상의 이름 (workbench/intake.py 가 적는 labels/store01_dual/added.csv)."""
+    if not ADDED.exists():
+        return set()
+    import csv
+    with open(ADDED, encoding="utf-8", newline="") as f:
+        return {r["pair"] for r in csv.DictReader(f)}
 
 
 def natural(pair: str) -> tuple:
@@ -98,16 +111,33 @@ class Builder:
     def signature(self, pair: str) -> str:
         """이 짝의 결과를 바꿀 수 있는 파일들의 크기·수정 시각."""
         files = [ROOT / "config.yaml", ROOT / "zones" / "store01_dual" / "floor.yaml",
-                 ROOT / "zones" / "store01_dual" / "angle0.yaml", ROOT / "labels" / "store01_dual" / "sync.csv",
-                 ROOT / "labels" / "store01_dual" / "truth.csv", ROOT / "configs" / "store01_dual_judge.yaml",
-                 label_store.PAYMENTS, label_store.EVENTS / f"{pair}.json",
+                 ROOT / "zones" / "store01_dual" / "angle0.yaml", ROOT / "configs" / "store01_dual_judge.yaml",
+                 label_store.EVENTS / f"{pair}.json",
                  self.records_dir() / pair / ".done",
                  self.records_dir() / pair / "meta.json"]
         h = hashlib.sha1(f"v{VERSION}".encode())
+        # 짝마다 한 줄씩 있는 표는 그 짝의 줄만 본다 — 한 영상의 시차·결제를 고쳤다고 38쌍을 다 다시 만들지 않게
+        for table in (ROOT / "labels" / "store01_dual" / "sync.csv", ROOT / "labels" / "store01_dual" / "truth.csv",
+                      label_store.PAYMENTS, ADDED):
+            h.update(self._rows(table).get(pair, "-").encode("utf-8"))
         for f in files:
             st = f.stat() if f.exists() else None
             h.update(f"{f.name}:{st.st_size if st else -1}:{int(st.st_mtime) if st else 0};".encode())
         return h.hexdigest()[:16]
+
+    def _rows(self, path: Path) -> dict[str, str]:
+        """표의 줄을 짝 이름(첫 칸)별로 묶은 것. 파일이 그대로면 다시 읽지 않는다."""
+        cache = self.__dict__.setdefault("_row_cache", {})
+        st = path.stat() if path.exists() else None
+        key = (st.st_size, st.st_mtime_ns) if st else None
+        if path not in cache or cache[path][0] != key:
+            rows: dict[str, str] = {}
+            if st:
+                for line in path.read_text(encoding="utf-8-sig").splitlines()[1:]:
+                    name = line.split(",", 1)[0]
+                    rows[name] = rows.get(name, "") + line + "\n"
+            cache[path] = (key, rows)
+        return cache[path][1]
 
     def settings_signature(self) -> str:
         """모든 짝에 걸친 것(설정·구역·시차·정답표·적용한 값·기록 목록)의 지문 — 수치 조정의 초안이 어느 기준 위의 것인지."""
@@ -178,6 +208,7 @@ class Builder:
             truth = {r["pair"]: {"people": int(r["people"]), "expected": r["expected"], "notes": r["notes"], "set": r["set"]}
                      for r in c["csv"].DictReader(f)}
         run_dir = self.records_dir().name
+        added = added_names()
         (out / "pairs").mkdir(parents=True, exist_ok=True)
         (out / "cards").mkdir(parents=True, exist_ok=True)
         opts = {"set": list(overrides)} if overrides else {}
@@ -190,6 +221,9 @@ class Builder:
                 data, result = built
                 data["labels"] = label_store.load(pair)              # 사람이 적은 정답 (없으면 빈 것)
                 data["payment_labels"] = label_store.load_payments(pair)
+                row = table.rows.get(pair)
+                data["sync"] = {"offset_ms": row.offset_ms if row else 0.0, "method": row.method if row else "none",
+                                "checked_by": row.checked_by if row else "", "note": row.note if row else ""}
                 cfg = de.dual_config(base, pair)   # 방금 판정에 쓴 값 그대로 (적용한 값·초안 포함)
                 dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" else None
                 summary = analyze(data, result, dwell)
@@ -198,6 +232,8 @@ class Builder:
                     json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
                 item = card(summary)
                 item["signature"] = self.signature(pair)
+                item["batch"] = "added" if pair in added else "shoot2"
+                item["sync_method"] = data["sync"]["method"]
                 item["thumb"] = self._thumb(pair, data)   # 장면 그림은 기록에만 달려 있어 초안도 같은 것을 쓴다
                 item["score"] = {k: result[k] for k in ("correct", "correct_last", "no_verdict", "people_ok",
                                                          "expected_source")}
@@ -255,7 +291,10 @@ class Builder:
         OUT.mkdir(parents=True, exist_ok=True)
         (OUT / "index.json").write_text(json.dumps(
             {"version": VERSION, "built": time.strftime("%Y-%m-%d %H:%M"), "records": self.records_dir().name,
-             "payment": "계산대 체류 = 결제", "cards": cards, "totals": totals(cards)}, ensure_ascii=False), encoding="utf-8")
+             "payment": "계산대 체류 = 결제", "cards": cards, "totals": totals(cards),
+             "batches": [{"key": key, "name": name, "totals": totals([c for c in cards if c.get("batch", "shoot2") == key])}
+                         for key, name in BATCH_NAME.items() if any(c.get("batch", "shoot2") == key for c in cards)]},
+            ensure_ascii=False), encoding="utf-8")
 
 
 def main() -> int:

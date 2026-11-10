@@ -218,3 +218,26 @@ ul.plain { margin: 6px 0; padding-left: 18px; font-size: 13px; color: var(--text
 .lab-row .del:hover { color: var(--bad); }
 .lab-name { width: 110px; }
 .lab-done { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; padding: 6px 0; }
+
+/* 새 영상 추가 */
+.batches { margin-bottom: 12px; }
+.card.add { border-style: dashed; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 190px;
+  color: var(--text2); gap: 6px; text-align: center; padding: 16px; cursor: pointer; width: 100%; font: inherit; }
+.card.add b { font-size: 15px; color: var(--text); font-weight: 600; }
+.card.add .plus { font-size: 28px; line-height: 1; }
+.card.wait .thumb { display: flex; align-items: center; justify-content: center; color: #d6d5cf; font-size: 13px; text-align: center; padding: 0 12px; }
+.card.wait .btn { margin-top: 8px; }
+.addbox { background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
+.addbox h2 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.addgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 20px; margin: 14px 0; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.field > span { font-weight: 600; }
+.field small { color: var(--text3); }
+.field input[type="text"], .field input[type="number"] { font: inherit; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px;
+  background: var(--panel); color: var(--text); }
+.field input[type="file"] { font: inherit; font-size: 13px; }
+.seg { display: flex; gap: 6px; }
+.seg .chip { border-radius: 6px; }
+.addbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.addbar .msg { font-size: 13px; color: var(--text2); flex: 1; min-width: 200px; }
+.addbar .msg.err { color: var(--bad); }

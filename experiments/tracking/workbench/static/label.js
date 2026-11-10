@@ -210,8 +210,48 @@ Player.prototype.drawLabelPanel = function () {
           p.result === "none" ? null : [items, "개"], result,
           h("span", { class: "who" }, p.checked_by ? `적은 사람 ${p.checked_by}` : ""), del(this.pays, i, true));
       }) : none("결제 정답이 없습니다."),
-      h("div", { class: "muted small" }, "결제 정답은 labels/store01_dual/payments.csv 에 저장됩니다 (예전 결제 라벨 도구와 같은 파일).")));
+      h("div", { class: "muted small" }, "결제 정답은 labels/store01_dual/payments.csv 에 저장됩니다 (예전 결제 라벨 도구와 같은 파일).")),
+    this.syncSection());
   this.drawLabelState();
+};
+
+/* -- 두 영상의 시차: 같은 순간(손이 칸에 닿음, 문 열림)이 두 화면에 함께 보이게 맞춘다 */
+Player.prototype.syncSection = function () {
+  const sync = this.data.sync || { method: "none", note: "" };
+  const how = { manual: "사람이 맞춘 값", trajectory: "자동 추정 — 확인 필요", "trajectory-fallback": "추정이 약해 다른 영상들의 중앙값 — 확인 필요", none: "시차 없음" }[sync.method] || sync.method;
+  const input = h("input", { type: "number", step: "1", value: String(Math.round(this.offset)), "aria-label": "시차 (ms)", style: "width:76px",
+    onchange: () => this.setOffset(Number(input.value) || 0) });
+  const nudge = (text, d, tip) => h("button", { class: "btn", "data-tip": tip, onclick: () => this.setOffset(this.offset + d) }, text);
+  const changed = Math.round(this.offset) !== Math.round(this.savedOffset);
+  return h("div", { class: "lab-sec", id: "lab-sync" },
+    h("h3", {}, h("span", {}, "두 영상의 시차"), changed ? h("button", { class: "btn primary", onclick: () => this.saveOffset() }, "시차 저장") : null),
+    h("div", { class: "lab-row" },
+      nudge("◀◀", 100, "선반 카메라를 0.1초 더 이른 장면으로"), nudge("◀", 33, "선반 카메라를 한 장면 더 이른 장면으로"),
+      input, "ms",
+      nudge("▶", -33, "선반 카메라를 한 장면 더 늦은 장면으로"), nudge("▶▶", -100, "선반 카메라를 0.1초 더 늦은 장면으로")),
+    h("div", { class: "muted small" }, changed ? `저장된 값 ${Math.round(this.savedOffset)}ms 에서 바꾸는 중 — 두 화면을 보며 맞춘 뒤 저장하세요. ` : `${how}. `,
+      "같은 순간(손이 칸에 닿음, 문 열림)이 두 화면에 함께 보이면 맞은 것입니다. 저장하면 이 영상을 다시 판정합니다."),
+    this.syncError ? h("div", { class: "lab-state err" }, this.syncError) : null);
+};
+Player.prototype.setOffset = function (ms) {
+  this.pause();
+  this.offset = Math.max(-30000, Math.min(30000, Math.round(ms)));
+  this.syncB(true);
+  this.draw();
+  const old = document.getElementById("lab-sync");
+  if (old) old.replaceWith(this.syncSection());
+};
+Player.prototype.saveOffset = async function () {
+  this.syncError = "";
+  try {
+    await postJSON("/api/wb/sync", { pair: this.s.pair, offset_ms: this.offset, checked_by: this.labels.checked_by });
+    app.index = null;
+    route();   // 시차가 바뀌면 손 접촉·선반 방문의 시각이 모두 달라진다 — 이 영상을 다시 불러온다
+  } catch (e) {
+    this.syncError = "저장하지 못함: " + e.message;
+    const old = document.getElementById("lab-sync");
+    if (old) old.replaceWith(this.syncSection());
+  }
 };
 
 /* -- 영상 위에 정답 표시 (그 시각 앞뒤 0.5초) */

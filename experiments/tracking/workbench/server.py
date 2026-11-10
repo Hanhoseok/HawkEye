@@ -10,6 +10,9 @@
 /api/wb/index   갤러리 목록 + 만드는 중인지. 바뀐 짝이 있으면 뒤에서 다시 만들기 시작한다.
 /api/wb/status  만드는 중 상태만.
 /api/wb/label   정답 적기 (workbench/labels.py): POST {pair, labels, payments} → 저장하고 그 짝을 다시 채점해 요약을 돌려준다.
+/api/wb/upload  새 영상 올리기 (workbench/intake.py): POST 본문이 영상 파일 그대로, ?name=&cam=&ext=
+/api/wb/add     올린 두 영상을 등록하고 처리 대기열에 넣는다. /api/wb/add/retry 는 다시 처리.
+/api/wb/sync    두 영상의 시차를 사람이 맞춘 값으로 적는다.
 /api/wb/tune    수치 조정 (workbench/tune.py): GET 칸 목록·기록, POST run(초안 판정) / result(전후 비교) / apply(적용).
 """
 
@@ -28,6 +31,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from review_serve import RangeHandler  # noqa: E402
+from urllib.parse import parse_qs, urlsplit  # noqa: E402
+
+from workbench import intake  # noqa: E402
 from workbench import labels as label_store  # noqa: E402
 from workbench.data import OUT, Builder  # noqa: E402
 from workbench.tune import Tuner  # noqa: E402
@@ -36,6 +42,7 @@ STATIC = "/" + (ROOT / "workbench" / "static").relative_to(REPO).as_posix() + "/
 DATA = "/" + OUT.relative_to(REPO).as_posix() + "/"
 BUILDER = Builder()
 TUNER = Tuner(BUILDER)
+RUNNER = intake.Runner(BUILDER)
 
 
 def save_labels(body: dict) -> dict:
@@ -59,7 +66,32 @@ def index_payload() -> dict:
     started = BUILDER.build_async()
     index = BUILDER.read_index()
     return {"static": STATIC, "data": DATA, "build": dict(BUILDER.state), "started": started,
-            "stale": [] if BUILDER.state["running"] else BUILDER.stale(), **index}
+            "stale": [] if BUILDER.state["running"] else BUILDER.stale(),
+            "pending": RUNNER.pending(), "suggest": intake.suggest_names(), **index}
+
+
+def add_video(body: dict) -> dict:
+    out = intake.register(body)
+    RUNNER.notes[out["pair"]] = out["notes"]
+    RUNNER.enqueue(out["pair"])
+    return out
+
+
+def save_sync(body: dict) -> dict:
+    pair = str(body.get("pair") or "")
+    if pair not in BUILDER.pairs():
+        raise ValueError(f"모르는 영상: {pair}")
+    if BUILDER.state["running"] or TUNER.job["running"]:
+        raise ValueError("다른 판정이 돌고 있습니다. 잠시 뒤 다시 눌러 주세요")
+    try:
+        offset = float(body.get("offset_ms"))
+    except (TypeError, ValueError):
+        raise ValueError("시차가 숫자가 아닙니다") from None
+    intake.set_offset(BUILDER, pair, offset, str(body.get("checked_by") or ""))
+    state = BUILDER.build([pair], force=True)   # 그 짝만 다시 판정한다 (1초 안팎)
+    if state["errors"]:
+        raise RuntimeError("; ".join(state["errors"]))
+    return {"pair": pair, "offset_ms": offset}
 
 
 class Handler(RangeHandler):
@@ -78,6 +110,13 @@ class Handler(RangeHandler):
         if not self._same_origin():
             self.send_error(403)
             return
+        if method == "POST" and path == "/api/wb/upload":   # 본문이 영상 파일 그대로 — JSON 으로 읽지 않는다
+            q = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
+            try:
+                return self._json(200, intake.save_upload(q.get("name", ""), q.get("cam", ""), q.get("ext", ""), self.rfile,
+                                                          int(self.headers.get("Content-Length") or 0)))
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
         body = {}
         if method == "POST":
             n = int(self.headers.get("Content-Length") or 0)
@@ -92,6 +131,13 @@ class Handler(RangeHandler):
                 return self._json(200, {"build": dict(BUILDER.state), "job": dict(TUNER.job)})
             if method == "GET" and path == "/api/wb/tune":
                 return self._json(200, TUNER.page())
+            if method == "POST" and path == "/api/wb/add":
+                return self._json(200, add_video(body))
+            if method == "POST" and path == "/api/wb/add/retry":
+                RUNNER.enqueue(str(body.get("pair") or ""))
+                return self._json(200, {"ok": True})
+            if method == "POST" and path == "/api/wb/sync":
+                return self._json(200, save_sync(body))
             if method == "POST" and path == "/api/wb/label":
                 return self._json(200, save_labels(body))
             if method == "POST" and path == "/api/wb/tune/run":
