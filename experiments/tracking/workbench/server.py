@@ -9,6 +9,7 @@
 
 /api/wb/index   갤러리 목록 + 만드는 중인지. 바뀐 짝이 있으면 뒤에서 다시 만들기 시작한다.
 /api/wb/status  만드는 중 상태만.
+/api/wb/label   정답 적기 (workbench/labels.py): POST {pair, labels, payments} → 저장하고 그 짝을 다시 채점해 요약을 돌려준다.
 /api/wb/tune    수치 조정 (workbench/tune.py): GET 칸 목록·기록, POST run(초안 판정) / result(전후 비교) / apply(적용).
 """
 
@@ -27,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from review_serve import RangeHandler  # noqa: E402
+from workbench import labels as label_store  # noqa: E402
 from workbench.data import OUT, Builder  # noqa: E402
 from workbench.tune import Tuner  # noqa: E402
 
@@ -34,6 +36,23 @@ STATIC = "/" + (ROOT / "workbench" / "static").relative_to(REPO).as_posix() + "/
 DATA = "/" + OUT.relative_to(REPO).as_posix() + "/"
 BUILDER = Builder()
 TUNER = Tuner(BUILDER)
+
+
+def save_labels(body: dict) -> dict:
+    """정답을 저장하고 그 짝만 다시 채점한다 → 새 요약. 영상을 다시 돌리지 않으므로 1초 안팎."""
+    pair = str(body.get("pair") or "")
+    if pair not in BUILDER.pairs():
+        raise ValueError(f"모르는 영상: {pair}")
+    if BUILDER.state["running"] or TUNER.job["running"]:
+        raise ValueError("다른 판정이 돌고 있습니다. 잠시 뒤 다시 저장됩니다")
+    label_store.save(pair, body.get("labels") or {})
+    if body.get("payments") is not None:
+        label_store.save_payments(pair, body["payments"])
+    state = BUILDER.build([pair], force=True)
+    if state["errors"]:
+        raise RuntimeError("; ".join(state["errors"]))
+    data = json.loads((OUT / "pairs" / f"{pair}.json").read_text(encoding="utf-8"))
+    return {"summary": data["summary"], "labels": data["labels"], "payment_labels": data["payment_labels"]}
 
 
 def index_payload() -> dict:
@@ -73,6 +92,8 @@ class Handler(RangeHandler):
                 return self._json(200, {"build": dict(BUILDER.state), "job": dict(TUNER.job)})
             if method == "GET" and path == "/api/wb/tune":
                 return self._json(200, TUNER.page())
+            if method == "POST" and path == "/api/wb/label":
+                return self._json(200, save_labels(body))
             if method == "POST" and path == "/api/wb/tune/run":
                 return self._json(200, TUNER.start(body.get("values") or {}, body.get("scope") or "normal"))
             if method == "POST" and path == "/api/wb/tune/result":

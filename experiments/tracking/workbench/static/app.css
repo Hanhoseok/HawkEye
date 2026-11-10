@@ -190,3 +190,31 @@ ul.plain { margin: 6px 0; padding-left: 18px; font-size: 13px; color: var(--text
 .change.better { border-left-color: var(--ok); } .change.worse { border-left-color: var(--bad); }
 .logrow { padding: 8px 0; border-top: 1px solid var(--line); }
 .logrow:first-child { border-top: 0; padding-top: 0; }
+
+/* 정답 적기 */
+.lens-gap { width: 1px; background: var(--line-strong); margin: 4px 6px; }
+.lens.write { border-style: dashed; }
+.lens .count { background: var(--sunken); color: var(--text2); border-radius: 999px; padding: 0 7px; font-size: 12px; font-weight: 600; }
+.tl-mark.take::after { background: var(--take); } .tl-mark.put::after { background: var(--put); } .tl-mark.plain::after { background: var(--plain); }
+.pickmsg { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; background: rgba(47, 91, 216, .92); color: #fff; font-size: 13px;
+  padding: 8px 12px; text-align: center; pointer-events: none; }
+.screen.picking { outline: 3px solid var(--accent); outline-offset: -3px; }
+.screen.picking canvas { cursor: crosshair; }
+.lab-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.lab-head h2 { margin: 0; flex: 1; }
+.lab-state { font-size: 12px; color: var(--text3); }
+.lab-state.err { color: var(--bad); }
+.lab-sec { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+.lab-sec h3 { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.lab-sec h3 span { flex: 1; }
+.lab-sec .btn { padding: 3px 8px; font-size: 12px; }
+.lab-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0; font-size: 13px; }
+.lab-row .jump { min-width: 52px; text-align: left; font-variant-numeric: tabular-nums; font-size: 13px; }
+.lab-row select, .lab-row input[type="number"], .lab-name { font: inherit; font-size: 13px; padding: 2px 4px; border: 1px solid var(--line-strong);
+  border-radius: 5px; background: var(--panel); color: var(--text); }
+.lab-row input[type="number"] { width: 48px; }
+.lab-row .who { color: var(--text3); font-size: 12px; flex: 1; min-width: 90px; }
+.lab-row .del { border: 0; background: none; color: var(--text3); padding: 0 4px; font-size: 15px; }
+.lab-row .del:hover { color: var(--bad); }
+.lab-name { width: 110px; }
+.lab-done { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; padding: 6px 0; }

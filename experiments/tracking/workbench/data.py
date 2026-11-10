@@ -24,10 +24,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 3
+VERSION = 4
 """보기 데이터의 모양이 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다."""
 RUN_KEY = "current"
 
@@ -48,9 +49,21 @@ def totals(cards: list[dict]) -> dict:
         "no_verdict": sum(c["no_verdict"] for c in cards),
         "correct_last": sum(c["correct_last"] for c in cards),
         "people_ok": sum(c["people_ok"] for c in counted), "people_n": len(counted),
+        "labeled": _labeled(cards),
         "by_set": {s: {"n": sum(c["set"] == s for c in cards), "correct": sum(c["set"] == s and c["correct"] for c in cards)}
                    for s in ("normal", "theft", "complex")},
     }
+
+
+def _labeled(cards: list[dict]) -> dict:
+    """사람이 적은 정답이 있는 영상들의 점수 (정답 적기)."""
+    have = [c["labeled"] for c in cards if c.get("labeled")]
+    take = [x["take_ok"] for x in have if x["take_ok"] is not None]
+    link = [x["link"] for x in have if x["link"] is not None]
+    culprit = [x["culprit_ok"] for x in have if x["culprit_ok"] is not None]
+    return {"n": len(have), "take_n": len(take), "take_ok": sum(take),
+            "link_n": sum(n for _, n in link), "link_ok": sum(r for r, _ in link),
+            "culprit_n": len(culprit), "culprit_ok": sum(culprit)}
 
 
 class Builder:
@@ -87,6 +100,7 @@ class Builder:
         files = [ROOT / "config.yaml", ROOT / "zones" / "store01_dual" / "floor.yaml",
                  ROOT / "zones" / "store01_dual" / "angle0.yaml", ROOT / "labels" / "store01_dual" / "sync.csv",
                  ROOT / "labels" / "store01_dual" / "truth.csv", ROOT / "configs" / "store01_dual_judge.yaml",
+                 label_store.PAYMENTS, label_store.EVENTS / f"{pair}.json",
                  self.records_dir() / pair / ".done",
                  self.records_dir() / pair / "meta.json"]
         h = hashlib.sha1(f"v{VERSION}".encode())
@@ -174,6 +188,8 @@ class Builder:
                 if built is None:
                     continue
                 data, result = built
+                data["labels"] = label_store.load(pair)              # 사람이 적은 정답 (없으면 빈 것)
+                data["payment_labels"] = label_store.load_payments(pair)
                 cfg = de.dual_config(base, pair)   # 방금 판정에 쓴 값 그대로 (적용한 값·초안 포함)
                 dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" else None
                 summary = analyze(data, result, dwell)

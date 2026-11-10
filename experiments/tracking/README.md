@@ -28,7 +28,7 @@
 | 결제 | 🔶 계산대 체류 = 결제. 결제 라벨 도구(`scripts/label_payments.py`)로 재평가, 실제 결제 연동은 아직 | `docs/multiview-progress.md` 후속 8 |
 | 선반 센서 | ⬜ 입력 자리와 가짜 기록 시험만. 실제 센서(`experiments/arduino`) 미연결 | `docs/multiview-design.md` M-8 |
 | 실시간 | 🔶 녹화본을 카메라 속도로 흘린 흉내만. 실제 카메라 미확인, 카메라당 초당 4~5장 | `docs/multiview-progress.md` 1-7 |
-| 확인 도구 | ✅ **분석 도구** (`python workbench/server.py`) — 갤러리 + 질문별 한 쌍 분석 + 수치 조정. 예전 페이지: 오판 장면 보기 · 구역 편집 (`python scripts/review_serve.py`) | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 4·7·10·11 |
+| 확인 도구 | ✅ **분석 도구** (`python workbench/server.py`) — 갤러리 + 질문별 한 쌍 분석 + 수치 조정 + 정답 적기. 예전 페이지: 오판 장면 보기 · 구역 편집 (`python scripts/review_serve.py`) | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 4·7·10·11·12 |
 
 아래 표는 층별 상태다 (카메라 1대 기준, 2026-10-14 까지).
 
@@ -205,7 +205,7 @@ src/
 scripts/                   평가·실험 도구 — 아래 표
 workbench/                 분석 도구 — 기록을 영상 위에 그려 질문별로 보는 웹 화면 (workbench/README.md)
 tests/                     층별 규칙 테스트
-labels/                    정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서)
+labels/                    정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서, events/ 는 분석 도구로 적는 집음·짝·경보 대상)
 data/videos/, outputs/     입력 영상·결과물 (git 제외)
 ```
 
@@ -246,7 +246,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | **`docs/진행경과-정리.md`** | 9월 추적기 단계 정리 — 왜 ByteTrack에서 BoT-SORT로 갔는지, 수치 포함. 맨 끝 §12 에 그 뒤 경과 날짜표 |
 | **`docs/multiview-design.md`** | **카메라 2대 + 실시간 + 선반 센서 구조 설계 (M-1~M-12, 단계별 계획)** |
 | `docs/multiview-papers.md` | 위 설계의 근거 논문 6편(P1~P6) |
-| **`docs/multiview-progress.md`** | **카메라 2대 1단계 진행 기록 — 2차 촬영 38쌍 결과, 후속 1~11. 맨 위에 지금 상태** |
+| **`docs/multiview-progress.md`** | **카메라 2대 1단계 진행 기록 — 2차 촬영 38쌍 결과, 후속 1~12. 맨 위에 지금 상태** |
 | **`docs/limitations.md`** | **한계 총정리 — 부딪힌 한계·실패와 현재 상태. 해결돼도 지우지 않는다** |
 | **`docs/store-test.md`** | **직접 찍은 무인매장 영상 첫 시험 — 정상 2편으로 설정, 절도 2편으로 시험** |
 | **`docs/validation-set.md`** | **검증 영상 세트 — 기능별 고르는 기준, 가진 영상 149편 분류, 촬영할 선반 장면** |
@@ -350,6 +350,7 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 | 2026-11-10 | 채점 고치기 — `dual_eval.py` 가 정답표(`truth.csv`)를 읽고, 판정 없는 쌍을 따로 세고, 손님별 마지막 판정 기준 점수를 함께 냄 | 점수는 그대로 31/38 · 결제 라벨 30/38 (그 전 화면에는 30 · 29 로 찍힘). 판정이 나와서 맞은 것은 25 · 24, 마지막 판정 기준 32 · 31 (C12) | `docs/multiview-progress.md` 후속 9 |
 | 2026-11-10 | 분석 도구 1단계 (`workbench/`) — 확인용 페이지를 하나로 모으기 시작. 갤러리 + 한 쌍 분석(사람 추적 / 두 화면 같은 사람 / 물건 집기 / 결제·판정) | 38쌍 보기 데이터 1분 남짓에 만듦, 갤러리 숫자는 채점과 같음(31/38 · 판정이 나와서 맞음 25 · 판정 없음 8 · 손님 수 38/38). 수치 조정·정답 적기·새 영상 추가는 다음 단계 | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 10 |
 | 2026-11-10 | 분석 도구 2단계 — 수치 조정(판정 값 16개를 초안으로 바꿔 다시 판정, 정상 영상으로만 맞추고 절도·복합 채점은 잠금, 적용) | 정상 12편 초안 판정 약 4초, 38편 약 6초. 예: 손님 조건 1초 → 0초면 손님 수 38 → 30/38 (시험 뒤 되돌림). `--set risk.inside_seconds` 가 무시되던 것도 고침 | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 11 |
+| 2026-11-10 | 분석 도구 3단계 — 정답 적기(집음·놓음, 경보가 나야 하는 사람, 두 화면 같은 사람, 결제)와 그 정답으로 채점 | 도구만 만듦 — **정답은 아직 한 편도 적지 않았다.** 적으면 '물건 집기'·'두 화면 같은 사람'에 맞음·틀림이 붙고, 경보가 다른 사람에게 난 것(A-14)이 드러난다 | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 12 |
 
 **다음에 확인할 것** (2026-10-14 에 적은 것): 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
 → 2026-11-10: 계산하고 나가는 손님은 1차·2차 촬영 정상 영상으로 확인(정상 11/12). 상품 탐지 모델은 아직 안 함. **지금의 다음 단계는 `docs/results-summary.md` §0-5.**

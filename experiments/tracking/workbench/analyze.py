@@ -23,6 +23,9 @@ HEADLINE = {
 }
 LEVEL_NAME = {"HIGH_RISK": "경보", "REVIEW": "확인 필요", "CLEAR": "통과", "WARNING": "출구 경고"}
 TONE = {"HIGH_RISK": "bad", "REVIEW": "warn", "CLEAR": "ok"}
+NO_LINK_TRUTH = "짝이 맞는지는 정답이 없어 채점하지 못함 — 두 화면의 같은 색 상자가 같은 사람인지 눈으로 확인"
+NO_TAKE_TRUTH = "누가 언제 몇 개 집었는지 정답이 아직 없어 개수는 채점하지 못함"
+ZERO_TAKEN = "정답은 물건을 가져간 영상인데 프로그램은 가져간 물건을 0개로 셈"
 GAP_MS = 700.0
 """이보다 오래 안 보이면 타임라인에서 구간을 끊는다."""
 
@@ -176,7 +179,7 @@ def lens_link(data: dict, customers: set[int]) -> dict:
             facts.append({"level": "warn", "ms": first["start"],
                           "text": f"선반 화면 {d} 번 사람이 손님이 아닌 신원(#{', #'.join(map(str, outsiders))})과 짝을 맺음"})
     if not any(f["level"] == "warn" for f in facts) and pct is not None:
-        facts.append({"level": "info", "text": "짝이 맞는지는 정답이 없어 채점하지 못함 — 두 화면의 같은 색 상자가 같은 사람인지 눈으로 확인"})
+        facts.append({"level": "info", "text": NO_LINK_TRUTH})
     return {"status": "warn" if any(f["level"] == "warn" for f in facts) else "info", "pct": pct,
             "facts": facts, "rows": rows, "log": sorted(log, key=lambda r: r["ms"])}
 
@@ -249,7 +252,7 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
     if not per:
         facts.append({"level": "info", "text": "선반에서 일어난 행동이 하나도 잡히지 않음"})
     if expected == "HIGH_RISK" and total <= 0:
-        facts.insert(0, {"level": "bad", "text": "정답은 물건을 가져간 영상인데 프로그램은 가져간 물건을 0개로 셈"})
+        facts.insert(0, {"level": "bad", "text": ZERO_TAKEN})
     touches = [a for a in actions if a["kind"] == "TOUCH"]
     if touches:
         note = ""
@@ -264,7 +267,7 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
                       "text": f"선반 근거 없이 동작만으로 센 것 {len(blind)}번 — 실제로 집었는지 확인 못 함 (각각 1개로 셈)"})
     if result.get("unowned_takes"):
         facts.append({"level": "warn", "text": f"주인을 못 정한 손 접촉 {result['unowned_takes']}건"})
-    facts.append({"level": "info", "text": "누가 언제 몇 개 집었는지 정답이 아직 없어 개수는 채점하지 못함"})
+    facts.append({"level": "info", "text": NO_TAKE_TRUTH})
     status = "bad" if facts and facts[0]["level"] == "bad" else ("warn" if any(f["level"] == "warn" for f in facts) else "info")
     return {"status": status, "taken": total, "facts": facts, "rows": rows, "log": sorted(log, key=lambda r: r["ms"])}
 
@@ -326,6 +329,149 @@ def lens_verdict(data: dict, result: dict, customers: set[int], dwell_seconds: f
     return {"status": status, "facts": facts, "rows": rows, "log": sorted(log, key=lambda r: r["ms"])}
 
 
+# ---------------------------------------------------------------------- 사람이 적은 정답으로 채점
+
+def locate(track: dict, point: list[float], ms: float, offset_ms: float = 0.0, window_ms: float = 700.0) -> int | None:
+    """그 시각 화면의 그 점에 있던 사람(나중에 합쳐진 신원은 합친 뒤 번호). 점을 품은 상자 중 가장 작은 것.
+
+    정답의 '누가'는 화면 위의 점이다 (workbench/labels.py). 그 시각 가장 가까운 장면부터 window_ms 안에서 찾는다 —
+    사람이 잠깐 안 잡힌 장면에 찍어도 앞뒤 장면에서 찾게.
+    """
+    x, y = point[0] * track["w"], point[1] * track["h"]
+    fps = track["fps"]
+    near = sorted(track["frames"], key=lambda k: abs(int(k) * 1000.0 / fps + offset_ms - ms))
+    for key in near:
+        if abs(int(key) * 1000.0 / fps + offset_ms - ms) > window_ms:
+            break
+        inside = [r for r in track["frames"][key] if r[1] > 0 and r[3] <= x <= r[5] and r[4] <= y <= r[6]]
+        if inside:
+            return min(inside, key=lambda r: (r[5] - r[3]) * (r[6] - r[4]))[1]
+    return None
+
+
+def score_labels(data: dict, customers: set[int]) -> dict | None:
+    """사람이 적은 정답(data["labels"])과 프로그램의 판단을 견준다. 정답이 없으면 None.
+
+    take    : 손님마다 '가져간 개수'(집음 − 놓음)가 정답과 같은가. takes_done 일 때만.
+    link    : 정답으로 찍은 두 화면 짝마다, 그 시각 프로그램의 짝이 같은 사람인가.
+    culprit : 경보(HIGH_RISK)가 정답의 사람에게 났는가.
+    """
+    labels = data.get("labels")
+    if not labels or not (labels["takes"] or labels["links"] or labels["culprits"] or labels["takes_done"]):
+        return None
+    over, detail, offset = data["tracks"]["angle1"], data["tracks"]["angle0"], data["offset_ms"]
+    out = {"takes_done": bool(labels["takes_done"]), "take": None, "link": None, "culprit": None, "events": []}
+
+    actions = [a for a in data["actions"] if a["pid"] in customers]
+    for t in labels["takes"]:
+        ms = t["time_sec"] * 1000.0
+        rid = locate(over, t["who"], ms)
+        caught = any(a["pid"] == rid and a["count"] * (1 if t["kind"] == "take" else -1) > 0
+                     and a["start"] - 1500 <= ms <= a["end"] + 1500 for a in actions)
+        out["events"].append({"ms": ms, "kind": t["kind"], "count": t["count"], "slot": t["slot"],
+                              "who": rid if rid in customers else None, "caught": caught})
+    if labels["takes_done"]:
+        truth: dict[int, int] = {}
+        lost = [e for e in out["events"] if e["who"] is None]
+        for e in out["events"]:
+            if e["who"] is not None:
+                truth[e["who"]] = truth.get(e["who"], 0) + e["count"] * (1 if e["kind"] == "take" else -1)
+        model: dict[int, int] = {}
+        for a in actions:
+            model[a["pid"]] = model.get(a["pid"], 0) + a["count"]
+        people = sorted(set(truth) | {pid for pid, n in model.items() if n != 0})
+        rows = [{"who": pid, "truth": truth.get(pid, 0), "model": model.get(pid, 0),
+                 "ok": truth.get(pid, 0) == model.get(pid, 0)} for pid in people]
+        out["take"] = {"people": rows, "lost": [e["ms"] for e in lost], "right": sum(r["ok"] for r in rows), "n": len(rows),
+                       "ok": all(r["ok"] for r in rows) and not lost,
+                       "caught": sum(e["caught"] for e in out["events"]), "events": len(out["events"])}
+
+    if labels["links"]:
+        items = []
+        for link in labels["links"]:
+            ms = link["time_sec"] * 1000.0
+            d, want = locate(detail, link["detail"], ms, offset), locate(over, link["overview"], ms)
+            got = None
+            for seg in data["links"]:
+                if seg["detail"] == d and seg["start"] <= ms < seg["end"] + 250:
+                    got = seg["overview"]
+            found = d is not None and want is not None
+            items.append({"ms": ms, "detail": d, "want": want, "got": got, "found": found, "ok": found and got == want})
+        out["link"] = {"items": items, "right": sum(i["ok"] for i in items), "n": len(items)}
+
+    if labels["culprits"]:
+        who = [locate(over, c["who"], c["time_sec"] * 1000.0) for c in labels["culprits"]]
+        alarm = sorted({e["pid"] for e in data["events"] if e["level"] == "HIGH_RISK"})
+        found = [w for w in who if w is not None]
+        ok = None if not alarm or not found else bool(set(alarm) & set(found))
+        out["culprit"] = {"who": who, "alarm": alarm, "ok": ok, "ms": labels["culprits"][0]["time_sec"] * 1000.0}
+    return out
+
+
+def apply_truth(lenses: dict, score: dict, customers: set[int]) -> None:
+    """채점 결과를 렌즈의 요약·타임라인·상태에 얹는다 (정답이 있는 것에만 맞음·틀림이 붙는다)."""
+    take, link, verdict = lenses["take"], lenses["link"], lenses["verdict"]
+
+    if score["events"]:
+        take["rows"].insert(0, {"label": "정답: 집음·놓음", "group": "사람이 적은 정답", "who": None, "segs": [], "marks": [
+            {"ms": e["ms"], "tone": "take" if e["kind"] == "take" else "put",
+             "tip": ("집음" if e["kind"] == "take" else "놓음") + f" {e['count']}개" + (f" · {e['slot']} 칸" if e["slot"] else "")
+                    + (f" · {_who(e['who'], customers)}" if e["who"] is not None else " · 프로그램이 이 사람을 손님으로 못 봄")
+                    + ("" if e["caught"] else " · 프로그램 행동과 안 맞음")} for e in score["events"]]})
+    t = score["take"]
+    if t is not None:
+        take["facts"] = [f for f in take["facts"] if f["text"] not in (NO_TAKE_TRUTH, ZERO_TAKEN)]
+        head = []
+        if t["ok"]:
+            head.append({"level": "ok", "text": f"가져간 개수가 정답과 같음 ({t['n']}명)" if t["n"] else "아무도 가져가지 않음 — 정답과 같음"})
+        else:
+            head.append({"level": "bad", "text": f"가져간 개수가 정답과 다름 — {t['n']}명 중 {t['right']}명 맞음"})
+            for r in t["people"]:
+                if not r["ok"]:
+                    head.append({"level": "bad", "text": f"{_who(r['who'], customers)}: 정답 {r['truth']}개 · 프로그램 {r['model']}개"})
+            for ms in t["lost"]:
+                head.append({"level": "bad", "ms": ms, "text": "정답에 적은 사람을 프로그램이 그 시각에 손님으로 보지 못함"})
+        if t["events"]:
+            head.append({"level": "info", "text": f"정답의 집음·놓음 {t['events']}번 중 {t['caught']}번은 프로그램의 행동과 시각·사람이 맞음"})
+        take["facts"] = head + take["facts"]
+        take["status"] = "ok" if t["ok"] else "bad"
+    elif score["events"]:
+        take["facts"] = [f for f in take["facts"] if f["text"] != NO_TAKE_TRUTH]
+        take["facts"].append({"level": "info", "text": "집음·놓음 정답을 적는 중 — '다 적었음'을 체크하면 개수를 채점함"})
+
+    k = score["link"]
+    if k is not None:
+        link["rows"].insert(0, {"label": "정답: 같은 사람", "group": "사람이 적은 정답", "who": None, "segs": [], "marks": [
+            {"ms": i["ms"], "tone": "ok" if i["ok"] else "bad", "tip": _link_text(i, customers)} for i in k["items"]]})
+        link["facts"] = [f for f in link["facts"] if f["text"] != NO_LINK_TRUTH]
+        head = [{"level": "ok" if k["right"] == k["n"] else "bad",
+                 "text": f"정답으로 찍은 짝 {k['n']}개 " + ("모두 맞음" if k["right"] == k["n"] else f"중 {k['right']}개 맞음")}]
+        head += [{"level": "bad", "ms": i["ms"], "text": _link_text(i, customers)} for i in k["items"] if not i["ok"]]
+        link["facts"] = head + link["facts"]
+        link["status"] = "ok" if k["right"] == k["n"] else "bad"
+
+    c = score["culprit"]
+    if c is not None:
+        names = ", ".join(_who(w, customers) if w is not None else "못 찾음" for w in c["who"])
+        if c["ok"] is None:
+            fact = {"level": "warn" if None in c["who"] else "info", "ms": c["ms"],
+                    "text": f"경보가 나야 하는 사람: {names}" + (" — 경보가 나지 않음" if not c["alarm"] else "")}
+        elif c["ok"]:
+            fact = {"level": "ok", "ms": c["ms"], "text": f"경보가 정답의 사람({names})에게 남"}
+        else:
+            fact = {"level": "bad", "ms": c["ms"],
+                    "text": f"경보가 다른 사람에게 남 — 정답 {names} · 경보 {', '.join(_who(p, customers) for p in c['alarm'])}"}
+            verdict["status"] = "bad"
+        verdict["facts"].insert(1, fact)
+
+
+def _link_text(item: dict, customers: set[int]) -> str:
+    if not item["found"]:
+        return "정답으로 찍은 사람을 프로그램이 그 시각에 찾지 못함"
+    got = "짝 없음" if item["got"] is None else _who(item["got"], customers)
+    return f"선반 화면 {item['detail']} 의 짝: 정답 {_who(item['want'], customers)} · 프로그램 {got}"
+
+
 # ---------------------------------------------------------------------- 한 짝 전체
 
 def short_reason(data: dict, result: dict) -> str:
@@ -345,6 +491,10 @@ def analyze(data: dict, result: dict, dwell_seconds: float | None = 1.5) -> dict
     link = lens_link(data, customers)
     take = lens_take(data, result, customers, expected)
     verdict = lens_verdict(data, result, customers, dwell_seconds)
+    lenses = {"track": track, "link": link, "take": take, "verdict": verdict}
+    score = score_labels(data, customers)
+    if score is not None:
+        apply_truth(lenses, score, customers)
     headline = HEADLINE[result["outcome"]]
     if result["outcome"] == "miss" and result["no_verdict"]:
         headline = "절도인데 판정 없음"
@@ -357,14 +507,20 @@ def analyze(data: dict, result: dict, dwell_seconds: float | None = 1.5) -> dict
         "people": result["people"], "people_expected": result.get("people_expected"), "people_ok": result.get("people_ok"),
         "link_pct": link["pct"], "taken": take["taken"], "duration_ms": _duration(data),
         "customers": sorted(customers),
-        "lenses": {"track": track, "link": link, "take": take, "verdict": verdict},
+        "labeled": None if score is None else {
+            "takes_done": score["takes_done"],
+            "take_ok": None if score["take"] is None else score["take"]["ok"],
+            "link": None if score["link"] is None else [score["link"]["right"], score["link"]["n"]],
+            "culprit_ok": None if score["culprit"] is None else score["culprit"]["ok"],
+        },
+        "lenses": lenses,
     }
 
 
 def card(summary: dict) -> dict:
     """갤러리 카드용으로 줄인 것 (타임라인·기록은 뺀다)."""
     keep = ("pair", "set", "set_name", "expected", "outcome", "headline", "reason", "correct", "correct_last",
-            "no_verdict", "verdicts", "people", "people_expected", "people_ok", "link_pct", "taken", "duration_ms")
+            "no_verdict", "verdicts", "people", "people_expected", "people_ok", "link_pct", "taken", "duration_ms", "labeled")
     out = {k: summary[k] for k in keep}
     out["status"] = {name: summary["lenses"][name]["status"] for name in LENSES}
     return out
