@@ -34,16 +34,40 @@ SOURCE = ROOT.parent.parent / "source"
 VIDEO_DIR = SOURCE / "1(angle0)"
 REF_DIR = SOURCE / "1(angle1)"
 TABLE = ROOT / "labels" / "store01_dual" / "sync.csv"
+ADDED_DIR = SOURCE / "added"
+"""분석 도구에서 추가한 영상: <짝>_angle1.<확장자>(전체 카메라) · <짝>_angle0.<확장자>(선반 카메라). 같은 매장·같은 카메라 위치만."""
+VIDEO_EXT = (".mp4", ".mov", ".m4v", ".mkv", ".avi")
 HZ = 10.0
 
 
 def pair_files(pair: str) -> tuple[Path, Path]:
-    """짝 이름(N1, T3, C10, N8-1) → (angle0 파일, angle1 파일). 2차 촬영의 이름 규칙을 따른다."""
+    """짝 이름(N1, T3, C10, N8-1) → (angle0 파일, angle1 파일). 추가한 영상이면 그 파일, 아니면 2차 촬영의 이름 규칙."""
+    added = added_files(pair)
+    if added is not None:
+        return added
     kind, rest = pair[0], pair[1:]
     num, _, part = rest.partition("-")
     video = VIDEO_DIR / f"20261028_{kind}{int(num)}{'-' + part if part else ''}.mp4"
     ref = REF_DIR / f"{kind}{int(num):02d}{'-' + part if part else ''}.mp4"
     return video, ref
+
+
+def added_files(pair: str) -> tuple[Path, Path] | None:
+    """추가한 영상의 (angle0 파일, angle1 파일). 두 파일이 다 있을 때만."""
+    found = []
+    for cam in ("angle0", "angle1"):
+        hits = [p for p in sorted(ADDED_DIR.glob(f"{pair}_{cam}.*")) if p.suffix.lower() in VIDEO_EXT] if ADDED_DIR.exists() else []
+        if not hits:
+            return None
+        found.append(hits[0])
+    return found[0], found[1]
+
+
+def added_pairs() -> list[str]:
+    if not ADDED_DIR.exists():
+        return []
+    names = {p.name.rsplit("_angle0.", 1)[0] for p in ADDED_DIR.glob("*_angle0.*") if p.suffix.lower() in VIDEO_EXT}
+    return sorted(n for n in names if added_files(n) is not None)
 
 
 def all_pairs() -> list[str]:
@@ -52,7 +76,7 @@ def all_pairs() -> list[str]:
         name = p.stem.split("_", 1)[1]
         if pair_files(name)[1].exists():
             names.append(name)
-    return names
+    return names + [n for n in added_pairs() if n not in names]
 
 
 class Clip:

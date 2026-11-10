@@ -10,6 +10,11 @@
 
 기준값은 정상(N) 영상으로 정하고 고정한 뒤 절도(T)·복합(C)으로 채점한다 (1차 촬영과 같은 방식).
 영상은 저장소 밖 ../../source/1(angle0)·1(angle1).
+
+채점 (2026-11-10, limitations A-15): 정답은 정답표(labels/store01_dual/truth.csv)의 expected 를 읽는다 — 짝 이름 첫 글자가 아니다
+(C2 는 복합 세트지만 미결제 이탈). 판정이 하나도 안 나온 짝은 '판정 없음'으로 따로 센다. 정상 짝은 HIGH_RISK 가 없으면 맞음이라
+판정 없음도 맞음에 들어가는데, 그 수를 함께 찍어 CLEAR 까지 간 것과 구분한다. 손님이 돌아와 판정이 바뀐 경우(E-15)를 보려고
+'손님별 마지막 판정' 기준 점수도 함께 낸다.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from src.core.config import AppConfig, CameraConfig, InteractionConfig  # noqa: E402
+from src.core.config import AppConfig, CameraConfig, InteractionConfig, apply_judge_overrides  # noqa: E402
 from src.core.types import Frame, RiskLevel, TakeCandidate  # noqa: E402
 from src.fusion.judge import DualJudge  # noqa: E402
 from src.fusion.shelf_events import TimeAxis, load_sensor_events  # noqa: E402
@@ -46,6 +51,8 @@ OUT = ROOT / "outputs" / "dual_eval_pose3"
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
+JUDGE_FILE: Path | None = ROOT / "configs" / "store01_dual_judge.yaml"
+"""분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다."""
 OVERRIDES: list[str] = []
 OVERVIEW_POSE = False
 OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
@@ -60,6 +67,95 @@ def kind(pair: str) -> str:
     return {"N": "정상", "T": "절도", "C": "복합 정상"}[pair[0]]
 
 
+# ---------------------------------------------------------------------- 채점
+
+def load_truth(path: Path | None = None) -> dict[str, dict]:
+    """정답표: 짝 → {"expected": "HIGH_RISK" | "CLEAR", "people": 손님 수, "set": normal | theft | complex}."""
+    path = path or LABELS / "truth.csv"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8", newline="") as f:
+        return {r["pair"]: {"expected": r["expected"].strip(), "people": int(r["people"]), "set": r["set"].strip()}
+                for r in csv.DictReader(f)}
+
+
+def score(pair: str, finals: list[tuple[int, str]], people: int, truth: dict | None) -> dict:
+    """한 짝 채점. finals = 시간 순서의 (손님 번호, 최종 판정) — WARNING 은 뺀 것.
+
+    - expected: 정답표의 expected. 정답표에 없는 짝만 이름 첫 글자(T = 절도)로 대신하고 expected_source="name" 으로 남긴다.
+    - correct: HIGH_RISK 가 한 번이라도 났는지가 정답과 같은가 (경보는 울리면 되돌릴 수 없다 — E-2).
+    - no_verdict: 최종 판정이 하나도 없다. 정상 짝이면 correct 는 True 지만 CLEAR 까지 간 것이 아니다.
+    - last_verdicts / correct_last: 손님별 마지막 판정만 본 것. 나갔다고 HIGH_RISK 를 낸 뒤 돌아와 결제하고
+      CLEAR 로 나간 손님(E-15)은 여기서 경보가 아니다.
+    - outcome: hit(절도 잡음) / miss(절도 놓침) / false_alarm(거짓 경보) / pass(정상 통과) / no_verdict(정상인데 판정 없음).
+    """
+    row = (truth or {}).get(pair)
+    if row is None:
+        expected, source = ("HIGH_RISK" if pair[0] == "T" else "CLEAR"), "name"
+    else:
+        expected, source = row["expected"], "truth"
+    theft = expected == "HIGH_RISK"
+    levels = [level for _, level in finals]
+    last: dict[int, str] = {}
+    for pid, level in finals:
+        last[pid] = level
+    alarm, alarm_last = "HIGH_RISK" in levels, "HIGH_RISK" in last.values()
+    no_verdict = not levels
+    if theft:
+        outcome = "hit" if alarm else "miss"
+    else:
+        outcome = "false_alarm" if alarm else ("no_verdict" if no_verdict else "pass")
+    people_expected = row["people"] if row else None
+    return {
+        "expected": expected, "expected_source": source, "outcome": outcome,
+        "correct": alarm == theft, "correct_last": alarm_last == theft, "no_verdict": no_verdict,
+        "last_verdicts": {str(pid): level for pid, level in last.items()},
+        "people_expected": people_expected,
+        "people_ok": None if people_expected is None else people == people_expected,
+    }
+
+
+def summarize(rows: list[dict]) -> dict:
+    """짝별 채점(rows)을 세트별·전체로 모은다. 찍는 것은 print_summary."""
+    def part(sel: list[dict]) -> dict:
+        right = [r for r in sel if r["correct"]]
+        return {
+            "n": len(sel), "correct": len(right),
+            "correct_decided": sum(not r["no_verdict"] for r in right),
+            "correct_no_verdict": sum(r["no_verdict"] for r in right),
+            "no_verdict": sum(r["no_verdict"] for r in sel),
+            "correct_last": sum(r["correct_last"] for r in sel),
+            "wrong": [r["pair"] for r in sel if not r["correct"]],
+        }
+    out = {k: part([r for r in rows if r["kind"] == k]) for k in ("정상", "절도", "복합 정상")}
+    out["전체"] = part(rows)
+    counted = [r for r in rows if r.get("people_ok") is not None]
+    out["people"] = {"n": len(counted), "ok": sum(r["people_ok"] for r in counted),
+                     "wrong": [r["pair"] for r in counted if not r["people_ok"]]}
+    out["by_name"] = [r["pair"] for r in rows if r["expected_source"] == "name"]
+    return out
+
+
+def print_summary(summary: dict, label: str = "") -> None:
+    head = f"[{label.strip()}] " if label.strip() else ""
+    for k in ("정상", "절도", "복합 정상", "전체"):
+        s = summary[k]
+        if not s["n"]:
+            continue
+        note = f" (그중 판정 없이 맞음으로 센 짝 {s['correct_no_verdict']})" if s["correct_no_verdict"] else ""
+        print(f"{head}{k}: {s['correct']}/{s['n']} 맞음{note}")
+    s = summary["전체"]
+    if s["n"]:
+        print(f"{head}  판정이 나와서 맞음 {s['correct_decided']} · 판정 없이 맞음 {s['correct_no_verdict']} · "
+              f"틀림 {s['n'] - s['correct']} ({', '.join(s['wrong']) or '-'}) · 판정 없는 짝 {s['no_verdict']}")
+        print(f"{head}  손님별 마지막 판정 기준(돌아와 판정이 바뀐 경우 반영): {s['correct_last']}/{s['n']}")
+    p = summary["people"]
+    if p["n"]:
+        print(f"{head}  손님 수 맞은 짝: {p['ok']}/{p['n']}" + (f" (틀림 {', '.join(p['wrong'])})" if p["wrong"] else ""))
+    if summary["by_name"]:
+        print(f"{head}  정답표에 없어 이름 첫 글자로 채점한 짝: {', '.join(summary['by_name'])}")
+
+
 def pairs(pattern: str | None) -> list[str]:
     names = sync_pair.all_pairs()
     if not pattern:
@@ -68,7 +164,14 @@ def pairs(pattern: str | None) -> list[str]:
     return [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
 
 
-def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig:
+_UNSET = object()
+
+
+def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_UNSET, overrides=_UNSET) -> AppConfig:
+    """judge_file·overrides 를 안 주면 모듈 값(JUDGE_FILE·OVERRIDES)을 쓴다. 주면 그 값으로만 — 모듈 값을 건드리지 않고
+    '적용한 값 없이'·'--set 없이' 설정을 보고 싶을 때 (분석 도구의 수치 조정)."""
+    judge_file = JUDGE_FILE if judge_file is _UNSET else judge_file
+    overrides = OVERRIDES if overrides is _UNSET else overrides
     cfg = deepcopy(base)
     # 끊겼다 되살아난 추적 번호는 다시 판정 (C-22) — 가장자리 변과 함께 켜면 손님 수 36→38/38, 판정 변화 없음
     # (2026-11-04 3차 비교). --set identity.track_gap_recheck_seconds=0 으로 끌 수 있다.
@@ -76,10 +179,7 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     # 바닥 구역 판단의 발 점 = 발목 (B-15, 2026-11-09 채택) — 사용자가 실제 바닥 자리에 맞춰 그린 구역과 짝.
     # 관절이 없는 예전 기록은 상자 아래 가운데로 대신한다. --set zones.foot_point=bbox 로 예전 방식.
     cfg.zones.foot_point = "ankle"
-    for item in OVERRIDES:
-        key, value = item.split("=", 1)
-        section, name = key.split(".")
-        setattr(getattr(cfg, section), name, yaml.safe_load(value))
+    _apply_set(cfg, overrides)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair)
     cfg.cameras = [
         CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"],
@@ -100,7 +200,18 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0) -> AppConfig
     cfg.shelves.log_items = True
     from fake_sensor import UNIT_G
     cfg.fusion.sensor_unit_g = dict(UNIT_G)
+    # 여기까지가 코드의 기본. 그 위에 적용한 판정 값(수치 조정), 그 위에 이번 실행만의 --set 을 얹는다.
+    # (2026-11-10 까지는 --set 을 위에서 먼저 얹어, risk.inside_seconds·payment_mode 는 바로 아래 기본값에 덮여 무시됐다.)
+    apply_judge_overrides(cfg, judge_file)
+    _apply_set(cfg, overrides)
     return cfg
+
+
+def _apply_set(cfg: AppConfig, overrides: list[str]) -> None:
+    for item in overrides:
+        key, value = item.split("=", 1)
+        section, name = key.split(".")
+        setattr(getattr(cfg, section), name, yaml.safe_load(value))
 
 
 # ---------------------------------------------------------------------- run
@@ -203,7 +314,10 @@ class PairLog:
 # ---------------------------------------------------------------------- 판정 재실행
 
 def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detail: bool = True,
-               sensor: bool = False, payments: bool = False) -> dict:
+               sensor: bool = False, payments: bool = False, truth: dict | None = None) -> dict:
+    """truth = load_truth() 결과. 안 주면 정답표를 읽는다 (오판 장면 보기처럼 한 짝씩 부르는 쪽을 위해)."""
+    if truth is None:
+        truth = load_truth()
     log = PairLog(pair)
     cfg = dual_config(base, pair, offset_ms)
     floor = FloorMap.load(ZONES / "floor.yaml")
@@ -265,16 +379,17 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
             judge.overview_step(frame, log.ids["angle1"].get(idx, []), take_at["angle1"].get(idx, []),
                                 merges_seen, log.appearance("angle1", 0.0, ms), log.resolver("angle1", idx))
             last = frame
-    judge.finish(last, log.resolver("angle1", m1["frames"]))
+    resolve_end = log.resolver("angle1", m1["frames"])
+    judge.finish(last, resolve_end)
     finals = [e for e in judge.events if e.level != RiskLevel.WARNING]
     levels = [e.level.value for e in finals]
-    expected_theft = pair[0] == "T"
-    hit = "HIGH_RISK" in levels
-    correct = hit if expected_theft else not hit
+    people = sum(1 for c in risk.book.customers.values() if c.seen_inside)
+    # 손님별 마지막 판정은 나중에 합쳐진 신원을 한 사람으로 본다
+    scored = score(pair, [(resolve_end(e.person_id), e.level.value) for e in finals], people, truth)
     return {
-        "pair": pair, "kind": kind(pair), "verdicts": levels, "correct": correct,
+        "pair": pair, "kind": kind(pair), "verdicts": levels, **scored,
         "reasons": [f"P{e.person_id} {e.level.value}: {e.reason}" for e in finals],
-        "people": sum(1 for c in risk.book.customers.values() if c.seen_inside),
+        "people": people,
         "identities": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
         "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes,
         "actions": [a.describe() for a in risk.all_actions() if a.kind != "LOOK"],
@@ -298,19 +413,19 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
         base.fusion.release_delay_seconds, base.fusion.unchanged_clears_all = 1.0, False
     table = SyncTable.load(LABELS / "sync.csv")
     band = load_band_map()
+    truth = load_truth()
     rows = []
     for pair in pairs(pattern):
         if not (OUT / pair / ".done").exists():
             continue
-        rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor, payments))
-    for k in ("정상", "절도", "복합 정상"):
-        part = [r for r in rows if r["kind"] == k]
-        if part:
-            ok = sum(r["correct"] for r in part)
-            print(f"{label}{k}: {ok}/{len(part)} 정답")
+        rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor, payments, truth))
+    print_summary(summarize(rows), label)
     for r in rows:
-        mark = "OK " if r["correct"] else "XX "
-        print(f"  {mark}{r['pair']:6s} {','.join(r['verdicts']) or '(판정 없음)'}  손님 {r['people']}  짝 {r['links']}  "
+        # OK = 맞음, OK? = 정상인데 판정이 안 나와 맞음으로만 센 짝, XX = 틀림
+        mark = "XX " if not r["correct"] else ("OK?" if r["no_verdict"] else "OK ")
+        changed = "" if r["correct_last"] == r["correct"] else "  [마지막 판정 기준으로는 " + ("맞음" if r["correct_last"] else "틀림") + "]"
+        people = f"{r['people']}" + ("" if r["people_ok"] in (True, None) else f"(정답 {r['people_expected']})")
+        print(f"  {mark}{r['pair']:6s} 정답 {r['expected']:9s} {','.join(r['verdicts']) or '(판정 없음)'}{changed}  손님 {people}  짝 {r['links']}  "
               f"계산대 결제 {r['payments']}" + (f" 취소 {r['cancels']}" if r["cancels"] else "")
               + (f"  연결 못한 결제 {r['unmatched_payments']}" if r["unmatched_payments"] else "")
               + (f"  주인 없는 손 접촉 {r['unowned_takes']}" if r["unowned_takes"] else ""))

@@ -305,7 +305,8 @@ class JudgeJob:
 
     def cache(self, h: str, foot: str = "ankle") -> Path:
         # 기록 폴더 이름도 넣는다 — 같은 구역·발 점이라도 기록이 바뀌면 결과가 다르다 (11-09 기본 기록 바뀜)
-        return WORK / "judge" / f"{h}_{foot}_{FOOT[foot][0]}.json"
+        # s2 = 채점이 정답표(truth.csv)를 읽는 판 (2026-11-10) — 그 전에 저장한 결과는 C2 를 오답으로 세어 다시 돌린다
+        return WORK / "judge" / f"{h}_{foot}_{FOOT[foot][0]}_s2.json"
 
     def result(self, h: str | None, foot: str = "ankle") -> dict | None:
         if not h or not self.cache(h, foot).exists():
@@ -344,7 +345,7 @@ class JudgeJob:
                 rows = json.loads(out.read_text(encoding="utf-8"))
                 out.unlink()
                 keep = ("pair", "kind", "verdicts", "correct", "reasons", "people", "links", "payments", "cancels",
-                        "unowned_takes", "actions")
+                        "unowned_takes", "actions", "expected", "no_verdict", "correct_last", "people_ok")
                 data = {"hash": h, "foot": self.foot, "records": records, "when": time.strftime("%Y-%m-%d %H:%M"),
                         "seconds": round(time.time() - self.started), "rows": [{k: r.get(k) for k in keep} for r in rows]}
                 self.cache(h, self.foot).parent.mkdir(parents=True, exist_ok=True)

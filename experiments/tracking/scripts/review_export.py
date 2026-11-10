@@ -196,6 +196,22 @@ def _zones(m1: dict, m0: dict) -> dict:
 
 
 def export_pair(key: str, run_dir: str, opts: dict, pair: str, base, table, band, truth) -> dict | None:
+    built = pair_data(key, run_dir, opts, pair, base, table, band, truth)
+    if built is None:
+        return None
+    data, result = built
+    out = REVIEW / "data" / key / f"{pair}.js"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(f"HE.loaded({json.dumps(key + '/' + pair)}, {json.dumps(data, ensure_ascii=False, separators=(',', ':'))});\n",
+                   encoding="utf-8")
+    return {"verdicts": result["verdicts"], "correct": result["correct"], "people": result["people"]}
+
+
+def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, truth) -> tuple[dict, dict] | None:
+    """한 짝의 기록을 다시 판정하며 보기 데이터를 만든다 → (보기 데이터, dual_eval 채점 결과). 파일은 쓰지 않는다.
+
+    오판 장면 보기(export_pair)와 분석 도구(workbench/data.py)가 함께 쓴다.
+    """
     d = ROOT / "outputs" / run_dir / pair
     if not (d / ".done").exists():
         return None
@@ -249,12 +265,10 @@ def export_pair(key: str, run_dir: str, opts: dict, pair: str, base, table, band
         "takes0": takes0, "takes1": takes1, "visits": visits, "merges": merges,
         "shelf_events": result["shelf_events"],
         "shelf_items": _shelf_items(run_dir, pair, m0["width"], m0["height"], f0, offset),
+        "slot_changes": [{"slot": r["slot"], "start": round(r["start_ms"] + offset), "end": round(r["end_ms"] + offset),
+                          "ratio": r["ratio"], "direction": r["direction"]} for r in log.slot_changes],
     }
-    out = REVIEW / "data" / key / f"{pair}.js"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(f"HE.loaded({json.dumps(key + '/' + pair)}, {json.dumps(data, ensure_ascii=False, separators=(',', ':'))});\n",
-                   encoding="utf-8")
-    return {"verdicts": result["verdicts"], "correct": result["correct"], "people": result["people"]}
+    return data, result
 
 
 def main() -> None:

@@ -222,6 +222,7 @@ python run_tracking.py --source <영상> --zones <구역 파일> \
 run_tracking.py                진입점 (config.yaml + 명령행, 카메라 2대는 --dual-config)
 config.yaml                    모든 설정값 (카메라 1대 기본)
 configs/store01_dual.yaml      카메라 2대 설정 — config.yaml 위에 얹는다 (§6)
+configs/store01_dual_judge.yaml  (있을 때만) 분석 도구의 수치 조정에서 적용한 판정 값 — dual_eval·run_tracking 이 그 위에 얹는다
 zones/                         카메라별 구역 파일 (store-aisle, merl, pexels_*, store01_* …), store01_dual/ 은 카메라 2대
 src/
   core/types.py                층 사이 데이터 형식 (팀 공통 계약 — 바꾸면 팀에 공유)
@@ -254,8 +255,9 @@ src/
   fusion/shelf_events.py       ⑦ 선반 사건 묶기 (주인 정하기, 센서 입력 자리)
   fusion/judge.py              ⑦ 합치기 + 판정 (실시간·재실행 공용)
 scripts/                       평가·실험 도구 — 쓰임별 분류는 README §3 'scripts — 쓰임별로'
-tests/                         층별 규칙 테스트 (2026-10-19 148개 → 2026-11-10 테스트 함수 185개)
-labels/                        정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서)
+workbench/                     분석 도구 (server.py 서버 · data.py 기록→보기 데이터 · analyze.py 질문별 요약·정답 채점 · labels.py 정답 적기 · intake.py 새 영상 추가 · tune.py 수치 조정 · static/ 화면) — workbench/README.md
+tests/                         층별 규칙 테스트 (2026-10-19 148개 → 2026-11-10 235개, 234 통과 · 1 건너뜀)
+labels/                        정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서, events/<짝>.json 집음·짝·경보 대상)
 docs/                          설계·실험 문서
 ```
 
@@ -304,7 +306,7 @@ angle0 선반 카메라 → 작업자: 사람+관절 → 화면 신원 → 손-�
 | 합치기 + 판정 (실시간·재실행 공용) | `src/fusion/judge.py` (`DualJudge`) | |
 | 칸 그림 비교 | `src/shelf/slot_diff.py` | |
 | 사람 아님 영역 | `src/detectors/masked.py` | `floor.yaml` 의 `ignore_image` |
-| 평가 | `scripts/dual_eval.py` (run / sync / calibrate / judge) — 기본 기록 폴더 `outputs/dual_eval_pose3`, `--out`·`--zones`·`--set 절.키=값` 으로 설정을 바꿔 비교, `judge --payments` 는 결제 라벨을 결제 기록으로 | `labels/store01_dual/` (정답 `truth.csv`·시차 `sync.csv`·결제 라벨 `payments.csv`·가짜 센서) |
+| 평가 | `scripts/dual_eval.py` (run / sync / calibrate / judge) — 기본 기록 폴더 `outputs/dual_eval_pose3`, `--out`·`--zones`·`--set 절.키=값` 으로 설정을 바꿔 비교, `judge --payments` 는 결제 라벨을 결제 기록으로. 채점은 정답표의 expected 로, 판정 없는 짝·손님별 마지막 판정 기준·손님 수를 함께 찍는다 | `labels/store01_dual/` (정답 `truth.csv`·시차 `sync.csv`·결제 라벨 `payments.csv`·가짜 센서) |
 | 결제 라벨 적기 | `scripts/label_payments.py` (두 화면을 보며 결제 시각·개수·시차 입력) | `labels/store01_dual/payments.csv` |
 | 오판 장면 보기 · 구역 편집 | `scripts/review_serve.py` 로 여는 로컬 페이지 (`review_viewer.html`, `zone_editor.html`) — 기록을 원본 영상 위에 그림 / 구역 초안으로 38쌍 판정을 돌려 비교한 뒤 적용 | `outputs/review/`, `outputs/zone_editor/` (git 제외) |
 

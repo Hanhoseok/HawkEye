@@ -586,3 +586,22 @@ def _build_tracker_config(raw: dict[str, Any]) -> TrackerConfig:
     raw = dict(raw)
     reid = ReIDConfig(**(raw.pop("reid", None) or {}))
     return TrackerConfig(reid=reid, **raw)
+
+
+def apply_judge_overrides(config: AppConfig, path: str | Path | None) -> dict[str, Any]:
+    """분석 도구의 '수치 조정'에서 적용한 판정 값을 얹는다 → 얹은 값들. 파일이 없으면 아무 일도 없다.
+
+    파일은 `절.키: 값` 한 줄씩 (예: `risk.dwell_pay_seconds: 2.0`). 판정 단계에서 쓰는 절(risk·fusion·zones)만 받는다 —
+    탐지·추적·신원 값은 영상을 다시 돌려야 반영되므로 여기에 두지 않는다.
+    """
+    if path is None or not Path(path).exists():
+        return {}
+    raw: dict[str, Any] = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    applied = {}
+    for key, value in raw.items():
+        section, _, name = str(key).partition(".")
+        if section not in ("risk", "fusion", "zones") or not hasattr(getattr(config, section), name):
+            raise ValueError(f"{path}: 모르는 판정 값 '{key}'")
+        setattr(getattr(config, section), name, value)
+        applied[str(key)] = value
+    return applied
