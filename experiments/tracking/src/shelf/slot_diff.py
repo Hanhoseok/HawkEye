@@ -105,6 +105,9 @@ class SlotDiff:
             if empty_images and s.name in empty_images:
                 s.empty = empty_images[s.name]
         self.changes: list[SlotChange] = []
+        self.episodes: list[dict] = []
+        """가림 한 번이 끝날 때마다 한 줄 (평가용 기록 — 판정에는 안 씀). state:
+        compared(기준과 비교함, changed 0/1) / no_reference(첫 가림이라 기준 없음) / unfinished(finish 때 아직 가림·안정 전)."""
 
     def reset(self) -> None:
         for s in self.slots:
@@ -112,6 +115,23 @@ class SlotDiff:
             s.clear_since = s.blocked_since = None
             s.was_blocked = False
         self.changes = []
+        self.episodes = []
+
+    def _episode(self, s: _Slot, end_ms: float, state: str, ratio: float | None = None,
+                 baseline: float | None = None, change: SlotChange | None = None) -> None:
+        self.episodes.append({"slot": s.name, "start_ms": s.blocked_since if s.blocked_since is not None else end_ms,
+                              "end_ms": end_ms, "state": state, "ratio": ratio, "baseline": baseline,
+                              "changed": int(change is not None),
+                              "direction": change.direction if change else "",
+                              "edge_ratio": change.edge_ratio if change else None})
+
+    def finish(self, now_ms: float) -> None:
+        """영상 끝: 아직 가렸거나 다시 보인 지 안정 시간이 안 된 칸을 unfinished 로 남긴다."""
+        for s in self.slots:
+            if s.was_blocked:
+                self._episode(s, now_ms, "unfinished")
+                s.was_blocked = False
+                s.blocked_since = None
 
     def _blocked(self, slot: _Slot, people: list) -> bool:
         x1, y1, x2, y2 = slot.box
@@ -142,6 +162,9 @@ class SlotDiff:
             if now_ms - s.clear_since < stable:
                 continue
             if s.reference is None:
+                if s.was_blocked:
+                    self._episode(s, now_ms, "no_reference")
+                    s.blocked_since = None
                 s.reference = patch.copy()
                 s.was_blocked = False
                 continue
@@ -165,6 +188,7 @@ class SlotDiff:
             ratio = others.get(s.name, changed_ratio(s.reference, cur, cfg.diff_level, cfg.shift_px))
             rest = [v for k, v in others.items() if k != s.name]
             baseline = float(np.median(rest)) if rest else 0.0
+            change = None
             if ratio >= cfg.min_ratio and ratio - baseline >= cfg.lighting_margin:
                 er = _edges(cur) / max(_edges(s.reference), 1e-6)
                 if s.empty is not None and s.empty.shape == cur.shape:
@@ -175,6 +199,7 @@ class SlotDiff:
                     direction = "줄어듦" if er <= cfg.edge_drop else ("늘어남" if er >= cfg.edge_rise else "바뀜")
                 change = SlotChange(s.name, s.blocked_since or now_ms, now_ms, ratio, direction, er)
                 out.append(change)
+            self._episode(s, now_ms, "compared", ratio, baseline, change)
             s.reference = cur
             s.was_blocked = False
             s.blocked_since = None
