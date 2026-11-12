@@ -7,7 +7,8 @@
     python scripts/dual_eval.py --shoot 3 run|calibrate|judge   # 3차 촬영 (source/2(angle*), 영상별 구역·실제 장면 시각 — scripts/shoot3_eval.py)
         --only "N*,T1"   짝 이름 패턴     --detail-off  선반 카메라 없이 (전체 카메라만, 1-2 기준선)
         --sensor          가짜 센서 기록(labels/store01_dual/fake_sensor/<짝>.csv)을 함께 (1-6)
-        --payments        계산대 체류 대신 결제 라벨(labels/store01_dual/payments.csv)을 결제 기록으로 (E-13)
+        --payments        계산대 체류 대신 결제 라벨(<라벨 폴더>/payments.csv)을 결제 기록으로 (E-13).
+                          3차는 바코드 삑 소리 초안(scripts/beep_payments.py)을 label_payments.py --shoot 3 으로 확인한 것
 
 기준값은 정상(N) 영상으로 정하고 고정한 뒤 절도(T)·복합(C)으로 채점한다 (1차 촬영과 같은 방식).
 영상은 저장소 밖 ../../source/1(angle0)·1(angle1).
@@ -236,9 +237,9 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     cfg.risk.payment_mode = "dwell"   # 결제 기록 없음: 계산대 체류 = 결제 (사용자 확인 규칙)
     # 매장 안 바닥(선반 앞·계산대·통로)에 1초 이상 들어온 사람만 손님 — 문 앞·창밖 행인·입장 순간 겹친 상자 제외 (C-20)
     cfg.risk.inside_zones, cfg.risk.inside_seconds = ["shelf", "counter", "aisle"], 1.0
-    if SHOOT == 3:
-        # 3차 전체 카메라는 출구가 화면 가운데(삼각대 옆 벽 뒤) — 영상 끝에 출구 구역 안이면 나가는 중 (후속 23)
-        cfg.risk.exit_end_at_edge_only = False
+    # 영상 끝에 출구 구역 안이면 나가는 중 — 화면 끝 조건을 끔 (2·3차 모두, 후속 23·25).
+    # 3차는 출구가 화면 가운데, 2차는 출구(오른쪽 위)에서 상자가 위쪽 끝에만 걸려 '왼쪽·오른쪽 끝' 조건을 못 넘었다.
+    cfg.risk.exit_end_at_edge_only = False
     if OVERVIEW_POSE:
         cfg.fusion.overview_reach_seconds = 0.3   # 선반 카메라 손-칸 접촉과 같은 기준에서 시작 (N 으로 다시 본다)
     cfg.output.write_video = False
@@ -396,7 +397,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         # 결제 라벨(scripts/label_payments.py)의 완료된 결제만 결제 기록으로 — 계산대 체류 규칙은 끈다
         from label_payments import load_feed
         cfg.risk.payment_mode = "feed"
-        feed = load_feed(pair)
+        feed = load_feed(pair, LABELS / "payments.csv")
     risk = RiskEngine(cfg.risk, fz, feed)
     detail_setup = yaml.safe_load((zdir / "angle0.yaml").read_text(encoding="utf-8"))
     slot_shelf = {z["name"]: detail_setup["shelves"][0]["name"] for z in detail_setup["zones"]}
@@ -483,6 +484,20 @@ def load_band_map() -> tuple[float, float]:
     return float(a), float(b)
 
 
+def check_payment_labels(todo: list[str], path: Path | None = None) -> list[str]:
+    """--payments 전에: 라벨 줄이 없는 짝은 '결제 없음'으로 읽히므로 멈춘다. 확인 안 한 초안 짝 목록을 돌려준다."""
+    from label_payments import label_state, load_labels
+    labels = load_labels(path or LABELS / "payments.csv")
+    state = {p: label_state(labels, p) for p in todo}
+    missing = [p for p, s in state.items() if s == "missing"]
+    if missing:
+        raise SystemExit(f"결제 라벨 없는 짝: {', '.join(missing)} — scripts/label_payments.py 로 먼저 찍는다")
+    drafts = [p for p, s in state.items() if s == "draft"]
+    if drafts:
+        print(f"주의: 확인 안 한 결제 초안(beep-draft) {len(drafts)}짝 — {', '.join(drafts)}")
+    return drafts
+
+
 def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", before: bool = False,
           payments: bool = False) -> list[dict]:
     base = AppConfig.load(ROOT / "config.yaml")
@@ -492,6 +507,8 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
     band = load_band_map()
     truth = load_truth()
     rows, failed = [], []
+    if payments:
+        check_payment_labels([p for p in pairs(pattern) if (OUT / p / ".done").exists()])
     for pair in pairs(pattern):
         if not (OUT / pair / ".done").exists():
             continue
@@ -667,12 +684,10 @@ def main() -> int:
     ap.add_argument("--sensor-lanes", help="3차 --sensor: 쓸 레인 쉼표 (기본 전부, 예: L1,L2)")
     ap.add_argument("--shoot", type=int, choices=[2, 3], default=2, help="촬영 회차 (기본 2). 3 = 2026-11-11 3차")
     ap.add_argument("--payments", action="store_true",
-                    help="계산대 체류 대신 결제 라벨(labels/store01_dual/payments.csv, scripts/label_payments.py)을 결제 기록으로")
+                    help="계산대 체류 대신 결제 라벨(<라벨 폴더>/payments.csv, scripts/label_payments.py)을 결제 기록으로")
     args = ap.parse_args()
     global OUT, OVERRIDES, OVERVIEW_POSE, OVERVIEW_DETECTOR, TENTATIVE, ZONES
     set_profile(args.shoot)
-    if args.shoot == 3 and args.payments:
-        ap.error("--payments 는 2차 결제 라벨(labels/store01_dual/payments.csv) 전용 — 3차 결제 라벨은 아직 없다")
     global SENSOR_LANES
     SENSOR_LANES = tuple(x.strip() for x in args.sensor_lanes.split(",")) if args.sensor_lanes else None
     OVERVIEW_POSE = args.overview_pose
