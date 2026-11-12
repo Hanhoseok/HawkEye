@@ -30,6 +30,7 @@ risk:
   payment_mode: dwell       # 결제 기록 없음: 계산대 체류 = 결제
   inside_zones: [shelf, counter, aisle]   # 이 바닥 구역에 1초 이상 들어온 사람만 손님 (문 앞·창밖 행인 제외)
   inside_seconds: 1.0
+  exit_end_at_edge_only: false   # 영상 끝에 출구 구역 안이면 나가는 중 (2차 출구는 위쪽 끝에만 걸림, 후속 25)
 zones:
   foot_point: ankle         # 바닥 구역 판단 = 발목 (B-15, 2026-11-09). 구역은 실제 바닥 자리에 맞춰 그림 — 상자 발 점(bbox)과 함께 쓰면 28/38
 identity:
