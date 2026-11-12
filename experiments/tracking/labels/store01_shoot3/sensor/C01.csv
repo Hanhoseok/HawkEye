@@ -1,3 +1,4 @@
-time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video
-6.9,15:42:50,L1,칸타타 275ml 스위트 아메리카노,REMOVE,2,1,-1,333,1
-15.9,15:42:59,L2,동과루,REMOVE,3,2,-1,277,1
+time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+6.88,15:42:50,L1,칸타타 275ml 스위트 아메리카노,REMOVE,2,1,-1,333,1,6.88,6.90
+15.88,15:42:59,L2,동과루,REMOVE,3,2,-1,277,1,15.88,15.90
+37.88,15:43:21,L3,애플사이다,REMOVE,1,0,-1,335,0,37.88,37.90
