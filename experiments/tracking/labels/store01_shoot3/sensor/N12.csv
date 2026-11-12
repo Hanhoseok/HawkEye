@@ -1,2 +1,2 @@
-time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video
-8.2,15:40:46,L3,애플사이다,REMOVE,1,0,-1,336,1
+time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+8.18,15:40:46,L3,애플사이다,REMOVE,1,0,-1,336,1,8.18,8.15

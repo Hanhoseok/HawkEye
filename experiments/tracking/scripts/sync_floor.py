@@ -5,6 +5,7 @@
 
     python scripts/sync_floor.py calibrate          # 메모지 → zones/store01_shoot3/floor_angle{0,1}.yaml + 확인 그림
     python scripts/sync_floor.py extract            # 사람 발(화면 좌표) 뽑기, 캐시 (CPU 약 1시간)
+    python scripts/sync_floor.py retime             # 옛 발 캐시의 시각을 실제 장면 시각으로 (한 번)
     python scripts/sync_floor.py register           # 짝마다 카메라 위치를 area_setting 에 맞춤 (estimate 가 자동으로 부름)
     python scripts/sync_floor.py audio              # 소리 시차 (GCC-PHAT) 캐시 (estimate 가 자동으로 부름)
     python scripts/sync_floor.py estimate           # 시차 → labels/store01_shoot3/sync.csv (manual 줄은 그대로)
@@ -38,6 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.inputs import audio_sync  # noqa: E402
+from src.inputs.frame_times import end_ms, first_ms, index_at, read_times  # noqa: E402
 from src.inputs.floor_sync import FloorSyncResult, Samples, combine, lag_cost, median_distance, search  # noqa: E402
 from src.inputs.sync import SyncRow, SyncTable  # noqa: E402
 from src.zones.floor import FloorMap, foot_pixel  # noqa: E402
@@ -48,7 +50,8 @@ ZONES = ROOT / "zones" / "store01_shoot3"
 LABELS = ROOT / "labels" / "store01_shoot3"
 OUT = ROOT / "outputs" / "sync_floor"
 FEET = OUT / "feet"
-FEET_FIELDS = ["ms", "person", "px", "py", "width", "height", "conf", "ankle", "cut"]
+FEET_FIELDS = ["ms", "person", "px", "py", "width", "height", "conf", "ankle", "cut", "frame"]
+"""ms = 실제 장면 시각(POS_MSEC). frame 열이 없는 옛 캐시는 ms 가 '번호 ÷ fps' — retime 으로 고친다."""
 
 ROUGH = {
     "angle0": [(432, 820), (349, 1025), (1135, 785), (1213, 1037)],
@@ -201,22 +204,25 @@ def extract_one(model, path: Path, hz: float) -> list[dict]:
     if not cap.isOpened():
         raise ValueError(f"{path} 열기 실패")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    every = max(1, int(round(fps / hz)))
-    rows, idx = [], -1
+    rows, idx, nxt = [], -1, 0.0
     while True:
         if not cap.grab():
             break
         idx += 1
-        if idx % every:
+        ms = cap.get(cv2.CAP_PROP_POS_MSEC)   # 실제 장면 시각 — 장면이 빠진 영상(3차 angle1)에서도 맞다
+        if idx == 0:
+            ms = max(ms, 0.0) if ms < 1000.0 / fps else 0.0   # 첫 장면 시각은 엉뚱할 때가 있다 (frame_times.first_ms)
+        if ms + 1e-6 < nxt:
             continue
+        nxt += 1000.0 / hz
         ok, frame = cap.retrieve()
         if not ok:
             break
         h, w = frame.shape[:2]
         res = model.predict(frame, imgsz=640, conf=POSE_CONF, classes=[0], verbose=False)[0]
         if res.boxes is None or len(res.boxes) == 0:
-            rows.append({"ms": f"{idx * 1000.0 / fps:.1f}", "person": -1, "px": "", "py": "", "width": w, "height": h,
-                         "conf": "", "ankle": "", "cut": ""})
+            rows.append({"ms": f"{ms:.3f}", "person": -1, "px": "", "py": "", "width": w, "height": h,
+                         "conf": "", "ankle": "", "cut": "", "frame": idx})
             continue
         boxes = res.boxes.xyxy.cpu().numpy()
         confs = res.boxes.conf.cpu().numpy()
@@ -224,10 +230,53 @@ def extract_one(model, path: Path, hz: float) -> list[dict]:
         for i, (box, conf) in enumerate(zip(boxes, confs)):
             (fx, fy), ankle = foot_pixel(tuple(box), kps[i] if kps is not None else None, 0.3)
             cut = (not ankle) and box[3] >= h - 2
-            rows.append({"ms": f"{idx * 1000.0 / fps:.1f}", "person": i, "px": f"{fx:.1f}", "py": f"{fy:.1f}",
-                         "width": w, "height": h, "conf": f"{conf:.2f}", "ankle": int(ankle), "cut": int(cut)})
+            rows.append({"ms": f"{ms:.3f}", "person": i, "px": f"{fx:.1f}", "py": f"{fy:.1f}",
+                         "width": w, "height": h, "conf": f"{conf:.2f}", "ankle": int(ankle), "cut": int(cut), "frame": idx})
     cap.release()
     return rows
+
+
+def is_retimed(path: Path) -> bool:
+    with path.open(encoding="utf-8", newline="") as f:
+        return "frame" in (csv.DictReader(f).fieldnames or [])
+
+
+def retime_rows(rows: list[dict], times, fps: float) -> list[dict]:
+    """캐시 줄 → 장면 번호 → 실제 장면 시각. frame 열이 있으면 그 번호를, 없으면(옛 캐시) ms('번호 ÷ fps') 에서 번호를 되살린다."""
+    out = []
+    for r in rows:
+        frame = (r.get("frame") or "").strip()
+        idx = int(frame) if frame else int(round(float(r["ms"]) * fps / 1000.0))
+        k = max(0, min(idx, len(times) - 1))
+        out.append({**r, "ms": f"{times[k]:.3f}", "frame": idx})
+    return out
+
+
+def retime(only: str | None, force: bool = False) -> None:
+    """옛 발 캐시(frame 열 없음)를 실제 장면 시각으로 다시 쓴다. 이미 고친 파일은 건너뛴다 (두 번 바뀌지 않음).
+    --force 면 frame 열의 장면 번호로 다시 계산 (시각 계산 규칙을 고쳤을 때)."""
+    for pair in pairs(only):
+        for cam in CAMS:
+            path = feet_path(pair, cam)
+            if not path.exists() or (is_retimed(path) and not force):
+                continue
+            video = CAMS[cam] / f"{pair}.mp4"
+            cap = cv2.VideoCapture(str(video))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            cap.release()
+            times = read_times(video)
+            with path.open(encoding="utf-8", newline="") as f:
+                rows = list(csv.DictReader(f))
+            fixed = retime_rows(rows, times, fps)
+            tmp = path.with_suffix(".tmp")
+            with tmp.open("w", encoding="utf-8", newline="") as f:
+                wr = csv.DictWriter(f, fieldnames=FEET_FIELDS)
+                wr.writeheader()
+                wr.writerows(fixed)
+            tmp.replace(path)
+            last = max((float(r["ms"]) for r in rows), default=0.0)
+            new_last = max((float(r["ms"]) for r in fixed), default=0.0)
+            print(f"  {pair} {cam}: 마지막 표본 {last / 1000:.2f}s → {new_last / 1000:.2f}s", flush=True)
 
 
 def extract(only: str | None, force: bool) -> None:
@@ -436,6 +485,8 @@ def estimate(only: str | None) -> dict[str, FloorSyncResult]:
         if not all(feet_path(pair, c).exists() for c in CAMS):
             print(f"{pair}: 발 캐시 없음 — extract 먼저")
             continue
+        if not all(is_retimed(feet_path(pair, c)) for c in CAMS):
+            raise SystemExit(f"{pair}: 옛 발 캐시(장면 번호 ÷ fps 시각) — 먼저 python scripts/sync_floor.py retime")
         maps = pair_maps(pair, base, regs)
         if maps is None:
             print(f"{pair}: 카메라 위치 맞추기 실패 — 건너뜀")
@@ -473,11 +524,14 @@ def estimate(only: str | None) -> dict[str, FloorSyncResult]:
 
 # ---------------------------------------------------------------------- 확인
 
-def frame_at(path: Path, ms_list: list[float], width: int = 640) -> list[np.ndarray | None]:
-    """여러 시각의 장면 (순차 읽기 — HEVC 탐색 버그)."""
+def frame_at(path: Path, ms_list: list[float], width: int = 640, times=None) -> list[np.ndarray | None]:
+    """여러 시각에 가장 가까운 장면 (실제 장면 시각 기준, 순차 읽기 — HEVC 탐색 버그). 영상 구간 [0, 끝) 밖은 None."""
+    if times is None:
+        times = read_times(path)
     cap = cv2.VideoCapture(str(path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    want = sorted((f, i) for i, ms in enumerate(ms_list) if (f := int(round(ms * fps / 1000.0))) >= 0)
+    end = end_ms(times, fps)
+    want = sorted((index_at(times, ms), i) for i, ms in enumerate(ms_list) if 0 <= ms < end)
     out: list[np.ndarray | None] = [None] * len(ms_list)
     idx, k = -1, 0
     while k < len(want):
@@ -546,7 +600,7 @@ def check(only: str | None) -> None:
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("stage", choices=["calibrate", "extract", "register", "audio", "estimate", "check"])
+    ap.add_argument("stage", choices=["calibrate", "extract", "retime", "register", "audio", "estimate", "check"])
     ap.add_argument("--only", help="짝 이름 쉼표 구분 (예: T01,C04)")
     ap.add_argument("--force", action="store_true", help="extract·register: 캐시가 있어도 다시")
     ap.add_argument("--floor", help="calibrate: 메모지 P1~P4 바닥 cm 'x,y;x,y;x,y;x,y' (실측 시)")
@@ -567,6 +621,8 @@ def main() -> int:
         calibrate(floor_cm, points)
     elif args.stage == "extract":
         extract(args.only, args.force)
+    elif args.stage == "retime":
+        retime(args.only, args.force)
     elif args.stage == "register":
         register(args.only, args.force)
     elif args.stage == "audio":

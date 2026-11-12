@@ -1,5 +1,5 @@
-time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video
-6.2,16:03:37,L3,애플사이다,REMOVE,1,0,-1,324,1
-9.2,16:03:40,L2,동과루,REMOVE,3,2,-1,275,1
-11.2,16:03:42,L3,애플사이다,ADD,0,1,1,313,1
-28.2,16:03:59,L3,애플사이다,REMOVE,1,0,-1,327,0
+time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+6.16,16:03:37,L3,애플사이다,REMOVE,1,0,-1,324,1,6.16,6.16
+9.16,16:03:40,L2,동과루,REMOVE,3,2,-1,275,1,9.16,9.16
+11.16,16:03:42,L3,애플사이다,ADD,0,1,1,313,1,11.16,11.16
+28.16,16:03:59,L3,애플사이다,REMOVE,1,0,-1,327,0,28.16,28.16

@@ -1,0 +1,5 @@
+pair,seq,time_sec,lane,action,qty,checked_by,note
+C01,1,6.55,L1,take,1,hoseok,
+C01,2,15.98,L2,take,1,hoseok,
+C02,1,5.98,L2,take,1,hoseok,
+C02,2,14.02,L1,take,1,hoseok,
