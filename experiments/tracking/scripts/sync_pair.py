@@ -9,6 +9,10 @@
     # 자동 추정만 표에 채우기 (method=suggest, 확인 전 표시)
     python scripts/sync_pair.py --suggest-all
 
+    # 3차 촬영 (source/2(angle0)·2(angle1), 표 labels/store01_shoot3/sync.csv).
+    # 시작값은 발 위치 자동 추정(scripts/sync_floor.py estimate)이 표에 써 둔 값 — 먼저 그것을 돌린다.
+    python scripts/sync_pair.py T01 --shoot 3
+
 화면 조작 (왼쪽 angle0, 오른쪽 angle1 — 같은 공통 시각의 장면):
     스페이스 재생/정지   ← → 0.1초 이동   [ ] 1초 이동
     a d   angle0 을 한 장면(1/30초)씩 밀기   A D  10 장면씩
@@ -34,14 +38,20 @@ SOURCE = ROOT.parent.parent / "source"
 VIDEO_DIR = SOURCE / "1(angle0)"
 REF_DIR = SOURCE / "1(angle1)"
 TABLE = ROOT / "labels" / "store01_dual" / "sync.csv"
+SHOOT3 = {"video": SOURCE / "2(angle0)", "ref": SOURCE / "2(angle1)",
+          "table": ROOT / "labels" / "store01_shoot3" / "sync.csv"}
+"""3차 촬영: 두 각도 모두 <짝>.mp4 (예: T01.mp4, N08-1.mp4)."""
 ADDED_DIR = SOURCE / "added"
 """분석 도구에서 추가한 영상: <짝>_angle1.<확장자>(전체 카메라) · <짝>_angle0.<확장자>(선반 카메라). 같은 매장·같은 카메라 위치만."""
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".mkv", ".avi")
 HZ = 10.0
 
 
-def pair_files(pair: str) -> tuple[Path, Path]:
-    """짝 이름(N1, T3, C10, N8-1) → (angle0 파일, angle1 파일). 추가한 영상이면 그 파일, 아니면 2차 촬영의 이름 규칙."""
+def pair_files(pair: str, shoot: int = 2) -> tuple[Path, Path]:
+    """짝 이름(N1, T3, C10, N8-1) → (angle0 파일, angle1 파일). 추가한 영상이면 그 파일, 아니면 2차 촬영의 이름 규칙.
+    shoot=3 이면 3차 촬영 폴더의 같은 이름 파일 (T01 → 2(angle0)/T01.mp4, 2(angle1)/T01.mp4)."""
+    if shoot == 3:
+        return SHOOT3["video"] / f"{pair}.mp4", SHOOT3["ref"] / f"{pair}.mp4"
     added = added_files(pair)
     if added is not None:
         return added
@@ -70,7 +80,10 @@ def added_pairs() -> list[str]:
     return sorted(n for n in names if added_files(n) is not None)
 
 
-def all_pairs() -> list[str]:
+def all_pairs(shoot: int = 2) -> list[str]:
+    if shoot == 3:
+        return sorted(p.stem for p in SHOOT3["ref"].glob("*.mp4")
+                      if p.stem != "area_setting" and (SHOOT3["video"] / p.name).exists())
     names = []
     for p in sorted(VIDEO_DIR.glob("20261028_*.mp4")):
         name = p.stem.split("_", 1)[1]
@@ -126,8 +139,13 @@ def suggest(pair: str, model) -> tuple[float, float]:
     return best_lag(presence_signal(video, model), presence_signal(ref, model), HZ)
 
 
-def interactive(pair: str, start_offset: float, who: str) -> SyncRow | None:
-    video, ref = pair_files(pair)
+def rel(path: Path) -> str:
+    """표에 남기는 경로: source 아래 '폴더/파일' (예: 1(angle0)/20261028_N1.mp4, 2(angle1)/T01.mp4)."""
+    return f"{path.parent.name}/{path.name}"
+
+
+def interactive(pair: str, start_offset: float, who: str, shoot: int = 2) -> SyncRow | None:
+    video, ref = pair_files(pair, shoot)
     a, b = Clip(video), Clip(ref)
     offset, t, playing = start_offset, 0.0, False
     frame_ms = 1000.0 / a.fps
@@ -152,7 +170,7 @@ def interactive(pair: str, start_offset: float, who: str) -> SyncRow | None:
             offset += shifts[key]
         elif key == ord("s"):
             cv2.destroyWindow("sync")
-            return SyncRow(pair, f"1(angle0)/{video.name}", f"1(angle1)/{ref.name}", round(offset, 1), "manual", who)
+            return SyncRow(pair, rel(video), rel(ref), round(offset, 1), "manual", who)
         elif key == ord("q"):
             cv2.destroyWindow("sync")
             return None
@@ -164,12 +182,16 @@ def main() -> int:
     ap.add_argument("--suggest-all", action="store_true", help="모든 짝의 자동 추정값을 표에 채움 (확인된 짝은 건드리지 않음)")
     ap.add_argument("--no-suggest", action="store_true", help="자동 추정 없이 표의 값(없으면 0)에서 시작")
     ap.add_argument("--by", default="", help="확인한 사람")
-    ap.add_argument("--table", default=str(TABLE))
+    ap.add_argument("--table", help="시차 표 (기본: 2차 labels/store01_dual/sync.csv, 3차 labels/store01_shoot3/sync.csv)")
+    ap.add_argument("--shoot", type=int, choices=[2, 3], default=2, help="촬영 회차 (기본 2)")
     args = ap.parse_args()
+    args.table = args.table or str(SHOOT3["table"] if args.shoot == 3 else TABLE)
+    if args.shoot == 3 and args.suggest_all:
+        ap.error("3차 촬영의 자동 추정은 scripts/sync_floor.py estimate 를 쓴다 (발 위치)")
 
     table = SyncTable.load(args.table)
     model = None
-    if args.suggest_all or (args.pair and not args.no_suggest and table.offset_ms(args.pair) is None):
+    if args.suggest_all or (args.shoot == 2 and args.pair and not args.no_suggest and table.offset_ms(args.pair) is None):
         from ultralytics import YOLO
         model = YOLO(str(ROOT / "yolov8n.pt"))
 
@@ -180,7 +202,7 @@ def main() -> int:
                 continue
             off, corr = suggest(pair, model)
             video, ref = pair_files(pair)
-            table.upsert(SyncRow(pair, f"1(angle0)/{video.name}", f"1(angle1)/{ref.name}", off, "suggest", "",
+            table.upsert(SyncRow(pair, rel(video), rel(ref), off, "suggest", "",
                                  f"사람 보임 신호 상관 {corr:.2f} — 확인 필요"))
             print(f"{pair}: {off:+.0f}ms (상관 {corr:.2f})", flush=True)
         table.save(args.table)
@@ -190,9 +212,12 @@ def main() -> int:
     if not args.pair:
         ap.error("짝 이름 또는 --suggest-all 이 필요합니다")
     start = table.offset_ms(args.pair)
+    if start is None and args.shoot == 3:
+        print(f"{args.pair}: 표에 시작값 없음 — 0 에서 시작 (먼저 sync_floor.py estimate 권장)")
+        start = 0.0
     if start is None:
         start = 0.0 if args.no_suggest else suggest(args.pair, model)[0]
-    row = interactive(args.pair, start, args.by)
+    row = interactive(args.pair, start, args.by, args.shoot)
     if row is not None:
         table.upsert(row)
         table.save(args.table)
