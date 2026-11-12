@@ -62,6 +62,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.inputs.frame_times import end_ms, first_ms, index_at  # noqa: E402
 from src.inputs.sync import SyncTable  # noqa: E402
 from src.risk.payments import PaymentEvent, PaymentFeed  # noqa: E402
 
@@ -181,6 +182,9 @@ class FrameCache:
     2차 촬영 영상(HEVC, 휴대폰)은 cv2.CAP_PROP_POS_FRAMES 로 탐색하면 엉뚱한 장면이 나온다 —
     C01 에서 598번(10초)을 요청하면 1168번(19.5초)이 나오고, 15초 넘게는 읽지도 못했다 (2026-11-04 측정).
     그래서 순서대로 읽은 번호만 믿는다. 읽는 동안에도 이미 읽은 장면은 바로 볼 수 있다 (뒤 스레드).
+
+    장면마다 실제 시각(POS_MSEC)도 `times`(ms) 에 담는다 — 3차 angle1 은 장면을 빠뜨려 '번호 ÷ fps' 가 끝에서 최대 10초 틀린다.
+    시각이 필요한 곳은 `time_sec(i)`·`index_at(sec)` 를 쓴다 (2차 화면은 정상 영상이라 기존 번호 계산 그대로).
     """
 
     def __init__(self, path: Path, width: int) -> None:
@@ -191,6 +195,7 @@ class FrameCache:
         self.expected = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
         self.width = width
         self.frames: list[np.ndarray] = []
+        self.times: list[float] = []
         self.done = False
         self._cap = cap
         self._thread = threading.Thread(target=self._load, daemon=True)
@@ -202,8 +207,12 @@ class FrameCache:
                 ok, frame = self._cap.read()
                 if not ok:
                     break
+                ms = self._cap.get(cv2.CAP_PROP_POS_MSEC)
+                if len(self.times) == 1:   # 첫 장면 시각은 OpenCV 가 엉뚱하게 줄 때가 있다
+                    self.times[0] = first_ms(self.times[0], ms, self.fps)
                 h, w = frame.shape[:2]
                 frame = cv2.resize(frame, (self.width, int(h * self.width / w)), interpolation=cv2.INTER_AREA)
+                self.times.append(ms if self.times else max(ms, 0.0))   # 시각을 먼저 — frames 에 있는 장면은 늘 시각이 있다
                 self.frames.append(cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])[1])
         finally:
             self._cap.release()
@@ -216,6 +225,31 @@ class FrameCache:
     @property
     def progress(self) -> float:
         return 1.0 if self.done else min(len(self.frames) / self.expected, 0.99)
+
+    def _wait(self, i: int) -> None:
+        while i >= len(self.frames) and not self.done:
+            time.sleep(0.005)
+
+    def time_sec(self, i: int) -> float:
+        """i 번째 장면의 실제 시각 (초). 범위 밖은 첫·마지막 장면."""
+        self._wait(i)
+        if not self.times:
+            return i / self.fps
+        return self.times[max(0, min(i, len(self.times) - 1))] / 1000.0
+
+    def index_at(self, sec: float) -> int:
+        """sec 에 가장 가까운 장면 번호 (필요한 만큼 읽힐 때까지 기다린다)."""
+        ms = sec * 1000.0
+        while not self.done and (not self.times or self.times[-1] < ms):
+            time.sleep(0.005)
+        return index_at(self.times, ms)
+
+    @property
+    def duration_sec(self) -> float:
+        """영상 길이 (초). 다 읽기 전에는 표시 장면 수로 어림."""
+        if self.done:
+            return end_ms(self.times, self.fps) / 1000.0
+        return max(self.expected / self.fps, (self.times[-1] / 1000.0) if self.times else 0.0)
 
     def get(self, i: int) -> np.ndarray | None:
         """i 번째 장면. 아직 안 읽었으면 읽힐 때까지 기다린다."""

@@ -223,3 +223,16 @@ def test_frame_at_skips_negative_times(tmp_path):
     w.release()
     out = SF.frame_at(path, [-1000.0, 1000.0, 2000.0], width=64)
     assert out[0] is None and out[1] is not None and out[2] is not None
+
+
+def test_sync_pair_candidates_next_and_status():
+    from src.inputs.sync import SyncRow, SyncTable
+    note = "발 위치 +654ms 비용 5cm; 소리 +1ms 피크 1.50 (그 시차 비용 12cm)"
+    assert SP.candidates(note) == [("발 위치", 654.0), ("소리", 1.0)]
+    assert SP.candidates("발 위치 +50ms; 소리 +50ms") == [("발 위치", 50.0)]
+    assert SP.candidates("") == []
+    t = SyncTable([SyncRow("A", "", "", 0, "manual"), SyncRow("B", "", "", 0, "floor-low")])
+    assert SP.next_pairs(t, ["A", "B", "C"]) == ["B", "C"]
+    assert SP.next_pairs(t, ["A", "B", "C"], redo=True) == ["A", "B", "C"]
+    text = SP.status_text(t, ["A", "B", "C"])
+    assert "확인(manual) 1/3" in text and "B, C" in text
