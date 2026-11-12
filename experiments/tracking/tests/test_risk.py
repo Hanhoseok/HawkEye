@@ -418,6 +418,17 @@ def test_video_end_judges_customer_half_out_at_exit_edge():
     assert levels(final) == [H]
 
 
+def test_video_end_mid_frame_exit_when_edge_not_required():
+    """출구가 화면 가운데인 카메라(3차): exit_end_at_edge_only=False 면 마지막 장면에 출구 구역 안이기만 해도 나가는 중.
+    기본(True)은 그대로 화면 끝에 걸쳐야 한다."""
+    for edge_only, expect in ((True, []), (False, [H])):
+        eng = engine(exit_end_at_edge_only=edge_only)
+        eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+        for i in range(10):
+            eng.update(at(5.0 + i * 0.1), [person(1, EXIT, x=150.0)])   # 화면(400) 가운데
+        assert levels(eng.finish(at(5.95), frame_size=(400, 400))) == expect
+
+
 def test_only_people_who_came_inside_are_judged_when_inside_zones_are_set():
     """카메라 2대(2차 촬영): 문 앞에만 서 있던 사람·잠깐 잡힌 조각은 손님이 아니다 (limitations C-20).
 

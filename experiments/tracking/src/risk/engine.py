@@ -197,7 +197,8 @@ class RiskEngine:
             if frame.pts_ms - customer.last_seen_ms < 300.0:
                 # 마지막 장면에도 보인다 — 방금(2초 안) 출구 구역에 있었고 지금 화면 끝에 걸쳐 있으면 나가는 중.
                 # 나가는 마지막 몇 장면은 머리·어깨만 잡혀 상자 아래쪽(발)이 출구 띠 밖으로 올라간다 (정상 영상 N06).
-                if not (frame_size and customer.last_bbox and self._at_edge(customer.last_bbox, frame_size)):
+                at_edge = frame_size and customer.last_bbox and self._at_edge(customer.last_bbox, frame_size)
+                if self.config.exit_end_at_edge_only and not at_edge:
                     continue
             customer.departed = True
             events.append(self._check_identity(customer, self._judge(customer, frame, how="출구 쪽에서 사라짐 (영상 끝)")))

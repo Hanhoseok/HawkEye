@@ -39,6 +39,7 @@ class DualJudge:
         slot_shelf: dict[str, str] | None = None,
         sensors: list[SensorEvent] | None = None,
         shelf_image: ZoneMap | None = None,
+        detail_point=None,
     ) -> None:
         self.config = config
         self.risk = risk
@@ -46,6 +47,8 @@ class DualJudge:
         self.band_map = band_map
         """선반 카메라 사람 상자 가운데 x(화면 비율) → 띠 위치: band = a·x + b. 정상 영상으로 맞춘다."""
         self.detail_width = detail_width
+        self.detail_point = detail_point
+        """선반 카메라 사람 상자 → band_map 입력 x (화면 비율). 없으면 상자 가운데 x ÷ 화면 폭 (2차). 3차는 카메라 움직임을 되돌린 좌표."""
         self.overview_size = overview_size
         self.linker = CrossViewLinker(config)
         self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors)
@@ -74,6 +77,8 @@ class DualJudge:
 
     def detail_band(self, bbox) -> float:
         a, b = self.band_map
+        if self.detail_point is not None:
+            return a * self.detail_point(bbox, self.detail_width) + b
         return a * ((bbox[0] + bbox[2]) / 2.0 / self.detail_width) + b
 
     def detail_step(
