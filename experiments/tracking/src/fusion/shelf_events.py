@@ -29,11 +29,19 @@ class TimeAxis:
 
     fps: float
     offset_ms: float = 0.0
+    times: tuple | None = None
+    """장면 번호 → 실제 시각(ms). 장면을 빠뜨리는 영상(3차 angle1)용. 없으면 번호 ÷ fps (기존 그대로)."""
 
     def to_ms(self, frame: int) -> float:
+        if self.times:
+            return self.times[max(0, min(int(frame), len(self.times) - 1))] + self.offset_ms
         return frame * 1000.0 / self.fps + self.offset_ms
 
     def to_frame(self, ms: float) -> int:
+        if self.times:
+            from ..inputs.frame_times import index_at
+
+            return index_at(self.times, ms - self.offset_ms)
         return int(round((ms - self.offset_ms) * self.fps / 1000.0))
 
 

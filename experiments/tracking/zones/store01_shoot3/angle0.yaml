@@ -1,0 +1,27 @@
+note: |-
+  3차 촬영(2026-11-11) 선반 카메라(angle0) 구역 — 확정 (2026-11-12, hoseok 확인). 화면 비율, **area_setting 장면 기준**.
+  확인: 39편 첫 장면·정답 74곳 장면에 겹친 그림 (python scripts/shoot3_zones.py check [--at take]).
+  카메라가 영상마다 조금씩 움직여서(T 영상은 레인 자리에서 약 27px — 레인 하나 폭) 영상별로 옮겨 쓴다:
+  scripts/shoot3_zones.py 가 outputs/sync_floor/register.csv 의 영상→area_setting 호모그래피 역으로 옮긴다.
+  레인 이름은 센서 레인과 같다 (L1 칸타타 · L2 동과루 · L3 애플사이다). 받침의 왼쪽 두 칸은 비어 있어 구역 없음.
+notes:
+  shelf: 센서 레인 받침(검은 칸막이) 전체. 사람 상자가 겹치면 '선반을 가림'.
+  L1: 맨 오른쪽 칸 — 칸타타(빨간 뚜껑 병 캔), 처음 2개.
+  L2: 오른쪽 둘째 칸 — 동과루(흰 캔), 처음 3개.
+  L3: 오른쪽 셋째 칸 — 애플사이다(노란 캔), 처음 1개. 센서는 못 믿음 (docs/multiview-progress.md 후속 18).
+reference: area_setting
+normalized: true
+shelves:
+- name: shelf
+  box: [0.5469, 0.3287, 0.6302, 0.4167]
+  zone: shelf
+zones:
+- name: L1
+  type: SHELF
+  polygon: [[0.6156, 0.3352], [0.6297, 0.3352], [0.6297, 0.4093], [0.6156, 0.4093]]
+- name: L2
+  type: SHELF
+  polygon: [[0.6016, 0.3352], [0.6156, 0.3352], [0.6156, 0.4093], [0.6016, 0.4093]]
+- name: L3
+  type: SHELF
+  polygon: [[0.5870, 0.3407], [0.6016, 0.3407], [0.6016, 0.4093], [0.5870, 0.4093]]

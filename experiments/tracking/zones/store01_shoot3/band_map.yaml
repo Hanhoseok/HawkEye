@@ -1,0 +1,5 @@
+band_map:
+- 0.8112
+- 0.2644
+note: 'dual_eval.py --shoot 3 calibrate (N*): 표본 2791, 중앙 오차 0.024, 상관 0.96. 입력 x
+  = area_setting 좌표로 옮긴 선반 카메라 사람 위치'
