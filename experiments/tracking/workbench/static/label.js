@@ -210,7 +210,8 @@ Player.prototype.drawLabelPanel = function () {
           p.result === "none" ? null : [items, "개"], result,
           h("span", { class: "who" }, p.checked_by ? `적은 사람 ${p.checked_by}` : ""), del(this.pays, i, true));
       }) : none("결제 정답이 없습니다."),
-      h("div", { class: "muted small" }, "결제 정답은 labels/store01_dual/payments.csv 에 저장됩니다 (예전 결제 라벨 도구와 같은 파일).")),
+      h("div", { class: "muted small" }, `결제 정답은 ${this.index.labels_dir}/payments.csv 에 저장됩니다 (결제 라벨 도구 scripts/label_payments.py 와 같은 파일).` +
+        (this.index.shoot === 3 ? " 3차는 바코드 삑 소리로 만든 초안을 확인한 것이 들어 있습니다 — 고치면 그 파일이 바뀝니다." : ""))),
     this.syncSection());
   this.drawLabelState();
 };
@@ -218,7 +219,8 @@ Player.prototype.drawLabelPanel = function () {
 /* -- 두 영상의 시차: 같은 순간(손이 칸에 닿음, 문 열림)이 두 화면에 함께 보이게 맞춘다 */
 Player.prototype.syncSection = function () {
   const sync = this.data.sync || { method: "none", note: "" };
-  const how = { manual: "사람이 맞춘 값", trajectory: "자동 추정 — 확인 필요", "trajectory-fallback": "추정이 약해 다른 영상들의 중앙값 — 확인 필요", none: "시차 없음" }[sync.method] || sync.method;
+  const by = sync.method === "manual" && sync.checked_by ? ` (${sync.checked_by})` : "";
+  const how = { manual: "사람이 맞춘 값" + by, trajectory: "자동 추정 — 확인 필요", "trajectory-fallback": "추정이 약해 다른 영상들의 중앙값 — 확인 필요", none: "시차 없음" }[sync.method] || sync.method;
   const input = h("input", { type: "number", step: "1", value: String(Math.round(this.offset)), "aria-label": "시차 (ms)", style: "width:76px",
     onchange: () => this.setOffset(Number(input.value) || 0) });
   const nudge = (text, d, tip) => h("button", { class: "btn", "data-tip": tip, onclick: () => this.setOffset(this.offset + d) }, text);

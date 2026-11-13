@@ -28,7 +28,7 @@
 | 결제 | 🔶 계산대 체류 = 결제. 결제 라벨 도구(`scripts/label_payments.py`)로 재평가, 실제 결제 연동은 아직 | `docs/multiview-progress.md` 후속 8 |
 | 선반 센서 | ⬜ 입력 자리와 가짜 기록 시험만. 실제 센서(`experiments/arduino`) 미연결 | `docs/multiview-design.md` M-8 |
 | 실시간 | 🔶 녹화본을 카메라 속도로 흘린 흉내만. 실제 카메라 미확인, 카메라당 초당 4~5장 | `docs/multiview-progress.md` 1-7 |
-| 확인 도구 | ✅ **분석 도구** (`python workbench/server.py`) — 갤러리 + 질문별 한 쌍 분석 + 수치 조정 + 정답 적기 + 새 영상 추가. 예전 페이지: 오판 장면 보기 · 구역 편집 (`python scripts/review_serve.py`) | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 4·7·10·11·12·13 |
+| 확인 도구 | ✅ **분석 도구** (`python workbench/server.py`) — 갤러리 + 질문별 한 쌍 분석 + 수치 조정 + 정답 적기 + 새 영상 추가. 2차·3차 촬영을 위에서 골라 본다(3차는 바닥 지도 포함). 예전 페이지: 오판 장면 보기 · 구역 편집 (`python scripts/review_serve.py`) | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 4·7·10·11·12·13·28 |
 
 아래 표는 층별 상태다 (카메라 1대 기준, 2026-10-14 까지).
 
@@ -185,6 +185,7 @@ run_tracking.py            진입점 (config.yaml + 명령행 인자, 카메라 
 config.yaml                모든 설정값 (카메라 1대 기본)
 configs/store01_dual.yaml  카메라 2대 설정 — config.yaml 위에 얹는다
 configs/store01_dual_judge.yaml  (있을 때만) 분석 도구의 수치 조정에서 적용한 판정 값 — 평가·실행이 함께 읽는다
+configs/store01_shoot3_judge.yaml  (있을 때만) 같은 것의 3차 촬영 몫 — `dual_eval.py --shoot 3` 과 분석 도구의 3차가 읽는다
 zones/                     카메라별 구역 파일 (SHELF / CHECKOUT / EXIT / OUTSIDE), store01_dual/ 은 카메라 2대(바닥 지도·칸)
 src/
   core/                    types.py(층 사이 형식) · config.py(설정) · protocols.py(인터페이스)
@@ -356,6 +357,7 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 | 2026-11-10 | 분석 도구 4단계 — 새 영상 추가(갤러리에서 두 각도 영상을 올리면 뒤에서 처리해 카드로), 시차를 화면에서 맞추기 | 기존 영상 한 쌍(N1 의 두 파일)을 N13 이라는 새 영상으로 올려 끝까지 돌려 봄: 올리기 → 등록(정답표·추가 기록에 한 줄씩, 있던 줄은 그대로) → 처리 약 3분 20초 → 시차 자동 추정 −100ms(손님 위치 상관 0.78) → 카드 '정상 통과'(원본 N1 과 같은 판정, 집음 1개), 갤러리 묶음 '추가한 영상 1/1' · '2차 촬영 31/38'. 시차를 −67ms 로 고쳐 저장 → manual 로 적히고 다시 판정됨. **시험 뒤 영상·기록·표의 줄을 모두 지웠다 — 지금 추가한 영상은 없다.** 시험 7개 추가, 전체 234 통과 | [`workbench/README.md`](workbench/README.md), `docs/multiview-progress.md` 후속 13 |
 | 2026-11-10 | 두 화면 짝이 자주 끊기는 이유 다시 재기 (`scripts/link_diagnose.py`, 사용자가 분석 도구를 써 보고 지적) | 짝 53%, 끊김 114번. 못 맺은 조각의 92% 가 선반 카메라 위치식(상자 가운데 가로 1차, 오차 약 29cm) 탓. 골반 가로·세로 식은 오차 약 8cm, 짝 유지와 함께 76% — **실험만, 적용 안 함** | `docs/multiview-progress.md` 후속 13-1 |
 | 2026-11-13 | 3차 촬영: 두 화면 짝을 바닥 위 거리로 맺기 (`fusion.position_mode: floor`, `dual_eval.py --shoot 3` 기본) + 바닥 통일 검증 (`scripts/floor_check.py`) | 39쌍에서 짝 94.5 → 99.6%, 끊김 23 → 2번. 두 명 장면에서 맞는 사람과 맺힌 조각 85 → 97%, 다른 사람과 맺힌 조각은 17개 그대로. 바닥 통일: 타일 줄눈 어긋남 중앙 0.5cm, 같은 사람 발목 거리 중앙 4cm · 90% 8cm (메모지 둘레 50cm 안에서만 확인). **판정 점수는 그대로** — 이 컴퓨터에서 만든 기록으로 영상만 26/39 (팀원 기록은 27/39, 기록 차이). 진행 기록 후속 27 |
+| 2026-11-13 | 분석 도구가 3차 촬영 영상도 봄 — 촬영 회차 고르기, 실제 장면 시각, 바닥 지도, 회차별 수치 조정·정답·시차 | 3차 39장 영상만 26/39 (이 컴퓨터 기록, `dual_eval.py --shoot 3 judge` 와 같음), 2차 31/38 그대로. 3차 정답은 아직 안 적음 | `docs/multiview-progress.md` 후속 28 |
 
 **다음에 확인할 것** (2026-10-14 에 적은 것): 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
 → 2026-11-10: 계산하고 나가는 손님은 1차·2차 촬영 정상 영상으로 확인(정상 11/12). 상품 탐지 모델은 아직 안 함. **지금의 다음 단계는 `docs/results-summary.md` §0-5.**

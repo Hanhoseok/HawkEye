@@ -143,6 +143,15 @@ h1, h2, h3, p { margin: 0; }
 .tip { position: fixed; z-index: 50; max-width: 320px; background: var(--text); color: var(--panel); font-size: 12px; padding: 6px 9px; border-radius: 6px; pointer-events: none; }
 
 /* 위쪽 화면 고르기 */
+.shoots { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--sunken); }
+.shoots:empty { display: none; }
+.shoots a { padding: 3px 10px; border-radius: 6px; color: var(--text2); font-size: 13px; white-space: nowrap; }
+.shoots a .n { opacity: 0.6; margin-left: 4px; font-size: 12px; }
+.shoots a[aria-current="true"] { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+.floormap canvas { display: block; width: 100%; border-radius: 6px; background: var(--sunken); }
+.floormap .cap { margin-top: 6px; font-size: 12px; color: var(--text3); }
+.floormap .keys { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; font-size: 12px; color: var(--text2); }
+.gallery-note { margin-top: 14px; font-size: 12px; color: var(--text3); }
 .tabs { display: flex; gap: 4px; }
 .tabs a { padding: 5px 12px; border-radius: 6px; color: var(--text2); }
 .tabs a:hover { background: var(--sunken); }

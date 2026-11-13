@@ -5,10 +5,12 @@
 
 순서와 잠금 (limitations A-15 — 채점용 영상을 보며 값을 맞추면 그 영상에만 맞는 값이 된다):
   1. 정상(N) 영상으로만 확인한다. 몇 번이든.
-  2. 값을 정했으면 절도·복합 채점을 **연다**. 연 것은 기록에 남는다 (labels/store01_dual/tune_log.jsonl).
-  3. 적용하면 configs/store01_dual_judge.yaml 에 적히고, 평가(dual_eval)·실행(run_tracking --dual-config)·분석 도구가 그 값을 쓴다.
+  2. 값을 정했으면 절도·복합 채점을 **연다**. 연 것은 기록에 남는다 (<그 촬영의 라벨 폴더>/tune_log.jsonl).
+  3. 적용하면 그 촬영의 판정 값 파일(2차 configs/store01_dual_judge.yaml · 3차 configs/store01_shoot3_judge.yaml)에 적히고,
+     평가(dual_eval)·실행(run_tracking --dual-config)·분석 도구가 그 값을 쓴다.
 
-초안으로 판정한 결과는 outputs/workbench/drafts/<값들의 지문>/ 에 두어 한 쌍 분석 화면에서 그대로 열어 볼 수 있다.
+촬영 회차마다 따로다 (Tuner 는 그 회차의 Builder 를 받는다) — 카메라 자리가 다르면 맞는 값도 다르다.
+초안으로 판정한 결과는 <그 촬영의 보기 데이터>/drafts/<값들의 지문>/ 에 두어 한 쌍 분석 화면에서 그대로 열어 볼 수 있다.
 """
 
 from __future__ import annotations
@@ -22,11 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from workbench.data import OUT, ROOT, Builder, totals
-
-LOG = ROOT / "labels" / "store01_dual" / "tune_log.jsonl"
-JUDGE_FILE = ROOT / "configs" / "store01_dual_judge.yaml"
-DRAFTS = OUT / "drafts"
+from workbench.data import ROOT, Builder, totals
 
 KNOBS = [
     # key, 묶음, 이름, 설명, 종류, (최소, 최대, 간격) 또는 고를 값, 단위
@@ -55,9 +53,17 @@ KNOBS = [
     ("fusion.min_score", "두 화면 같은 사람", "짝으로 인정하는 최소 점수",
      "위치와 외형을 합친 점수가 이보다 낮으면 짝을 맺지 않는다. 낮추면 짝이 늘지만 틀린 짝도 는다.", "number", (0.2, 0.9, 0.05), ""),
     ("fusion.position_weight", "두 화면 같은 사람", "위치를 얼마나 믿을까",
-     "점수 = 이 값 × 위치 + (1 − 이 값) × 외형. 선반 카메라의 위치는 한 줄 좌표라 어긋날 때가 있다 (한계 B-14).", "number", (0.0, 1.0, 0.05), ""),
+     "점수 = 이 값 × 위치 + (1 − 이 값) × 외형. 2차 촬영은 선반 카메라의 위치가 한 줄 좌표라 어긋날 때가 있다 (한계 B-14).",
+     "number", (0.0, 1.0, 0.05), ""),
     ("fusion.max_band_gap", "두 화면 같은 사람", "위치가 이만큼 다르면 다른 사람",
      "선반 앞 띠 위에서 위치 차이가 이 값이면 위치 점수가 0 이 된다.", "number", (0.05, 0.6, 0.05), ""),
+    ("fusion.max_floor_gap_cm", "두 화면 같은 사람", "바닥 위에서 이만큼 떨어지면 다른 사람",
+     "두 카메라가 본 발의 바닥 위 거리가 이 값이면 위치 점수가 0 이 된다. 정상 영상에서 같은 사람의 거리는 발목이 보일 때 "
+     "중앙 4cm · 90% 6cm 였다. 40~80 사이에서는 결과가 거의 같았다 (후속 27).", "number", (20.0, 150.0, 5.0), "cm"),
+    ("fusion.ray_slack_cm", "두 화면 같은 사람", "가린 발은 이만큼까지 같은 자리로 보기",
+     "발목이 안 보이면(화면 아래로 잘림·가림) 발이 있을 방향만 안다. 그렇게 잰 거리는 이 값까지 0 으로 친다 — "
+     "몇 cm 차이로 사람을 가르지 않고 외형과 '지금 짝 유지'가 정하게. 정상 영상에서 가린 발의 거리는 중앙 15cm · 90% 24cm.",
+     "number", (0.0, 60.0, 5.0), "cm"),
     ("fusion.keep_bonus", "두 화면 같은 사람", "지금 짝을 유지하는 가산점",
      "이미 맺은 짝에 더해 주는 점수. 키우면 짝이 덜 바뀐다.", "number", (0.0, 0.4, 0.05), ""),
     ("fusion.solo_appearance_min", "두 화면 같은 사람", "후보가 한 명일 때 외형만으로 잇는 기준",
@@ -71,6 +77,12 @@ KNOBS = [
      "물건 탐지와 칸 그림이 모두 그대로인 방문이면, 그때 선반 앞에 있던 다른 손님의 손 뻗기도 '만지기만'으로 본다.", "bool", (), ""),
 ]
 KNOB = {k[0]: k for k in KNOBS}
+SHOOT_ONLY = {"fusion.max_band_gap": (2,), "fusion.max_floor_gap_cm": (3,), "fusion.ray_slack_cm": (3,)}
+"""그 촬영에서만 뜻이 있는 값 — 2차는 선반 앞 띠 한 줄로, 3차는 바닥 위 거리로 두 화면 짝을 맺는다."""
+
+
+def knobs_for(shoot: int) -> list[tuple]:
+    return [k for k in KNOBS if shoot in SHOOT_ONLY.get(k[0], (shoot,))]
 RERUN_ONLY = [
     "사람 탐지 점수·모델, 추적기 설정", "사람 아님 영역", "신원 기준(가장자리 변, 되살아난 번호 다시 판정)",
     "선반 물건 탐지, 칸 그림 기준(8%)", "손-칸 접촉 시간(0.3초)",
@@ -107,6 +119,8 @@ def changed_values(values: dict, current: dict) -> dict:
     for key, *_ in KNOBS:
         if key in values:
             value = coerce(key, values[key])
+            if key not in current:
+                raise ValueError(f"{key}: 이 촬영에서는 쓰지 않는 값입니다")
             if value != current[key]:
                 out[key] = value
     return out
@@ -168,6 +182,10 @@ def compare(before: list[dict], after: list[dict]) -> dict:
 class Tuner:
     def __init__(self, builder: Builder) -> None:
         self.builder = builder
+        self.knobs = knobs_for(builder.shoot)
+        self.log_file = builder.profile.labels / "tune_log.jsonl"
+        self.judge_file = builder.profile.judge_file
+        self.drafts = builder.out / "drafts"
         self.job = {"running": False, "id": None, "scope": None, "error": None}
         self._current: dict | None = None
 
@@ -184,28 +202,30 @@ class Tuner:
 
     def _values(self, with_file: bool) -> dict:
         c = self.builder.ctx()
-        de = c["dual_eval"]
         pairs = self.builder.pairs()
         if not pairs:
             return {}
-        cfg = de.dual_config(c["AppConfig"].load(ROOT / "config.yaml"), pairs[0],
-                             judge_file=JUDGE_FILE if with_file else None, overrides=[])
+        with self.builder.engine() as de:
+            cfg = de.dual_config(c["AppConfig"].load(ROOT / "config.yaml"), pairs[0],
+                                 judge_file=self.judge_file if with_file else None, overrides=[])
         out = {}
-        for key, *_ in KNOBS:
+        for key, *_ in self.knobs:
             section, name = key.split(".")
             out[key] = getattr(getattr(cfg, section), name)
         return out
 
     def applied(self) -> dict:
-        if not JUDGE_FILE.exists():
+        if not self.judge_file.exists():
             return {}
-        return yaml.safe_load(JUDGE_FILE.read_text(encoding="utf-8")) or {}
+        return yaml.safe_load(self.judge_file.read_text(encoding="utf-8")) or {}
 
     # -- 화면에 주는 것
     def page(self) -> dict:
         current, factory = self.current(refresh=True), self.factory()
         knobs = []
-        for key, group, name, text, kind, spec, unit in KNOBS:
+        if not current:
+            raise ValueError("이 촬영의 기록이 없습니다 — 먼저 scripts/dual_eval.py run 으로 영상을 처리해 주세요")
+        for key, group, name, text, kind, spec, unit in self.knobs:
             item = {"key": key, "group": group, "name": name, "help": text, "kind": kind, "unit": unit,
                     "value": current[key], "factory": factory[key]}
             if kind == "number":
@@ -214,7 +234,9 @@ class Tuner:
                 item["choices"] = [{"value": v, "name": n} for v, n in spec]
             knobs.append(item)
         log = self.log()
-        return {"knobs": knobs, "rerun_only": RERUN_ONLY, "log": log[-12:][::-1],
+        rel = self.judge_file.relative_to(ROOT).as_posix()
+        return {"knobs": knobs, "rerun_only": RERUN_ONLY, "log": log[-12:][::-1], "judge_file": rel,
+                "shoot": self.builder.shoot, "shoot_name": self.builder.profile.name,
                 "opens": sum(1 for r in log if r["kind"] in ("open", "apply")),
                 "pairs": {"normal": len(self.scope("normal")), "all": len(self.builder.pairs())},
                 "job": dict(self.job), "build": dict(self.builder.state)}
@@ -224,13 +246,13 @@ class Tuner:
         return [p for p in pairs if p.startswith("N")] if name == "normal" else pairs
 
     def log(self) -> list[dict]:
-        if not LOG.exists():
+        if not self.log_file.exists():
             return []
-        return [json.loads(line) for line in LOG.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return [json.loads(line) for line in self.log_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     def _append_log(self, row: dict) -> None:
-        LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(LOG, "a", encoding="utf-8", newline="\n") as f:
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.log_file, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def opened(self, did: str) -> bool:
@@ -256,7 +278,7 @@ class Tuner:
         try:
             if self.builder.stale():
                 self.builder.build()   # 비교 기준(적용본)이 낡았으면 먼저 맞춘다
-            out = DRAFTS / did
+            out = self.drafts / did
             self._prune(keep=did)
             out.mkdir(parents=True, exist_ok=True)
             (out / "meta.json").write_text(json.dumps(
@@ -274,9 +296,9 @@ class Tuner:
 
     def _prune(self, keep: str, limit: int = 8) -> None:
         """초안 폴더가 쌓이지 않게 오래된 것부터 지운다 (다시 누르면 몇 초면 만들어진다)."""
-        if not DRAFTS.exists():
+        if not self.drafts.exists():
             return
-        old = sorted((d for d in DRAFTS.iterdir() if d.is_dir() and d.name != keep), key=lambda d: d.stat().st_mtime)
+        old = sorted((d for d in self.drafts.iterdir() if d.is_dir() and d.name != keep), key=lambda d: d.stat().st_mtime)
         for folder in old[:max(0, len(old) - (limit - 1))]:
             shutil.rmtree(folder, ignore_errors=True)
 
@@ -301,17 +323,18 @@ class Tuner:
         current = current or self.current()
         changed = changed_values(values, current)
         did = did or draft_id(changed, self.builder.settings_signature())
-        folder = DRAFTS / did
+        folder = self.drafts / did
         normal_pairs, all_pairs = self.scope("normal"), self.scope("all")
+        home = self.builder.out
         normal_after = self._cards(folder, normal_pairs)
         out = {"draft": did, "values": changed, "changes": describe(changed, current), "normal": None, "all": None,
                "opened": self.opened(did) or force_all, "job": dict(self.job)}
         if len(normal_after) == len(normal_pairs) and normal_pairs:
-            out["normal"] = compare(self._cards(OUT, normal_pairs), normal_after)
+            out["normal"] = compare(self._cards(home, normal_pairs), normal_after)
         if out["opened"]:
             all_after = self._cards(folder, all_pairs)
             if len(all_after) == len(all_pairs):
-                out["all"] = compare(self._cards(OUT, all_pairs), all_after)
+                out["all"] = compare(self._cards(home, all_pairs), all_after)
         return out
 
     # -- 적용
@@ -329,17 +352,19 @@ class Tuner:
         factory = self.factory()
         merged = {**self.applied(), **changed}
         merged = {k: v for k, v in merged.items() if v != factory.get(k)}   # 코드 기본과 같아진 값은 파일에서 뺀다
-        if JUDGE_FILE.exists():
-            backup = OUT / "tune_backup" / f"{time.strftime('%Y%m%d-%H%M%S')}_{JUDGE_FILE.name}"
+        judge_file = self.judge_file
+        if judge_file.exists():
+            backup = self.builder.out / "tune_backup" / f"{time.strftime('%Y%m%d-%H%M%S')}_{judge_file.name}"
             backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(JUDGE_FILE, backup)
+            shutil.copyfile(judge_file, backup)
         if merged:
-            head = ("# 분석 도구의 '수치 조정'에서 적용한 판정 값 — 손으로 고치지 말고 도구에서 바꾼다.\n"
-                    "# scripts/dual_eval.py 와 run_tracking.py --dual-config 가 코드 기본 위에 이 값을 얹는다.\n"
-                    "# 바꾼 기록: labels/store01_dual/tune_log.jsonl\n")
-            JUDGE_FILE.write_text(head + yaml.safe_dump(merged, allow_unicode=True, sort_keys=True), encoding="utf-8")
-        elif JUDGE_FILE.exists():
-            JUDGE_FILE.unlink()
+            head = (f"# 분석 도구의 '수치 조정'에서 적용한 판정 값 ({self.builder.profile.name}) — 손으로 고치지 말고 도구에서 바꾼다.\n"
+                    "# scripts/dual_eval.py 가 코드 기본 위에 이 값을 얹는다 (촬영 회차마다 파일이 다르다).\n"
+                    f"# 바꾼 기록: {self.log_file.relative_to(ROOT).as_posix()}\n")
+            judge_file.parent.mkdir(parents=True, exist_ok=True)
+            judge_file.write_text(head + yaml.safe_dump(merged, allow_unicode=True, sort_keys=True), encoding="utf-8")
+        elif judge_file.exists():
+            judge_file.unlink()
         self._append_log(self._log_row("apply", did, changed, current, result))
         self._current = None
         self.builder.build_async()   # 갤러리를 새 값으로 다시 만든다

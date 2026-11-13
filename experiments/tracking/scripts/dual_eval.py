@@ -53,8 +53,10 @@ OUT = ROOT / "outputs" / "dual_eval_pose3"
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
-JUDGE_FILE: Path | None = ROOT / "configs" / "store01_dual_judge.yaml"
-"""분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다."""
+JUDGE_FILES = {2: "store01_dual_judge.yaml", 3: "store01_shoot3_judge.yaml"}
+JUDGE_FILE: Path | None = ROOT / "configs" / JUDGE_FILES[2]
+"""분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다.
+촬영 회차마다 파일이 다르다 (set_profile)."""
 OVERRIDES: list[str] = []
 OVERVIEW_POSE = False
 OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
@@ -74,7 +76,7 @@ EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "
 
 def set_profile(shoot: int) -> None:
     """촬영 회차별 경로. 2 는 지금까지 그대로."""
-    global SHOOT, OUT, ZONES, LABELS
+    global SHOOT, OUT, ZONES, LABELS, JUDGE_FILE
     SHOOT = shoot
     _PAIR_ZONES.clear()
     if shoot == 3:
@@ -85,6 +87,8 @@ def set_profile(shoot: int) -> None:
         OUT = ROOT / "outputs" / "dual_eval_pose3"
         ZONES = ROOT / "zones" / "store01_dual"
         LABELS = ROOT / "labels" / "store01_dual"
+    # 수치 조정에서 적용한 값은 그 촬영의 카메라 자리에 맞춘 것 — 회차마다 따로 둔다 (2026-11-13)
+    JUDGE_FILE = ROOT / "configs" / JUDGE_FILES[3 if shoot == 3 else 2]
 
 
 def zones_dir(pair: str) -> Path:

@@ -1,6 +1,7 @@
 "use strict";
-/* HawkEye 분석 도구 — 갤러리(#/)와 한 쌍 분석(#/pair/<짝>/<렌즈>).
-   데이터는 workbench/data.py 가 만든 outputs/workbench/ (목록 index.json, 짝별 pairs/<짝>.json).
+/* HawkEye 분석 도구 — 갤러리(#/<회차>)와 한 쌍 분석(#/<회차>/pair/<짝>/<렌즈>), 수치 조정(#/<회차>/tune).
+   촬영 회차(2차·3차)마다 영상·기록·정답이 따로라 주소 맨 앞에 회차가 온다. 회차 없는 예전 주소는 마지막에 본 회차로 연다.
+   데이터는 workbench/data.py 가 만든 outputs/workbench/ (목록 index.json, 짝별 pairs/<짝>.json — 3차는 shoot3/ 아래).
    짝별 파일의 summary.lenses[렌즈] 에 요약(facts)·타임라인 줄(rows)·기록(log)이 들어 있어, 여기서는 그리기만 한다. */
 
 const LENSES = [
@@ -27,7 +28,11 @@ const view = document.getElementById("view");
 const crumbs = document.getElementById("crumbs");
 const context = document.getElementById("context");
 const tipBox = document.getElementById("tip");
-const app = { index: null, filter: "all", batch: null, player: null, poll: null };
+const shootsNav = document.getElementById("shoots");
+const app = { index: null, shoot: null, filter: "all", batch: null, player: null, poll: null };
+const SHOOT_KEY = "wb.shoot";
+const at = path => `#/${app.shoot}${path || ""}`;                       // 지금 촬영 회차 안의 주소
+const api = path => `/api/wb/${path}?shoot=${app.shoot}`;               // 지금 촬영 회차의 요청
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -60,15 +65,27 @@ document.addEventListener("mousemove", e => {
 });
 
 /* ------------------------------------------------------------------ 길 찾기 */
-function route() {
+async function route() {
   clearInterval(app.poll);
   if (app.player) { app.player.destroy(); app.player = null; }
   tipBox.hidden = true;
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   const query = Object.fromEntries(new URLSearchParams(qs || ""));
+  let shoot = /^\d+$/.test(parts[0] || "") ? Number(parts.shift()) : null;
+  if (shoot == null) { try { shoot = Number(localStorage.getItem(SHOOT_KEY)) || null; } catch (e) { /* 서버가 고른다 */ } }
+  if (shoot !== app.shoot) {   // 다른 촬영으로 — 고른 것들을 처음으로
+    app.shoot = shoot; app.index = null; app.batch = null; app.filter = "all";
+    add.open = false; add.el = null; add.f = null;
+  }
+  if (app.shoot == null) {     // 처음 연 것: 서버가 기록이 있는 가장 최근 촬영을 고른다
+    try { await loadIndex(); } catch (e) { return showError(e); }
+  }
   const tab = parts[0] === "tune" ? "tune" : "gallery";
-  for (const a of document.querySelectorAll(".tabs a")) a.setAttribute("aria-current", String(a.dataset.tab === tab));
+  for (const a of document.querySelectorAll(".tabs a")) {
+    a.setAttribute("aria-current", String(a.dataset.tab === tab));
+    a.setAttribute("href", at(a.dataset.tab === "tune" ? "/tune" : ""));
+  }
   if (parts[0] === "pair" && parts[1]) showPair(parts[1], parts[2], query.draft);
   else if (parts[0] === "tune") showTune(query);
   else showGallery();
@@ -76,10 +93,16 @@ function route() {
 window.addEventListener("hashchange", route);
 
 async function loadIndex() {
-  app.index = await getJSON("/api/wb/index");
-  context.textContent = app.index.cards && app.index.cards.length
-    ? `기록 ${app.index.records} · 결제: ${app.index.payment} · 만든 때 ${app.index.built}` : "";
-  return app.index;
+  const index = await getJSON("/api/wb/index" + (app.shoot ? `?shoot=${app.shoot}` : ""));
+  app.index = index; app.shoot = index.shoot;
+  try { localStorage.setItem(SHOOT_KEY, String(index.shoot)); } catch (e) { /* 기억 못 해도 된다 */ }
+  context.textContent = index.cards && index.cards.length
+    ? `기록 ${index.records} · 결제: ${index.payment} · 만든 때 ${index.built}` : "";
+  const shoots = (index.shoots || []).filter(s => s.n || s.shoot === index.shoot);
+  shootsNav.replaceChildren(...(shoots.length > 1 ? shoots.map(s => h("a", {
+    href: `#/${s.shoot}`, "aria-current": String(s.shoot === index.shoot), "data-tip": `${s.name} 영상 ${s.n}쌍`,
+  }, s.name, h("span", { class: "n" }, String(s.n)))) : []));
+  return index;
 }
 
 /* ------------------------------------------------------------------ 갤러리 */
@@ -127,15 +150,16 @@ function drawBuilding(build) {
 
 function drawGallery(index) {
   const all = index.cards || [], batches = index.batches || [], pending = index.pending || [];
-  const batch = batches.find(x => x.key === app.batch) || batches[0] || null;
-  const cards = batch && batches.length > 1 ? all.filter(c => (c.batch || "shoot2") === batch.key) : all;
+  const batch = batches.find(x => x.key === app.batch) || batches[0] || null, home = `shoot${index.shoot}`;
+  const cards = batch && batches.length > 1 ? all.filter(c => (c.batch || home) === batch.key) : all;
   const t = batch && batches.length > 1 ? batch.totals : index.totals;
   const kids = [];
   if (index.build.running) kids.push(h("div", { class: "building", id: "building" }));
   if (index.build.errors && index.build.errors.length) kids.push(h("div", { class: "errors" }, "만들지 못한 짝:\n" + index.build.errors.join("\n")));
   if (!all.length && !pending.length && !add.open) {
     kids.push(h("div", { class: "empty" }, index.build.running ? "처음 여는 중이라 잠시 걸립니다 (짝마다 몇 초)." :
-      "아직 영상이 없습니다. 아래에서 두 각도 영상을 추가하세요."));
+      (index.can_add ? "아직 영상이 없습니다. 아래에서 두 각도 영상을 추가하세요."
+        : `${index.shoot_name}의 기록이 없습니다. 먼저 python scripts/dual_eval.py --shoot ${index.shoot} run 으로 영상을 처리해 주세요.`)));
   }
   if (batches.length > 1) {
     kids.push(h("div", { class: "filters batches" }, batches.map(x => h("button", {
@@ -154,11 +178,16 @@ function drawGallery(index) {
       h("button", { class: "chip", "aria-pressed": String(app.filter === f[0]), onclick: () => { app.filter = f[0]; drawGallery(index); } },
         f[1], h("span", { class: "n" }, String(cards.filter(f[2]).length))))));
   }
-  if (add.open) kids.push(addForm(index));
+  if (add.open && index.can_add) kids.push(addForm(index));
   const test = FILTERS.find(f => f && f[0] === app.filter)[2];
   const shown = cards.filter(test);
-  kids.push(h("div", { class: "grid" }, addCard(index), pending.map(x => pendingCard(x)), shown.map(c => card(c, index))));
+  kids.push(h("div", { class: "grid" }, index.can_add ? addCard(index) : null, pending.map(x => pendingCard(x)), shown.map(c => card(c, index))));
   if (cards.length && !shown.length) kids.push(h("div", { class: "empty" }, "여기에 해당하는 영상이 없습니다."));
+  if (!index.can_add && all.length) {
+    kids.push(h("p", { class: "gallery-note" }, `${index.shoot_name}은 영상마다 카메라가 조금씩 움직여 영상별로 구역을 옮겨 씁니다. ` +
+      `그래서 여기서는 새 영상을 추가하지 못합니다 — 영상을 넣으려면 카메라 맞추기(scripts/sync_floor.py)와 scripts/dual_eval.py --shoot ${index.shoot} run 을 먼저 합니다. ` +
+      "위 점수는 이 컴퓨터에서 만든 기록으로 다시 판정한 것입니다."));
+  }
   view.replaceChildren(...kids);
   if (index.build.running) drawBuilding(index.build);
 }
@@ -188,7 +217,7 @@ function card(c, index) {
   const meta = [`손님 ${c.people}명`];
   if (c.link_pct != null) meta.push(`짝 ${c.link_pct}%`);
   meta.push(`물건 ${c.taken}개`);
-  return h("a", { class: "card", href: `#/pair/${encodeURIComponent(c.pair)}` },
+  return h("a", { class: "card", href: at(`/pair/${encodeURIComponent(c.pair)}`) },
     h("div", { class: "thumb", style: c.thumb ? `background-image:url("${index.data}${c.thumb}")` : "" },
       h("span", { class: `pill ${tone}` }, c.headline)),
     h("div", { class: "body" },
@@ -234,8 +263,14 @@ class Player {
     this.customers = new Set(this.s.customers);
     this.colors = new Map(this.s.customers.map((pid, i) => [pid, PALETTE[i % PALETTE.length]]));
     this.keys = {};
-    for (const cam of ["angle1", "angle0"]) this.keys[cam] = Object.keys(data.tracks[cam].frames).map(Number).sort((a, b) => a - b);
-    this.itemKeys = data.shelf_items.map(r => r[0]);
+    this.keyMs = {};   // 기록이 있는 장면의 그 카메라 시각 — 3차는 실제 시각 표(tracks.ms), 2차는 번호 ÷ fps
+    for (const cam of ["angle1", "angle0"]) {
+      const tr = data.tracks[cam];
+      this.keys[cam] = Object.keys(tr.frames).map(Number).sort((a, b) => a - b);
+      this.keyMs[cam] = this.keys[cam].map(k => tr.ms ? tr.ms[k] : k * 1000 / tr.fps);
+    }
+    this.itemMs = data.shelf_items.map(r => r.length > 2 ? r[2] : r[0] * 1000 / data.tracks.angle0.fps);
+    this.floor = data.floor ? this.floorSetup(data.floor) : null;
     this.showZones = lens === "verdict" || lens === "take";
     this.initLabels();
     this.build();
@@ -259,7 +294,7 @@ class Player {
   /* -- 화면 뼈대 */
   build() {
     const s = this.s, cards = this.index.cards || [], i = cards.findIndex(c => c.pair === s.pair);
-    const go = d => { const c = cards[i + d]; if (c) location.hash = `#/pair/${encodeURIComponent(c.pair)}`; };
+    const go = d => { const c = cards[i + d]; if (c) location.hash = at(`/pair/${encodeURIComponent(c.pair)}`); };
     this.vA = h("video", { src: this.data.video.angle1, preload: "auto", muted: true, playsinline: true });
     this.vB = h("video", { src: this.data.video.angle0, preload: "auto", muted: true, playsinline: true });
     this.cA = h("canvas", { onclick: e => this.clickVideo("angle1", e) });
@@ -283,6 +318,13 @@ class Player {
     this.timeline = h("div", { class: "timeline" });
     this.facts = h("div", { class: "box" });
     this.logBox = h("div", { class: "box" });
+    this.cF = h("canvas", {});
+    this.floorBox = h("div", { class: "box floormap", hidden: true },
+      h("h2", {}, "바닥 지도 — 두 카메라가 본 발의 자리"), this.cF,
+      h("div", { class: "keys" }, h("span", {}, "● 전체 카메라가 본 발"), h("span", {}, "◆ 선반 카메라가 본 발"),
+        h("span", {}, "점선 = 발목이 안 보여 방향만 앎"), h("span", {}, "■ 바닥 메모지(보정점)")),
+      h("div", { class: "cap" }, "위에서 내려다본 그림. 좌우는 전체 카메라 화면과 같고 아래쪽이 전체 카메라 쪽입니다. " +
+        "같은 사람이면 ●와 ◆가 겹치거나, 점선 위에 놓입니다. 숫자는 지금 장면에서 둘 사이의 거리."));
     view.replaceChildren(
       h("div", { class: "head" },
         h("h1", {}, s.pair), h("span", { class: "tag" }, s.set_name),
@@ -294,8 +336,8 @@ class Player {
       h("p", { class: "scenario" }, s.notes ? `정답표 메모: ${s.notes}` : ""),
       this.draft ? h("div", { class: "draftbar" },
         h("span", {}, "초안 값으로 다시 판정한 결과입니다 — ", h("b", {}, this.draft.changes.join(" · "))),
-        h("a", { class: "btn", href: `#/pair/${encodeURIComponent(s.pair)}/${this.lens}` }, "지금 값으로 보기"),
-        h("a", { class: "btn", href: "#/tune" }, "수치 조정으로")) : "",
+        h("a", { class: "btn", href: at(`/pair/${encodeURIComponent(s.pair)}/${this.lens}`) }, "지금 값으로 보기"),
+        h("a", { class: "btn", href: at("/tune") }, "수치 조정으로")) : "",
       this.lensBar,
       h("div", { class: "work" },
         h("div", {},
@@ -310,7 +352,7 @@ class Player {
             h("label", {}, this.zoneBox, "구역 표시"),
             h("span", { class: "keys" }, "스페이스 재생 · ←→ 한 장면 · Shift+←→ 1초 · 1~4 질문 바꾸기")),
           this.legend, this.timeline),
-        h("div", { class: "side" }, this.facts, this.logBox)));
+        h("div", { class: "side" }, this.floorBox, this.facts, this.logBox)));
     this.setRate();
     this.setLens(this.lens, true);
   }
@@ -320,10 +362,11 @@ class Player {
     if (!first) {
       this.showZones = lens === "verdict" || lens === "take";
       this.zoneBox.checked = this.showZones;
-      history.replaceState(null, "", `#/pair/${encodeURIComponent(this.s.pair)}/${lens}` + (this.draft ? `?draft=${this.draft.draft}` : ""));
+      history.replaceState(null, "", at(`/pair/${encodeURIComponent(this.s.pair)}/${lens}`) + (this.draft ? `?draft=${this.draft.draft}` : ""));
       const back = view.querySelector(".draftbar a");
-      if (back) back.setAttribute("href", `#/pair/${encodeURIComponent(this.s.pair)}/${lens}`);
+      if (back) back.setAttribute("href", at(`/pair/${encodeURIComponent(this.s.pair)}/${lens}`));
     }
+    this.floorBox.hidden = !(this.floor && lens === "link");
     if (lens !== "label" && this.pick) { this.pick = null; this.showPick(); }
     this.drawLensBar();
     this.legend.replaceChildren(...LEGEND[lens].map(([tone, text]) => h("span", {},
@@ -417,7 +460,7 @@ class Player {
       h("span", { class: `dot ${f.level}` }),
       h("div", {}, h("span", { class: "t" }, f.text),
         f.ms != null ? [" ", h("button", { class: "jump", onclick: () => this.seek(f.ms - 300) }, `▶ ${sec(f.ms)}`)] : null,
-        f.knob ? [" ", h("a", { class: "jump", href: `#/tune?focus=${f.knob}` }, "이 기준 바꿔 보기")] : null))));
+        f.knob ? [" ", h("a", { class: "jump", href: at(`/tune?focus=${f.knob}`) }, "이 기준 바꿔 보기")] : null))));
     this.logItems = L.log.map(r => {
       const el = h("button", { onclick: () => this.seek(r.ms - 300) }, h("span", { class: "ms" }, sec(r.ms)), h("span", { class: r.level }, r.text));
       el.dataset.ms = r.ms;
@@ -488,12 +531,12 @@ class Player {
   rowsAt(cam, at) {
     const now = at == null ? this.t : at;
     const tr = this.data.tracks[cam], local = cam === "angle0" ? now - this.offset : now;
-    const f = local * tr.fps / 1000, keys = this.keys[cam];
-    let lo = 0, hi = keys.length - 1;
+    const ms = this.keyMs[cam];
+    let lo = 0, hi = ms.length - 1;
     if (hi < 0) return [];
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (keys[mid] < f) lo = mid + 1; else hi = mid; }
-    const cand = [keys[lo - 1], keys[lo]].filter(k => k != null).sort((a, b) => Math.abs(a - f) - Math.abs(b - f))[0];
-    return Math.abs(cand - f) <= tr.stride * 1.5 ? tr.frames[cand] : [];
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (ms[mid] < local) lo = mid + 1; else hi = mid; }
+    const i = lo > 0 && Math.abs(ms[lo - 1] - local) <= Math.abs(ms[lo] - local) ? lo - 1 : lo;
+    return Math.abs(ms[i] - local) <= tr.stride * 1500 / tr.fps ? tr.frames[this.keys[cam][i]] : [];
   }
   linkOf(detail) {
     let best = null;
@@ -542,6 +585,7 @@ class Player {
     this.drawOverview();
     this.drawDetail();
     this.drawTruth();
+    if (this.floor && this.lens === "link") this.drawFloor();
   }
 
   pen(canvas, track) {
@@ -634,7 +678,23 @@ class Player {
       }
       this.label(p, text, r[3], r[4], color, true);
       if (lens === "verdict" || lens === "track") { const f = this.foot(r); this.dotAt(p, f[0], f[1], color, 4.5); }
+      else if (lens === "link" && this.floor) this.footMark(p, r, color);
     }
+  }
+  /* 두 화면 짝에 쓰인 발 자리 (바닥으로 맺는 3차): 발목이 보이면 그 점, 안 보이면 상자 아래 가운데에서 아래로 화살표 */
+  footMark(p, r, color) {
+    const f = r[10];
+    if (!f) return;
+    const [x, y, ankle] = this.foot(r), { ctx, u } = p;
+    if (f.length === 4 || !ankle) {
+      const bx = (r[3] + r[5]) / 2, by = Math.min(r[6], p.h - 14 * u);
+      ctx.save();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 4 * u; ctx.setLineDash([5 * u, 4 * u]);
+      ctx.beginPath(); ctx.moveTo(bx, by - 12 * u); ctx.lineTo(bx, by + 12 * u); ctx.stroke();
+      ctx.strokeStyle = color; ctx.lineWidth = 2 * u; ctx.stroke();
+      ctx.restore();
+      this.dotAt(p, bx, by - 12 * u, color, 3.5);
+    } else this.dotAt(p, x, y, color, 4.5);
   }
 
   drawDetail() {
@@ -653,9 +713,10 @@ class Player {
       const cust = l && this.customers.has(l.overview), color = cust ? this.color(l.overview) : GRAY;
       this.box(p, r, color, !cust);
       let text = rid > 0 ? `선반 화면 ${rid}` : "미정";
-      if (lens === "link") text += l ? ` = ${this.who(l.overview)} · 점수 ${l.score.toFixed(2)}` : " · 짝 없음";
+      if (lens === "link") text += l ? ` = ${this.who(l.overview)} · 점수 ${l.score.toFixed(2)}` + (l.gap != null ? ` · ${Math.round(l.gap)}cm` : "") : " · 짝 없음";
       else if (cust) text += ` = 손님 ${l.overview}`;
       this.label(p, text, r[3], r[4], color, true);
+      if (lens === "link" && this.floor) this.footMark(p, r, color);
       if (lens === "take") {
         const kp = r[9] || [];
         for (const i of [12, 15]) if (kp[i + 2] >= 30) this.dotAt(p, kp[i], kp[i + 1], "#ff3b6b", 5);
@@ -663,11 +724,141 @@ class Player {
     }
   }
   itemsAt() {
-    const tr = this.data.tracks.angle0, f = (this.t - this.offset) * tr.fps / 1000, keys = this.itemKeys;
+    const local = this.t - this.offset, ms = this.itemMs;
     let best = -1;
-    for (let i = 0; i < keys.length; i++) { if (keys[i] <= f) best = i; else break; }
-    if (best < 0 || f - keys[best] > tr.fps) return [];
+    for (let i = 0; i < ms.length; i++) { if (ms[i] <= local) best = i; else break; }
+    if (best < 0 || local - ms[best] > 1000) return [];
     return this.data.shelf_items[best][1];
+  }
+
+  /* -- 바닥 지도 (3차: 두 화면 짝을 바닥 위 거리로 맺을 때). 줄 끝 r[10] = 발의 바닥 좌표 [x, y] 또는 [x, y, dx, dy](발목이 안 보임) */
+  floorSetup(F) {
+    // 선반 카메라에 사람이 보인 자리를 중심으로 본다 — 짝을 맺는 곳이 거기다. 지평선 가까이 튄 점은 뺀다 (2~98%)
+    const to = q => [q[0] * F.right[0] + q[1] * F.right[1], q[0] * F.down[0] + q[1] * F.down[1]];
+    const xs = [], ys = [];
+    for (const rows of Object.values(this.data.tracks.angle0.frames)) {
+      for (const r of rows) if (r[1] > 0 && r[10]) { const q = to(r[10]); xs.push(q[0]); ys.push(q[1]); }
+    }
+    for (const m of F.marks || []) { const q = to(m); xs.push(q[0]); ys.push(q[1]); }
+    if (xs.length < 4) return null;
+    xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
+    const cut = (v, f) => v[Math.min(v.length - 1, Math.max(0, Math.round(f * (v.length - 1))))];
+    const pad = 50;
+    return { F, to, x0: cut(xs, 0.02) - pad, x1: cut(xs, 0.98) + pad, y0: cut(ys, 0.02) - pad, y1: cut(ys, 0.98) + pad };
+  }
+  /* 두 발 자리 사이의 가장 가까운 두 점과 거리 (src/fusion/cross_view.py floor_distance 와 같은 식) */
+  floorGap(a, b) {
+    const onRay = (q, o) => {   // 점 q 에서 반직선 o 위 가장 가까운 점
+      const t = Math.max(0, (q[0] - o[0]) * o[2] + (q[1] - o[1]) * o[3]);
+      return [o[0] + t * o[2], o[1] + t * o[3]];
+    };
+    const dist = (q, w) => Math.hypot(q[0] - w[0], q[1] - w[1]);
+    if (a.length === 2 && b.length === 2) return { d: dist(a, b), p: a, q: b };
+    if (a.length === 2) { const q = onRay(a, b); return { d: dist(a, q), p: a, q }; }
+    if (b.length === 2) { const p = onRay(b, a); return { d: dist(p, b), p, q: b }; }
+    const det = a[2] * -b[3] - a[3] * -b[2];
+    if (Math.abs(det) > 1e-9) {
+      const t = ((b[0] - a[0]) * -b[3] - (b[1] - a[1]) * -b[2]) / det, s = (a[2] * (b[1] - a[1]) - a[3] * (b[0] - a[0])) / det;
+      if (t >= 0 && s >= 0) { const x = [a[0] + t * a[2], a[1] + t * a[3]]; return { d: 0, p: x, q: x }; }
+    }
+    const q1 = onRay(a, b), p2 = onRay(b, a);
+    return dist(a, q1) <= dist(p2, b) ? { d: dist(a, q1), p: a, q: q1 } : { d: dist(p2, b), p: p2, q: b };
+  }
+  drawFloor() {
+    const V = this.floor, F = V.F, canvas = this.cF;
+    const css = canvas.clientWidth || 300, dpr = window.devicePixelRatio || 1;
+    const scale = css / (V.x1 - V.x0), hgt = Math.max(140, Math.min(360, (V.y1 - V.y0) * scale));
+    if (canvas.style.height !== hgt + "px") canvas.style.height = hgt + "px";
+    const w = Math.round(css * dpr), hh = Math.round(hgt * dpr);
+    if (canvas.width !== w || canvas.height !== hh) { canvas.width = w; canvas.height = hh; }
+    const ctx = canvas.getContext("2d"), style = getComputedStyle(document.documentElement);
+    const ink = style.getPropertyValue("--text2").trim() || "#555", faint = style.getPropertyValue("--line-strong").trim() || "#bbb";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, css, hgt);
+    const oy = (hgt - (V.y1 - V.y0) * scale) / 2;
+    const px = q => { const m = V.to(q); return [(m[0] - V.x0) * scale, oy + (m[1] - V.y0) * scale]; };
+    ctx.lineJoin = "round"; ctx.textBaseline = "middle";
+    ctx.font = '500 11px system-ui, "Malgun Gothic", sans-serif';
+    for (const z of F.zones) {   // 바닥 구역
+      const pts = z.poly.map(px), color = ZONE_COLOR[z.type] || "#868e96";
+      ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.closePath();
+      ctx.globalAlpha = z.name === "aisle" ? 0.04 : 0.1; ctx.fillStyle = color; ctx.fill();
+      ctx.globalAlpha = 0.55; ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      if (z.name !== "aisle") {
+        const cx = Math.max(24, Math.min(css - 24, pts.reduce((a, q) => a + q[0], 0) / pts.length));
+        const cy = Math.max(9, Math.min(hgt - 9, pts.reduce((a, q) => a + q[1], 0) / pts.length));
+        ctx.globalAlpha = 0.75; ctx.fillStyle = color; ctx.textAlign = "center"; ctx.fillText(ZONE_NAME[z.name] || z.name, cx, cy); ctx.globalAlpha = 1;
+      }
+    }
+    ctx.fillStyle = "#f2c94c"; ctx.strokeStyle = "#8a6d00"; ctx.lineWidth = 1;
+    for (const m of F.marks || []) { const q = px(m); ctx.fillRect(q[0] - 3, q[1] - 3, 6, 6); ctx.strokeRect(q[0] - 3, q[1] - 3, 6, 6); }
+    const bar = 50 * scale;   // 길이 눈금
+    ctx.strokeStyle = ink; ctx.fillStyle = ink; ctx.lineWidth = 1.5; ctx.textAlign = "left";
+    ctx.beginPath(); ctx.moveTo(8, hgt - 9); ctx.lineTo(8 + bar, hgt - 9); ctx.moveTo(8, hgt - 13); ctx.lineTo(8, hgt - 5);
+    ctx.moveTo(8 + bar, hgt - 13); ctx.lineTo(8 + bar, hgt - 5); ctx.stroke();
+    ctx.fillText("50cm", 13 + bar, hgt - 9);
+
+    const ray = (f, color) => {   // 발목이 안 보임: 발이 있을 방향
+      if (f.length !== 4) return;
+      const a = px(f), b = px([f[0] + f[2] * 400, f[1] + f[3] * 400]);
+      ctx.save(); ctx.strokeStyle = color; ctx.globalAlpha = 0.7; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.restore();
+    };
+    const placed = [];   // 이미 그린 이름표·표식 자리 — 새 이름표는 이것들을 피해 놓는다
+    const tag = (text, x, y, color) => {
+      const wid = ctx.measureText(text).width + 8, tall = 16;
+      const tries = [[10, -20], [10, 6], [-wid - 10, -20], [-wid - 10, 6], [10, -40], [10, 26], [-wid - 10, -40], [-wid - 10, 26],
+        [-wid / 2, -44], [-wid / 2, 30], [-wid / 2, -64], [-wid / 2, 50]];
+      let spot = null;
+      for (const [dx, dy] of tries) {
+        const tx = Math.max(2, Math.min(css - wid - 2, x + dx)), ty = Math.max(2, Math.min(hgt - tall - 2, y + dy));
+        if (!spot) spot = [tx, ty];
+        if (!placed.some(r => tx < r[0] + r[2] && r[0] < tx + wid && ty < r[1] + r[3] && r[1] < ty + tall)) { spot = [tx, ty]; break; }
+      }
+      placed.push([spot[0], spot[1], wid, tall]);
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.6;   // 이름표가 가리키는 자리
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(Math.max(spot[0], Math.min(spot[0] + wid, x)), spot[1] + tall / 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color; ctx.fillRect(spot[0], spot[1], wid, tall);
+      ctx.fillStyle = "#fff"; ctx.textAlign = "left"; ctx.fillText(text, spot[0] + 4, spot[1] + tall / 2 + 0.5);
+    };
+    const over = this.rowsAt("angle1").filter(r => r[1] > 0 && r[10]);
+    const detail = this.rowsAt("angle0").filter(r => r[1] > 0 && r[10]);
+    for (const r of over) ray(r[10], this.customers.has(r[1]) ? this.color(r[1]) : GRAY);
+    const marks = [], tags = [], paired = new Set();
+    for (const r of detail) {
+      const l = this.linkOf(r[1]) || this.linkOf(r[0]);
+      const partner = l ? over.find(o => o[1] === l.overview || o[0] === l.overview) : null;
+      const color = l && this.customers.has(l.overview) ? this.color(l.overview) : GRAY;
+      ray(r[10], color);
+      const q = px(r[10]);
+      marks.push({ q, color, detail: true });
+      if (partner) {   // 맺은 짝: 두 발 사이의 가장 가까운 두 점을 잇고, 이름표 하나에 거리까지
+        const g = this.floorGap(r[10], partner[10]), a = px(g.p), b = px(g.q);
+        ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+        paired.add(partner);
+        tags.push([`${this.who(l.overview)} ⇄ 선반 화면 ${r[1]} · ${Math.round(g.d)}cm`, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, color]);
+      } else tags.push([`선반 화면 ${r[1]}` + (l ? ` = ${this.who(l.overview)}` : " · 짝 없음"), q[0], q[1], color]);
+    }
+    for (const r of over) {
+      const q = px(r[10]), cust = this.customers.has(r[1]), color = cust ? this.color(r[1]) : GRAY;
+      marks.push({ q, color, small: !cust });
+      if (cust && !paired.has(r)) tags.push([`손님 ${r[1]}`, q[0], q[1], color]);
+    }
+    for (const m of marks) {
+      const [x, y] = m.q, s = 6;
+      placed.push([x - 8, y - 8, 16, 16]);
+      ctx.beginPath();
+      if (m.detail) { ctx.moveTo(x, y - s); ctx.lineTo(x + s, y); ctx.lineTo(x, y + s); ctx.lineTo(x - s, y); ctx.closePath(); }
+      else ctx.arc(x, y, m.small ? 4 : 6, 0, Math.PI * 2);
+      ctx.fillStyle = m.detail ? "#fff" : m.color; ctx.fill();
+      ctx.strokeStyle = m.detail ? m.color : "#fff"; ctx.lineWidth = m.detail ? 2.5 : 1.5; ctx.stroke();
+    }
+    for (const t of tags) tag(...t);
+    if (!over.length && !detail.length) {
+      ctx.fillStyle = faint; ctx.textAlign = "center"; ctx.fillText("이 장면에는 사람이 없습니다", css / 2, hgt / 2);
+    }
   }
 }
 

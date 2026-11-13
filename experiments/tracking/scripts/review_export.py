@@ -110,7 +110,17 @@ def _edge_sides(bbox, w, h, margin=0.02) -> str:
     return s
 
 
-def _tracks(log, cam: str, resolve) -> dict:
+def _floor_row(found) -> list | None:
+    """DualJudge.floor_point 의 (점, 방향) → [x, y] 또는 [x, y, dx, dy] (cm). 지평선 너머면 None."""
+    point, ray = found
+    if point is None:
+        return None
+    out = [round(point[0], 1), round(point[1], 1)]
+    return out + [round(ray[0], 3), round(ray[1], 3)] if ray is not None else out
+
+
+def _tracks(log, cam: str, resolve, floor_of=None) -> dict:
+    """floor_of(관찰) → (바닥 점 cm, 발목이 안 보일 때의 방향). 주면 줄 끝([10])에 발의 바닥 좌표를 싣는다 (3차 — 바닥 위 짝 그림)."""
     m = log.meta[cam]
     frames = {}
     for idx, obs in sorted(log.ids[cam].items()):
@@ -129,9 +139,16 @@ def _tracks(log, cam: str, resolve) -> dict:
                 None if o.matched_similarity is None else round(o.matched_similarity, 3),
                 kp,
             ])
+            if floor_of is not None:
+                rows[-1].append(_floor_row(floor_of(o)) if o.person_id > 0 else None)
         frames[idx] = rows
-    return {"fps": m["fps"], "stride": m["stride"], "frames_total": m["frames"], "w": m["width"],
-            "h": m["height"], "frames": frames}
+    out = {"fps": m["fps"], "stride": m["stride"], "frames_total": m["frames"], "w": m["width"],
+           "h": m["height"], "frames": frames,
+           "end_ms": round(log.ms(cam, m["frames"] - 1) + 1000.0 / m["fps"])}
+    if log.times.get(cam):
+        # 3차: 장면을 빠뜨린 영상이라 번호 ÷ fps 가 실제 시각이 아니다 — 기록이 있는 장면의 실제 시각(ms, 시차 전)을 함께 싣는다
+        out["ms"] = {idx: round(log.ms(cam, idx), 1) for idx in frames}
+    return out
 
 
 def _births(log, cam: str) -> list[dict]:
@@ -142,7 +159,7 @@ def _births(log, cam: str) -> list[dict]:
         for o in obs:
             if o.person_id > 0 and o.person_id not in seen:
                 seen.add(o.person_id)
-                out.append({"pid": o.person_id, "frame": idx, "ms": round(idx * 1000.0 / m["fps"], 1),
+                out.append({"pid": o.person_id, "frame": idx, "ms": round(log.ms(cam, idx), 1),
                             "edge": _edge_sides(o.bbox, m["width"], m["height"]), "track": o.track_id,
                             "sim": None if o.matched_similarity is None else round(o.matched_similarity, 3)})
     return out
@@ -150,10 +167,9 @@ def _births(log, cam: str) -> list[dict]:
 
 def _revivals(log, cam: str, gap_ms: float = 1000.0) -> list[dict]:
     """추적 번호가 1초 넘게 끊겼다 되살아난 순간 (C-22)."""
-    m = log.meta[cam]
     last, out = {}, []
     for idx, obs in sorted(log.ids[cam].items()):
-        ms = idx * 1000.0 / m["fps"]
+        ms = log.ms(cam, idx)
         for o in obs:
             prev = last.get(o.track_id)
             if prev is not None and ms - prev[0] > gap_ms:
@@ -163,7 +179,8 @@ def _revivals(log, cam: str, gap_ms: float = 1000.0) -> list[dict]:
     return out
 
 
-def _shelf_items(run_dir: str, pair: str, w: int, h: int, fps: float, offset: float) -> list:
+def _shelf_items(run_dir: str, pair: str, w: int, h: int, fps: float, offset: float, ms_of=None) -> list:
+    """[장면 번호, 물건들, 그 장면의 선반 카메라 시각(ms, ms_of 를 줄 때)]."""
     p = ROOT / "outputs" / run_dir / pair / "angle0" / "shelf_items.jsonl"
     if not p.exists():
         return []
@@ -172,12 +189,12 @@ def _shelf_items(run_dir: str, pair: str, w: int, h: int, fps: float, offset: fl
         r = json.loads(line)
         items = [[n, round(x1), round(y1), round(x2), round(y2), round(c * 100)]
                  for n, x1, y1, x2, y2, c in r["items"] if c >= 0.25]
-        out.append([r["frame"], items])
+        out.append([r["frame"], items] + ([round(ms_of(r["frame"]), 1)] if ms_of else []))
     return out
 
 
-def _zones(m1: dict, m0: dict) -> dict:
-    zdir = ROOT / "zones" / "store01_dual"
+def _zones(m1: dict, m0: dict, zdir: Path | None = None) -> dict:
+    zdir = zdir or ROOT / "zones" / "store01_dual"
     floor_raw = yaml.safe_load((zdir / "floor.yaml").read_text(encoding="utf-8"))
     floor = FloorMap.load(zdir / "floor.yaml")
     w1, h1 = m1["width"], m1["height"]
@@ -193,6 +210,71 @@ def _zones(m1: dict, m0: dict) -> dict:
                 **({"poly": [[round(x * w0), round(y * h0)] for x, y in s["polygon"]]} if s.get("polygon") else {})}
                for s in d["shelves"]]
     return {"overview": over, "shelf_image": shelf_img, "ignore": ignore, "slots": slots, "shelves": shelves}
+
+
+def _snap(vx: float, vy: float) -> list[int]:
+    """방향을 바닥 축 하나로 (±x 또는 ±y)."""
+    return [1 if vx > 0 else -1, 0] if abs(vx) >= abs(vy) else [0, 1 if vy > 0 else -1]
+
+
+def _floor_view(judge) -> dict:
+    """바닥 지도(위에서 본 그림)를 그릴 자료: 구역(cm), 보정점, 그리고 전체 카메라 화면과 같은 방향으로 놓는 축.
+
+    right·down = 그림의 오른쪽·아래쪽이 바닥 좌표의 어느 축인가 — 전체 카메라 화면의 오른쪽·아래쪽(카메라 쪽)과 맞춘다.
+    """
+    fm = judge.floor
+    a, b = fm.to_floor(0.4, 0.8), fm.to_floor(0.6, 0.8)
+    near, far = fm.to_floor(0.5, 0.9), fm.to_floor(0.5, 0.7)
+    right = _snap(b[0] - a[0], b[1] - a[1])
+    down = _snap(near[0] - far[0], near[1] - far[1])
+    if (right[0] != 0) == (down[0] != 0):   # 둘이 같은 축으로 떨어지면(카메라가 비스듬히) 아래쪽을 남은 축으로
+        dx, dy = near[0] - far[0], near[1] - far[1]
+        down = [0, 1 if dy > 0 else -1] if right[0] != 0 else [1 if dx > 0 else -1, 0]
+    return {
+        "zones": [{"name": z.name, "type": getattr(z.type, "value", str(z.type)),
+                   "poly": [[round(x, 1), round(y, 1)] for x, y in z.polygon]} for z in fm.zones],
+        "marks": [[round(x, 1), round(y, 1)] for x, y in fm.floor_points],
+        "right": right, "down": down,
+        "max_gap": judge.config.max_floor_gap_cm, "slack": judge.config.ray_slack_cm,
+    }
+
+
+def _link_gaps(links: list[dict], tracks: dict, offset: float, tol_ms: float) -> None:
+    """맺은 짝마다 그 조각에서 두 카메라 발의 바닥 위 거리를 적어 넣는다 (줄 끝의 바닥 좌표가 있을 때).
+
+    gap = 조각 안 표본들의 거리 중앙값(cm, 허용 여유를 빼기 전 그대로), hidden = 한쪽이라도 발목이 안 보여 방향으로만 잰 표본의 비율.
+    판정(src/fusion/cross_view.py)과 같은 거리 식을 쓴다. 같은 때 두 화면 표본이 없으면 적지 않는다.
+    """
+    import statistics
+
+    from src.fusion.cross_view import _Sample, floor_distance
+
+    samples: dict[str, dict[int, list]] = {}
+    for cam, shift in (("angle0", offset), ("angle1", 0.0)):
+        tr, by = tracks[cam], {}
+        for idx, rows in tr["frames"].items():
+            ms = (tr["ms"][idx] if "ms" in tr else idx * 1000.0 / tr["fps"]) + shift
+            for r in rows:
+                if len(r) > 10 and r[10]:
+                    f = r[10]
+                    s = _Sample(ms, None, (f[0], f[1]), (f[2], f[3]) if len(f) == 4 else None)
+                    for pid in {r[0], r[1]}:   # 짝은 맺을 때의 번호로 적힌다 — 나중에 합쳐진 번호로도 찾게
+                        by.setdefault(pid, []).append(s)
+        samples[cam] = by
+    for link in links:
+        mine = [s for s in samples["angle0"].get(link["detail"], []) if link["start"] <= s.pts_ms <= link["end"]]
+        others = [s for s in samples["angle1"].get(link["overview"], [])
+                  if link["start"] - tol_ms <= s.pts_ms <= link["end"] + tol_ms]
+        gaps, hidden = [], 0
+        for s in mine:
+            near = min(others, key=lambda o: abs(o.pts_ms - s.pts_ms), default=None)
+            if near is None or abs(near.pts_ms - s.pts_ms) > tol_ms:
+                continue
+            gaps.append(floor_distance(s, near))
+            hidden += s.ray is not None or near.ray is not None
+        if gaps:
+            link["gap"] = round(statistics.median(gaps), 1)
+            link["hidden"] = round(hidden / len(gaps), 2)
 
 
 def export_pair(key: str, run_dir: str, opts: dict, pair: str, base, table, band, truth) -> dict | None:
@@ -218,15 +300,18 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
     result, judge = judge_with(run_dir, opts, pair, base, table, band)
     log = dual_eval.PairLog(pair)
     m1, m0 = log.meta["angle1"], log.meta["angle0"]
-    f1, f0 = m1["fps"], m0["fps"]
+    f0 = m0["fps"]
     offset = table.offset_ms(pair) or 0.0
     r1 = log.resolver("angle1", m1["frames"])
     r0 = log.resolver("angle0", m0["frames"])
     risk = judge.risk
-    video, ref = sync_pair.pair_files(pair)
+    video, ref = sync_pair.pair_files(pair, dual_eval.SHOOT)
 
     def ov_ms(frame):
-        return round(frame * 1000.0 / f1, 1)
+        return round(log.ms("angle1", frame), 1)
+
+    def detail_ms(frame):
+        return round(log.ms("angle0", frame) + offset)
 
     events = [{"pid": e.person_id, "level": e.level.value, "zone": e.zone, "ms": round(e.time_sec * 1000.0, 1),
                "reason": e.reason, "bbox": [round(v) for v in e.bbox], "taken": e.taken, "paid": e.paid,
@@ -240,34 +325,50 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
     payments = [{"ms": round(p.time_sec * 1000.0), "items": p.items, "pid": p.person_id,
                  "method": getattr(p, "method", "")} for p in risk.book.payments]
     links = [{"start": round(l.start_ms), "end": round(l.end_ms), "detail": l.detail_id, "overview": l.overview_id,
-              "score": round(l.score, 2)} for l in judge.linker.links]
-    takes0 = [{"pid": t.person_id, "zone": t.zone, "start": round(t.start_frame * 1000.0 / f0 + offset),
-               "end": round(t.end_frame * 1000.0 / f0 + offset)} for t in log.takes["angle0"]]
+              "score": round(l.score, 2), "pos": None if l.position is None else round(l.position, 2),
+              "app": None if l.appearance is None else round(l.appearance, 2)} for l in judge.linker.links]
+    takes0 = [{"pid": t.person_id, "zone": t.zone, "start": detail_ms(t.start_frame), "end": detail_ms(t.end_frame)}
+              for t in log.takes["angle0"]]
     takes1 = [{"pid": t.person_id, "zone": t.zone, "start": ov_ms(t.start_frame), "end": ov_ms(t.end_frame)}
               for t in log.takes["angle1"]]
     visits = [{"pid": v["person_id"], "start": round(v["start_ms"] + offset), "end": round(v["end_ms"] + offset),
                "removed": v["removed"], "added": v["added"], "detail": v.get("detail", ""),
                "slot_change": v.get("slot_change")} for v in log.visits]
-    merges = {cam: [{"ms": round(mm.get("frame", 0) * 1000.0 / log.meta[cam]["fps"] + (offset if cam == "angle0" else 0)),
+    merges = {cam: [{"ms": round(log.ms(cam, mm.get("frame", 0)) + (offset if cam == "angle0" else 0)),
                      "from": mm["from"], "into": mm["into"], "sim": mm.get("similarity")}
                     for mm in log.merges[cam]] for cam in ("angle0", "angle1")}
+    # 두 화면 짝을 바닥 위 거리로 맺는 설정(3차)이면 사람마다 발의 바닥 좌표를 싣고, 맺은 짝의 거리를 잰다
+    on_floor = judge.detail_floor is not None and judge.config.position_mode == "floor"
+    floor1 = floor0 = None
+    if on_floor:
+        def floor1(o):
+            return judge.floor_point(judge.floor, o.bbox, getattr(o, "keypoints", None), m1["width"], m1["height"])
+
+        def floor0(o):
+            return judge.floor_point(judge.detail_floor, o.bbox, getattr(o, "keypoints", None),
+                                     judge.detail_width, judge.detail_height)
+    tracks = {"angle1": _tracks(log, "angle1", r1, floor1), "angle0": _tracks(log, "angle0", r0, floor0)}
+    if on_floor:
+        _link_gaps(links, tracks, offset, judge.config.pair_tolerance_seconds * 1000.0)
     data = {
         "run": key, "pair": pair, "offset_ms": offset,
         "video": {"angle1": "/" + ref.relative_to(REPO).as_posix(), "angle0": "/" + video.relative_to(REPO).as_posix()},
         "truth": truth.get(pair, {}),
         "result": {k: result[k] for k in ("verdicts", "correct", "reasons", "people", "identities", "links",
                                           "payments", "cancels", "unowned_takes")},
-        "zones": _zones(m1, m0),
-        "tracks": {"angle1": _tracks(log, "angle1", r1), "angle0": _tracks(log, "angle0", r0)},
+        "zones": _zones(m1, m0, dual_eval.zones_dir(pair)),
+        "tracks": tracks,
         "births": {"angle1": _births(log, "angle1"), "angle0": _births(log, "angle0")},
         "revivals": {"angle1": _revivals(log, "angle1"), "angle0": _revivals(log, "angle0")},
         "events": events, "actions": actions, "customers": customers, "payments": payments, "links": links,
         "takes0": takes0, "takes1": takes1, "visits": visits, "merges": merges,
         "shelf_events": result["shelf_events"],
-        "shelf_items": _shelf_items(run_dir, pair, m0["width"], m0["height"], f0, offset),
+        "shelf_items": _shelf_items(run_dir, pair, m0["width"], m0["height"], f0, offset, lambda f: log.ms("angle0", f)),
         "slot_changes": [{"slot": r["slot"], "start": round(r["start_ms"] + offset), "end": round(r["end_ms"] + offset),
                           "ratio": r["ratio"], "direction": r["direction"]} for r in log.slot_changes],
     }
+    if on_floor:
+        data["floor"] = _floor_view(judge)
     return data, result
 
 

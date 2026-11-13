@@ -97,10 +97,25 @@ def make_pair_zones(pair: str, out_root: Path, base_dir: Path = BASE) -> Path:
     floor0 = yaml.safe_load(floor0_path.read_text(encoding="utf-8")) if floor0_path.exists() else None
     d = out_root / pair
     d.mkdir(parents=True, exist_ok=True)
-    (d / "floor.yaml").write_text(yaml.safe_dump(pair_floor(floor, h1), allow_unicode=True, sort_keys=False), encoding="utf-8")
-    (d / "angle0.yaml").write_text(yaml.safe_dump(pair_detail(detail, h0, load_band_map(base_dir / "band_map.yaml"), floor0),
-                                                  allow_unicode=True, sort_keys=False), encoding="utf-8")
+    _write_if_changed(d / "floor.yaml", yaml.safe_dump(pair_floor(floor, h1), allow_unicode=True, sort_keys=False))
+    _write_if_changed(d / "angle0.yaml", yaml.safe_dump(pair_detail(detail, h0, load_band_map(base_dir / "band_map.yaml"), floor0),
+                                                        allow_unicode=True, sort_keys=False))
     return d
+
+
+def _write_if_changed(path: Path, text: str) -> None:
+    """내용이 같으면 건드리지 않는다 — 두 프로그램(평가·진단·분석 도구)이 같은 때 돌아도 읽는 중인 파일이 비지 않게.
+    바뀔 때는 옆에 다 쓴 뒤 바꿔치기한다."""
+    raw = text.encode("utf-8")
+    if path.exists() and path.read_bytes() == raw:
+        return
+    part = path.with_name(path.name + ".part")
+    part.write_bytes(raw)
+    try:
+        part.replace(path)
+    except PermissionError:   # Windows: 다른 프로그램이 그 파일을 읽는 순간 — 그 자리에 바로 쓴다
+        path.write_bytes(raw)
+        part.unlink(missing_ok=True)
 
 
 def detail_point(h0: np.ndarray, size: tuple[int, int] = SIZE["angle0"]):

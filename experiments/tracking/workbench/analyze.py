@@ -14,6 +14,8 @@ facts 의 knob 은 그 사실을 좌우하는 판정 값의 이름(workbench/tun
 
 from __future__ import annotations
 
+from statistics import median
+
 LENSES = ("track", "link", "take", "verdict")
 LENS_NAME = {"track": "사람 추적", "link": "두 화면 같은 사람", "take": "물건 집기", "verdict": "결제·판정"}
 SET_NAME = {"normal": "정상", "theft": "절도", "complex": "복합"}
@@ -34,12 +36,21 @@ def sec(ms: float) -> str:
     return f"{ms / 1000.0:.1f}초"
 
 
+def frame_ms(track: dict, key) -> float:
+    """기록의 장면(track["frames"] 의 열쇠) → 그 카메라 시각(ms, 시차 전).
+    3차처럼 장면을 빠뜨린 영상은 실제 시각 표(track["ms"])가 실려 있다. 없으면 번호 ÷ fps."""
+    times = track.get("ms")
+    if times is not None:
+        return times[key]
+    return int(key) * 1000.0 / track["fps"]
+
+
 def presence(track: dict, offset_ms: float = 0.0) -> dict[int, list[list[float]]]:
     """신원별로 화면에 보인 구간 [[시작, 끝], ...] (공통 시각 ms). 나중에 합쳐진 신원은 합친 뒤 번호로."""
-    fps, step = track["fps"], track["stride"] * 1000.0 / track["fps"]
+    step = track["stride"] * 1000.0 / track["fps"]
     out: dict[int, list[list[float]]] = {}
     for key in sorted(track["frames"], key=int):
-        ms = int(key) * 1000.0 / fps + offset_ms
+        ms = frame_ms(track, key) + offset_ms
         for row in track["frames"][key]:
             rid = row[1]
             if rid <= 0:
@@ -81,7 +92,10 @@ def _who(pid: int, customers: set[int]) -> str:
 
 def _duration(data: dict) -> float:
     t1, t0 = data["tracks"]["angle1"], data["tracks"]["angle0"]
-    return round(max(t1["frames_total"] * 1000.0 / t1["fps"], t0["frames_total"] * 1000.0 / t0["fps"] + data["offset_ms"]))
+
+    def end(t: dict) -> float:
+        return t.get("end_ms", t["frames_total"] * 1000.0 / t["fps"])
+    return round(max(end(t1), end(t0) + data["offset_ms"]))
 
 
 # ---------------------------------------------------------------------- 렌즈별
@@ -155,7 +169,7 @@ def lens_link(data: dict, customers: set[int]) -> dict:
         for l in links:
             segs.append({"s": l["start"], "e": l["end"], "who": l["overview"] if l["overview"] in customers else None,
                          "tone": None if l["overview"] in customers else "warn",
-                         "tip": f"선반 화면 {d} ⇄ {_who(l['overview'], customers)} · 점수 {l['score']:.2f}"})
+                         "tip": f"선반 화면 {d} ⇄ {_who(l['overview'], customers)} · 점수 {l['score']:.2f}" + _gap_text(l)})
             if runs and runs[-1]["overview"] == l["overview"]:
                 runs[-1]["end"] = l["end"]
             else:
@@ -178,10 +192,48 @@ def lens_link(data: dict, customers: set[int]) -> dict:
             first = next(run for run in runs if run["overview"] in outsiders)
             facts.append({"level": "warn", "ms": first["start"],
                           "text": f"선반 화면 {d} 번 사람이 손님이 아닌 신원(#{', #'.join(map(str, outsiders))})과 짝을 맺음"})
+    facts += _floor_facts(data)
     if not any(f["level"] == "warn" for f in facts) and pct is not None:
         facts.append({"level": "info", "text": NO_LINK_TRUTH})
     return {"status": "warn" if any(f["level"] == "warn" for f in facts) else "info", "pct": pct,
             "facts": facts, "rows": rows, "log": sorted(log, key=lambda r: r["ms"])}
+
+
+HIDDEN_SHARE = 0.5
+"""조각의 표본 중 이만큼 이상이 발목 없이 잰 것이면 '발이 가린 조각'으로 말한다."""
+
+
+def _gap_text(link: dict) -> str:
+    """짝 하나의 바닥 위 거리 (바닥으로 맺는 설정에서만 실려 있다 — scripts/review_export.py _link_gaps)."""
+    if link.get("gap") is None:
+        return ""
+    hidden = " (발이 가려 방향으로만 잼)" if link.get("hidden", 0) >= HIDDEN_SHARE else ""
+    return f" · 바닥 위 {link['gap']:.0f}cm{hidden}"
+
+
+def _floor_facts(data: dict) -> list[dict]:
+    """두 화면 짝을 바닥 위 거리로 맺었을 때(3차): 맺은 짝들이 바닥에서 얼마나 가까웠나."""
+    floor = data.get("floor")
+    measured = [l for l in data["links"] if l.get("gap") is not None]
+    if not floor or not measured:
+        return []
+    seen = [l["gap"] for l in measured if l.get("hidden", 0) < HIDDEN_SHARE]
+    hidden = [l["gap"] for l in measured if l.get("hidden", 0) >= HIDDEN_SHARE]
+    bits = []
+    if seen:
+        bits.append(f"발목이 보인 조각 {len(seen)}개는 중앙 {median(seen):.0f}cm")
+    if hidden:
+        bits.append(f"발이 가려 방향으로만 잰 조각 {len(hidden)}개는 중앙 {median(hidden):.0f}cm")
+    facts = [{"level": "info", "knob": "fusion.max_floor_gap_cm",
+              "text": "맺은 짝의 두 카메라 발이 바닥 위에서 떨어진 거리: " + " · ".join(bits)
+                      + f" (이 거리가 {floor['max_gap']:g}cm 이면 위치 점수 0, 가린 발은 {floor['slack']:g}cm 까지 봐줌)"}]
+    far = [l for l in measured if l.get("pos") is not None and l["pos"] <= 0.0]
+    if far:
+        worst = max(far, key=lambda l: l["gap"])
+        facts.append({"level": "warn", "ms": worst["start"], "knob": "fusion.solo_appearance_min",
+                      "text": f"바닥 위 위치는 맞지 않는데(위치 점수 0) 이어진 조각 {len(far)}개 — 가장 먼 것 {worst['gap']:.0f}cm. "
+                              "비교할 사람이 한 명뿐이라 외형만으로 이은 것"})
+    return facts
 
 
 def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> dict:
@@ -338,10 +390,9 @@ def locate(track: dict, point: list[float], ms: float, offset_ms: float = 0.0, w
     사람이 잠깐 안 잡힌 장면에 찍어도 앞뒤 장면에서 찾게.
     """
     x, y = point[0] * track["w"], point[1] * track["h"]
-    fps = track["fps"]
-    near = sorted(track["frames"], key=lambda k: abs(int(k) * 1000.0 / fps + offset_ms - ms))
+    near = sorted(track["frames"], key=lambda k: abs(frame_ms(track, k) + offset_ms - ms))
     for key in near:
-        if abs(int(key) * 1000.0 / fps + offset_ms - ms) > window_ms:
+        if abs(frame_ms(track, key) + offset_ms - ms) > window_ms:
             break
         inside = [r for r in track["frames"][key] if r[1] > 0 and r[3] <= x <= r[5] and r[4] <= y <= r[6]]
         if inside:
