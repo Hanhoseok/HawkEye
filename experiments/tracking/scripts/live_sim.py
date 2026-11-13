@@ -11,6 +11,7 @@
 
     python scripts/live_sim.py --shoot 3            # 3차 전부
     python scripts/live_sim.py --shoot 2 "C1*"      # 2차 일부
+    python scripts/live_sim.py --shoot 3 --set tracker.name=bytetrack --out live_bt3   # 가볍게 한 설정으로
 """
 
 from __future__ import annotations
@@ -84,8 +85,11 @@ def main() -> int:
     ap.add_argument("only", nargs="?", help="짝 이름 패턴 (dual_eval 과 같음)")
     ap.add_argument("--shoot", type=int, choices=[2, 3], default=2)
     ap.add_argument("--out", help="outputs/ 아래 폴더 (기본 live_sim_shoot<N>)")
+    ap.add_argument("--set", action="append", default=[], metavar="절.키=값",
+                    help="설정 덮어쓰기 (dual_eval 과 같음, 여러 번) — 예: --set tracker.name=bytetrack --set detector.imgsz=480")
     args = ap.parse_args()
     dual_eval.set_profile(args.shoot)
+    dual_eval.OVERRIDES = args.set
     out_root = ROOT / "outputs" / (args.out or f"live_sim_shoot{args.shoot}")
     base = AppConfig.load(ROOT / "config.yaml")
     table = SyncTable.load(dual_eval.LABELS / "sync.csv")

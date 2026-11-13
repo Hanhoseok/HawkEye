@@ -1,0 +1,397 @@
+[
+ {
+  "pair": "C1",
+  "verdicts": [
+   "CLEAR",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C10",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C11",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C12",
+  "verdicts": [
+   "CLEAR",
+   "REVIEW",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C13",
+  "verdicts": [
+   "REVIEW",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C14",
+  "verdicts": [
+   "CLEAR",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C15",
+  "verdicts": [
+   "CLEAR",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C17",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C18",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C19",
+  "verdicts": [
+   "REVIEW",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C2",
+  "verdicts": [
+   "HIGH_RISK",
+   "REVIEW"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C20",
+  "verdicts": [
+   "CLEAR",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C21",
+  "verdicts": [
+   "CLEAR",
+   "REVIEW"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C3",
+  "verdicts": [
+   "CLEAR",
+   "HIGH_RISK"
+  ],
+  "correct": false,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C4",
+  "verdicts": [
+   "CLEAR",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C5",
+  "verdicts": [
+   "CLEAR",
+   "CLEAR",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "C6",
+  "verdicts": [
+   "CLEAR",
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N1",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N10",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N11",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N12",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N2",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N3",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N4",
+  "verdicts": [
+   "REVIEW"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N5",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N6",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N8-1",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N8-2",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "N9",
+  "verdicts": [
+   "HIGH_RISK",
+   "CLEAR"
+  ],
+  "correct": false,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T1",
+  "verdicts": [
+   "HIGH_RISK"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T10",
+  "verdicts": [
+   "HIGH_RISK"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T2",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": false,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T3",
+  "verdicts": [
+   "HIGH_RISK"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T4",
+  "verdicts": [],
+  "correct": false,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": true
+ },
+ {
+  "pair": "T5",
+  "verdicts": [
+   "REVIEW"
+  ],
+  "correct": false,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T6",
+  "verdicts": [
+   "HIGH_RISK"
+  ],
+  "correct": true,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T8",
+  "verdicts": [
+   "CLEAR"
+  ],
+  "correct": false,
+  "people": 1,
+  "people_ok": true,
+  "no_verdict": false
+ },
+ {
+  "pair": "T9",
+  "verdicts": [
+   "HIGH_RISK",
+   "HIGH_RISK"
+  ],
+  "correct": true,
+  "people": 2,
+  "people_ok": true,
+  "no_verdict": false
+ }
+]

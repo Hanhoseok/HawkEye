@@ -160,6 +160,9 @@ class MultiCameraPipeline:
         appearance_file = (out / "appearance.jsonl").open("w", encoding="utf-8")
         risk_log = ObservationLog(out / self.config.output.risk_name)
         pay_log = ObservationLog(out / self.config.output.payments_name)
+        # 신원 뒤바뀜 확인 값(registry.recent_consistency) — 판정을 기록만으로 다시 할 때(dual_eval judge --identity-check) 같은 시점의 값을 쓰게
+        (out / self.overview_cam.name).mkdir(parents=True, exist_ok=True)
+        consistency_file = (out / self.overview_cam.name / "consistency.jsonl").open("w", encoding="utf-8")
         last_app: dict[tuple[str, int], float] = {}
         last_overview = None
 
@@ -202,6 +205,11 @@ class MultiCameraPipeline:
                 else:
                     events, records = self.judge.overview_step(frame, ids, step.takes, worker.registry.merges,
                                                                appearance, resolve)
+                    for pid in sorted({resolve(o.person_id) for o in ids if o.person_id > 0}):
+                        value = worker.registry.recent_consistency(pid)
+                        if value is not None:
+                            consistency_file.write(json.dumps({"frame": frame.index, "person_id": pid,
+                                                               "value": round(float(value), 6)}) + "\n")
                     risk_log.write_many(events)
                     pay_log.write_many(records)
                     for a in self.judge.risk.new_actions:
@@ -218,6 +226,7 @@ class MultiCameraPipeline:
                 visit_file.close()
                 slot_file.close()
             appearance_file.close()
+            consistency_file.close()
 
         # 영상 끝: 열린 손 뻗기를 닫고, 대기 중인 선반 사건을 넘기고, 출구 쪽에서 막 사라진 손님을 확정
         if self.detail is not None:
@@ -241,7 +250,8 @@ class MultiCameraPipeline:
             f.write_many(self.judge.risk.all_actions())
         for c in cams:
             reg = workers[c.name].registry
-            if reg is not None and reg.merges:
+            if reg is not None:
+                # 합침이 없어도 빈 파일을 쓴다 — 같은 폴더에 다시 돌렸을 때 이전 실행의 합침이 남지 않게
                 (out / c.name / "identity_merges.jsonl").write_text(
                     "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in reg.merges), encoding="utf-8")
         stats.elapsed_sec = time.perf_counter() - started

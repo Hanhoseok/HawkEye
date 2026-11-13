@@ -221,7 +221,7 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     # 바닥 구역 판단의 발 점 = 발목 (B-15, 2026-11-09 채택) — 사용자가 실제 바닥 자리에 맞춰 그린 구역과 짝.
     # 관절이 없는 예전 기록은 상자 아래 가운데로 대신한다. --set zones.foot_point=bbox 로 예전 방식.
     cfg.zones.foot_point = "ankle"
-    _apply_set(cfg, overrides)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
+    _apply_set(cfg, overrides, early=True)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair, SHOOT)
     zdir = zones_dir(pair)
     cfg.cameras = [
@@ -260,43 +260,77 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     return cfg
 
 
-def _apply_set(cfg: AppConfig, overrides: list[str]) -> None:
+def _apply_set(cfg: AppConfig, overrides: list[str], early: bool = False) -> None:
+    """early: dual_config 앞쪽의 첫 적용 — 아직 만들어지지 않은 절(detail_interaction)은 건너뛴다 (끝에서 다시 적용된다)."""
     for item in overrides:
         key, value = item.split("=", 1)
         section, name = key.split(".")
-        setattr(getattr(cfg, section), name, yaml.safe_load(value))
+        target = getattr(cfg, section)
+        if target is None and early:
+            continue
+        setattr(target, name, yaml.safe_load(value))
 
 
 # ---------------------------------------------------------------------- run
 
-def run(pattern: str | None) -> None:
+def cache_fingerprints(cfg: AppConfig) -> dict[str, dict]:
+    """카메라별 저장분 유효 조건 (src/replay/cache.py fingerprint) — 사람 아님 영역·선반 영역·칸 좌표는 구역 파일에서."""
+    from src.replay.cache import fingerprint
+
+    out = {}
+    for cam in cfg.cameras:
+        raw = yaml.safe_load(Path(cam.zones).read_text(encoding="utf-8")) or {}
+        if cam.role == "overview":
+            out[cam.name] = fingerprint(cfg, cam, ignore_image=raw.get("ignore_image") or [])
+        else:
+            out[cam.name] = fingerprint(cfg, cam, shelf_areas=raw.get("shelves") or [],
+                                        slots=[[z.get("name"), z.get("polygon")] for z in raw.get("zones") or []])
+    return out
+
+
+OBSERVATION_FILES = ("identities.jsonl", "take_candidates.jsonl", "identity_merges.jsonl", "shelf_visits.jsonl",
+                     "slot_changes.jsonl", "shelf_items.jsonl", "consistency.jsonl")
+"""카메라 폴더에 관찰 층이 쓰는 기록 — replay 가 시작 전에 지운다(이전 실행 것이 남아 섞이지 않게)."""
+
+
+def run_pair(pair: str, base: AppConfig, out: Path, *, record: bool = False, replay_from: Path | None = None) -> str:
+    """한 짝의 관찰 층을 돌려 out 에 기록한다. record: 저장분도 남김. replay_from: 그 폴더의 저장분으로 영상·모델 없이 다시 계산."""
     import cv2
-    from src.detectors.yolo_detector import build_detector, build_item_detector
-    from src.identity.embedder import build_embedder
     from src.identity.registry import IdentityRegistry
     from src.interaction.detector import InteractionDetector
     from src.multicam import build_multicam
+    from src.replay import cache as rc
     from src.shelf.watcher import ShelfWatcher
-    from src.trackers import build_tracker
 
-    base = AppConfig.load(ROOT / "config.yaml")
-    for pair in pairs(pattern):
-        out = OUT / pair
-        if (out / ".done").exists():
-            print(f"{pair}: 이미 있음 (건너뜀)", flush=True)
-            continue
-        try:
-            cfg = dual_config(base, pair)
-        except PAIR_ERRORS as e:
-            if SHOOT != 3:
-                raise
-            print(f"{pair}: 실패 {type(e).__name__}: {e} — 건너뜀", flush=True)
-            continue
-        pipe = build_multicam(cfg, out, build_detector=build_detector, build_tracker=build_tracker,
-                              build_embedder=build_embedder, build_item_detector=build_item_detector,
-                              IdentityRegistry=IdentityRegistry, InteractionDetector=InteractionDetector,
-                              ShelfWatcher=ShelfWatcher, RiskEngine=RiskEngine, PaymentFeed=PaymentFeed)
-        stats = pipe.run()
+    cfg = dual_config(base, pair)
+    if replay_from is None:
+        from src.detectors.yolo_detector import build_detector, build_item_detector
+        from src.identity.embedder import build_embedder
+        from src.trackers import build_tracker
+    else:
+        build_detector = build_tracker = build_embedder = lambda *a, **k: None   # 모델을 읽지 않는다
+        build_item_detector = lambda *a, **k: None
+        (out / ".done").unlink(missing_ok=True)
+        for cam in cfg.cameras:
+            for name in OBSERVATION_FILES:
+                (out / cam.name / name).unlink(missing_ok=True)
+    pipe = build_multicam(cfg, out, build_detector=build_detector, build_tracker=build_tracker,
+                          build_embedder=build_embedder, build_item_detector=build_item_detector,
+                          IdentityRegistry=IdentityRegistry, InteractionDetector=InteractionDetector,
+                          ShelfWatcher=ShelfWatcher, RiskEngine=RiskEngine, PaymentFeed=PaymentFeed)
+    caches = None
+    if replay_from is not None:
+        caches = {cam.name: rc.CameraCache.load(replay_from / pair / "cache" / f"{cam.name}.pkl.gz") for cam in cfg.cameras}
+        rc.attach_replay(pipe, caches, cache_fingerprints(cfg))
+    elif record:
+        caches = rc.attach_recording(pipe, cache_fingerprints(cfg))
+    stats = pipe.run()
+    if replay_from is not None:
+        src_meta = replay_from / pair / "meta.json"
+        (out / "meta.json").write_text(src_meta.read_text(encoding="utf-8"), encoding="utf-8")
+        for f in (replay_from / pair).glob("times_*.json"):
+            (out / f.name).write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+    else:
         meta = {}
         for cam in cfg.cameras:
             cap = cv2.VideoCapture(cam.source)
@@ -305,13 +339,50 @@ def run(pattern: str | None) -> None:
                               "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), "stride": cam.stride}
             cap.release()
         (out / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
-        if pipe.detail is not None and pipe.detail.shelves is not None and pipe.detail.shelves.item_log:
-            (out / "angle0" / "shelf_items.jsonl").write_text(
-                "".join(json.dumps(r) + "\n" for r in pipe.detail.shelves.item_log), encoding="utf-8")
-        (out / ".done").write_text("ok", encoding="utf-8")
-        levels = [e.level.value for e in stats.events if e.level != RiskLevel.WARNING]
-        total = sum(stats.frames.values())
-        print(f"{pair}: 완료 {total / max(stats.elapsed_sec, 1e-6):.1f} 장면/초, 판정 {levels}", flush=True)
+        if record:
+            for name, cache in caches.items():
+                cache.save(out / "cache" / f"{name}.pkl.gz")
+    if pipe.detail is not None and pipe.detail.shelves is not None and pipe.detail.shelves.item_log:
+        (out / "angle0" / "shelf_items.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in pipe.detail.shelves.item_log), encoding="utf-8")
+    (out / ".done").write_text("ok", encoding="utf-8")
+    levels = [e.level.value for e in stats.events if e.level != RiskLevel.WARNING]
+    total = sum(stats.frames.values())
+    note = ""
+    if replay_from is not None:
+        spare = sum(c.spare_used for c in caches.values())
+        note = f", 예비 외형 벡터 {spare}회" if spare else ""
+    return f"완료 {total / max(stats.elapsed_sec, 1e-6):.1f} 장면/초, 판정 {levels}{note}"
+
+
+LAST_RUN: dict = {"done": [], "failed": []}
+"""마지막 run/replay 가 끝낸 짝과 실패한 짝 ({pair, error}) — scripts/regress.py 가 본다."""
+
+
+def run(pattern: str | None, record: bool = False, replay_from: Path | None = None) -> None:
+    from src.replay.cache import CacheMiss, FingerprintMismatch
+
+    base = AppConfig.load(ROOT / "config.yaml")
+    LAST_RUN["done"], LAST_RUN["failed"] = [], []
+    for pair in pairs(pattern):
+        out = OUT / pair
+        if replay_from is None and (out / ".done").exists():
+            print(f"{pair}: 이미 있음 (건너뜀)", flush=True)
+            continue
+        try:
+            message = run_pair(pair, base, out, record=record, replay_from=replay_from)
+        except (CacheMiss, FingerprintMismatch) as e:
+            LAST_RUN["failed"].append({"pair": pair, "error": f"{type(e).__name__}: {e}"})
+            print(f"{pair}: 저장분으로 다시 계산 실패 — {e}", flush=True)
+            continue
+        except PAIR_ERRORS as e:
+            if SHOOT != 3:
+                raise
+            LAST_RUN["failed"].append({"pair": pair, "error": f"{type(e).__name__}: {e}"})
+            print(f"{pair}: 실패 {type(e).__name__}: {e} — 건너뜀", flush=True)
+            continue
+        LAST_RUN["done"].append(pair)
+        print(f"{pair}: {message}", flush=True)
 
 
 # ---------------------------------------------------------------------- 기록 읽기
@@ -386,6 +457,13 @@ class PairLog:
 
 # ---------------------------------------------------------------------- 판정 재실행
 
+IDENTITY_CHECK = False
+"""judge 에서 신원 뒤바뀜 확인(RiskEngine consistency)을 켠다 (--identity-check). 실제 파이프라인에는 늘 들어가지만 judge 는
+지금까지 안 넣었다 — 기본은 그대로 끔 (점수 체계 유지). 값은 실행 때 기록한 angle1/consistency.jsonl 에서 같은 장면의 것을 쓴다."""
+LAST_JUDGE: dict = {"rows": [], "failed": [], "skipped": []}
+"""마지막 judge 의 결과 — 채점한 짝, 실패한 짝({pair, error}), 기록이 없어 건너뛴 짝. scripts/regress.py 가 본다."""
+
+
 def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detail: bool = True,
                sensor: bool = False, payments: bool = False, truth: dict | None = None) -> dict:
     """truth = load_truth() 결과. 안 주면 정답표를 읽는다 (오판 장면 보기처럼 한 짝씩 부르는 쪽을 위해)."""
@@ -405,7 +483,15 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         from label_payments import load_feed
         cfg.risk.payment_mode = "feed"
         feed = load_feed(pair, LABELS / "payments.csv")
-    risk = RiskEngine(cfg.risk, fz, feed)
+    now_frame = {"idx": -1}
+    consistency = None
+    if IDENTITY_CHECK:
+        path = OUT / pair / "angle1" / "consistency.jsonl"
+        if not path.exists():
+            raise FileNotFoundError(f"{pair}: consistency.jsonl 없음 — --identity-check 는 그 기록이 있는 실행(2026-11-14 이후)에서만")
+        values = {(r["frame"], r["person_id"]): r["value"] for r in PairLog._jsonl(path)}
+        consistency = lambda pid: values.get((now_frame["idx"], pid))
+    risk = RiskEngine(cfg.risk, fz, feed, consistency=consistency)
     detail_setup = yaml.safe_load((zdir / "angle0.yaml").read_text(encoding="utf-8"))
     slot_shelf = {z["name"]: detail_setup["shelves"][0]["name"] for z in detail_setup["zones"]}
     sensors = []
@@ -457,6 +543,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
             while pending_merges and pending_merges[0].get("frame", 0) <= idx:
                 merges_seen.append(pending_merges.pop(0))
             frame = Frame(index=idx, timestamp="", pts_ms=ms, image=None, camera_id="angle1")
+            now_frame["idx"] = idx
             judge.overview_step(frame, log.ids["angle1"].get(idx, []), take_at["angle1"].get(idx, []),
                                 merges_seen, log.appearance("angle1", 0.0, ms), log.resolver("angle1", idx))
             last = frame
@@ -513,11 +600,13 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
     table = SyncTable.load(LABELS / "sync.csv")
     band = load_band_map()
     truth = load_truth()
-    rows, failed = [], []
+    rows, failed, skipped = [], [], []
+    LAST_JUDGE.update(rows=rows, failed=failed, skipped=skipped)
     if payments:
         check_payment_labels([p for p in pairs(pattern) if (OUT / p / ".done").exists()])
     for pair in pairs(pattern):
         if not (OUT / pair / ".done").exists():
+            skipped.append(pair)
             continue
         try:
             rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor, payments, truth))
@@ -669,7 +758,13 @@ def calibrate(pattern: str = "N*") -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("stage", choices=["run", "sync", "calibrate", "judge"])
+    ap.add_argument("stage", choices=["run", "replay", "sync", "calibrate", "judge"])
+    ap.add_argument("--record-cache", action="store_true",
+                    help="run: 화면을 보는 계산(탐지·추적·외형 벡터·선반)을 <짝>/cache 에 저장 — 나중에 replay 로 영상 없이 다시 계산")
+    ap.add_argument("--from", dest="replay_from", metavar="폴더",
+                    help="replay: 저장분이 있는 실행 폴더 이름 (outputs/ 아래). 결과는 --out 에 쓴다")
+    ap.add_argument("--identity-check", action="store_true",
+                    help="judge: 신원 뒤바뀜 확인을 넣는다 (실제 파이프라인과 같게, 기본 끔)")
     ap.add_argument("--only")
     ap.add_argument("--detail-off", action="store_true")
     ap.add_argument("--sensor", action="store_true")
@@ -693,7 +788,7 @@ def main() -> int:
     ap.add_argument("--payments", action="store_true",
                     help="계산대 체류 대신 결제 라벨(<라벨 폴더>/payments.csv, scripts/label_payments.py)을 결제 기록으로")
     args = ap.parse_args()
-    global OUT, OVERRIDES, OVERVIEW_POSE, OVERVIEW_DETECTOR, TENTATIVE, ZONES
+    global OUT, OVERRIDES, OVERVIEW_POSE, OVERVIEW_DETECTOR, TENTATIVE, ZONES, IDENTITY_CHECK
     set_profile(args.shoot)
     global SENSOR_LANES
     SENSOR_LANES = tuple(x.strip() for x in args.sensor_lanes.split(",")) if args.sensor_lanes else None
@@ -708,8 +803,16 @@ def main() -> int:
     if args.zones:
         ZONES = Path(args.zones).resolve()
     OVERRIDES = args.set
+    IDENTITY_CHECK = args.identity_check
     if args.stage == "run":
-        run(args.only)
+        run(args.only, record=args.record_cache)
+    elif args.stage == "replay":
+        if not args.replay_from or not args.out:
+            ap.error("replay 에는 --from <저장분 폴더> 와 --out <쓸 폴더> 가 필요합니다")
+        source = ROOT / "outputs" / args.replay_from
+        if source.resolve() == OUT.resolve():
+            ap.error("replay 의 --out 은 --from 과 달라야 합니다 (저장분이 있는 기록을 덮어쓰지 않게)")
+        run(args.only, replay_from=source)
     elif args.stage == "sync":
         sync(args.only)
     elif args.stage == "calibrate":

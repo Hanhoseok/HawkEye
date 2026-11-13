@@ -183,7 +183,7 @@ class _Consensus:
                 continue
             boxes = np.array([c.bbox for c in cl])
             labels = [c.label for c in cl]
-            label = max(set(labels), key=labels.count)
+            label = max(dict.fromkeys(labels), key=labels.count)   # 동률이면 먼저 나온 이름 — set 은 실행마다 순서가 달라 결과가 흔들렸다 (3차 N05)
             out.append(ShelfItem(label, tuple(float(v) for v in np.median(boxes, axis=0)),
                                  float(np.mean([c.score for c in cl]))))
         return out
