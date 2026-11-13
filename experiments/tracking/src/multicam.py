@@ -24,10 +24,30 @@ from .core.config import AppConfig, CameraConfig, ShelfConfig
 from .core.types import RiskLevel
 from .fusion.judge import DualJudge
 from .fusion.shelf_events import TimeAxis, load_sensor_events
+from .inputs.live_source import INDEX_PER_SECOND, is_live_source, normalize_source
 from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
 from .zones.floor import FloorMap, FloorZoneMap, shelf_image_zones
 from .zones.zone_map import ZoneMap
+
+
+def probe_source(source, opener=None) -> tuple[float, tuple[int, int]]:
+    """입력의 (fps, (폭, 높이)). 실시간 카메라 주소는 LiveSource 와 같게 정규화한다(숫자 문자열 → 장치 번호).
+    못 열거나 크기가 0 이면 멈춘다 — 크기 0 이 판정까지 가면 바닥 좌표 계산이 0 으로 나눈다."""
+    if opener is None:
+        import cv2
+        opener = cv2.VideoCapture
+    cap = opener(normalize_source(source))
+    try:
+        if not cap.isOpened():
+            raise RuntimeError(f"입력을 열 수 없습니다: {source}")
+        fps = float(cap.get(5) or 0.0)                 # cv2.CAP_PROP_FPS
+        size = (int(cap.get(3) or 0), int(cap.get(4) or 0))   # 폭, 높이
+    finally:
+        cap.release()
+    if size[0] <= 0 or size[1] <= 0:
+        raise RuntimeError(f"입력 크기를 알 수 없습니다: {source} {size}")
+    return fps or 30.0, size
 
 
 @dataclass
@@ -84,15 +104,27 @@ class MultiCameraPipeline:
         self.judge = judge
         self.out_dir = Path(out_dir)
 
-    def _source(self, cam: CameraConfig):
-        """녹화본은 VideoSource(장면을 빼지 않음, 시차 반영), 실시간 카메라는 LiveSource(최신 장면만, 재연결)."""
+    def _source(self, cam: CameraConfig, start_s: float | None = None):
+        """녹화본은 VideoSource(장면을 빼지 않음, 시차 반영), 실시간 카메라는 LiveSource(최신 장면만, 재연결).
+        start_s: 실시간 카메라들이 같이 쓰는 시각 0점."""
         v = self.config.video
-        src = str(cam.source)
-        if src.isdigit() or src.lower().startswith(("rtsp://", "rtsps://", "rtmp://", "http://", "https://")):
+        if is_live_source(cam.source):
             from .inputs.live_source import LiveSource
-            return LiveSource(src, cam.name, max_frames=v.max_frames)
+            return LiveSource(cam.source, cam.name, max_frames=v.max_frames, start_s=start_s)
         return VideoSource(cam.source, start_time=v.start_time, max_frames=v.max_frames, stride=cam.stride,
                            camera_id=cam.name, offset_ms=cam.offset_ms)
+
+    def _live_axes(self, cams: list[CameraConfig], sources: dict) -> None:
+        """실시간 카메라의 판정 시간축 — LiveSource 장면 번호는 공통 0점 이후 밀리초, 시차 0(같은 시계).
+        카메라가 알려 준 fps(없으면 대체값)와 상관없이 번호 = 시각. 녹화본 카메라는 그대로."""
+        for c in cams:
+            if not is_live_source(c.source):
+                continue
+            axis = TimeAxis(INDEX_PER_SECOND, 0.0)
+            if self.detail_cam is not None and c.name == self.detail_cam.name:
+                self.judge.fuser.detail_axis = axis
+            else:
+                self.judge.fuser.overview_axis = axis
 
     def run(self) -> DualStats:
         out = self.out_dir
@@ -105,13 +137,17 @@ class MultiCameraPipeline:
             workers[self.detail_cam.name] = self.detail
             cams.append(self.detail_cam)
         logs: dict[str, dict[str, ObservationLog]] = {}
-        sources = {c.name: self._source(c) for c in cams}
+        live_start = time.time()   # 실시간 카메라 공통 시각 0점 — 카메라를 열기 전에 한 번 (LiveSource.start_s)
+        sources = {c.name: self._source(c, live_start) for c in cams}
+        self._live_axes(cams, sources)
         self.judge.reset()
         for c in cams:
             w = workers[c.name]
             w.reset()
             src = sources[c.name]
-            w.resolve(src.width, src.height, src.fps / (1 if hasattr(src, "reconnects") else c.stride))
+            # 처리 속도(장면/초): 녹화본은 fps ÷ stride. 실시간은 밀린 장면을 버리므로 카메라 fps 가 아니라 처리 속도 어림 (선반 지도 확정 창)
+            rate = (min(src.fps, self.config.video.live_process_fps) if is_live_source(c.source) else src.fps / c.stride)
+            w.resolve(src.width, src.height, rate)
             d = out / c.name
             logs[c.name] = {k: ObservationLog(d / f"{k}.jsonl") for k in ("identities", "take_candidates")}
             stats.frames[c.name] = 0
@@ -279,13 +315,8 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
     risk = RiskEngine(config.risk, floor_zones, payments, consistency=ov_registry.recent_consistency)
     sensors = load_sensor_events(config.fusion.sensor_path) if config.fusion.sensor_path else []
 
-    import cv2
     def probe(cam):
-        cap = cv2.VideoCapture(cam.source)
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        cap.release()
-        return fps, size
+        return probe_source(cam.source)
 
     ov_fps, ov_size = probe(overview_cam)
     floor_zones.resolve(*ov_size)

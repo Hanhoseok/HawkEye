@@ -157,7 +157,7 @@ class RiskEngine:
             if now - customer.outside_since_ms < min_ms:
                 continue
             customer.departed = True
-            events.append(self._check_identity(customer, self._judge(customer, frame, how="문 밖으로 나감")))
+            events.append(self._confirm_exit(customer, frame, "문 밖으로 나감"))
 
         # 6-b) 나감 확정 — 출구 근처에서 사라져 한동안 다시 나타나지 않음
         confirm_ms = self.config.exit_confirm_seconds * 1000.0
@@ -171,7 +171,16 @@ class RiskEngine:
             if now - customer.last_seen_ms < confirm_ms:
                 continue
             customer.departed = True
-            events.append(self._check_identity(customer, self._judge(customer, frame, how="출구 쪽에서 사라짐")))
+            events.append(self._confirm_exit(customer, frame, "출구 쪽에서 사라짐"))
+
+        # 6-c) 보류한 나감 판정 — 보류 시간 동안 돌아오지 않았으면 그때 다시 판정해 내보낸다
+        hold_ms = self.config.exit_hold_seconds * 1000.0
+        for customer in self.book.customers.values():
+            if customer.held_since_ms is None or not customer.departed:   # 문 밖에 보여도 됨 — 매장 안으로 돌아오면 장부가 되돌린다
+                continue
+            if now - customer.held_since_ms < hold_ms:
+                continue
+            events.append(self._release_hold(customer, frame))
 
         self.events.extend(events)
         return events, records
@@ -190,6 +199,9 @@ class RiskEngine:
         near_ms = self.config.exit_rearm_seconds * 1000.0
         events = []
         for customer in self.book.customers.values():
+            if customer.held_since_ms is not None and customer.departed:
+                events.append(self._release_hold(customer, frame, " (영상 끝)"))   # 녹화본은 더 돌아올 수 없다
+                continue
             if customer.departed or not customer.seen_inside or customer.last_exit_ms is None:
                 continue
             if customer.last_seen_ms - customer.last_exit_ms > near_ms:
@@ -215,6 +227,22 @@ class RiskEngine:
         """영상이 끝날 때 계층 3 이 마저 내보낸 후보. 판정은 없고 장부에만 더한다."""
         for c in takes:
             self.book.add_take(c, now_ms)
+
+    def _confirm_exit(self, customer: Customer, frame: Frame, how: str) -> RiskEvent:
+        """나감 확정의 최종 판정. HIGH_RISK 이고 exit_hold_seconds > 0 이면 보류하고 WARNING 을 대신 낸다."""
+        event = self._check_identity(customer, self._judge(customer, frame, how=how))
+        hold = self.config.exit_hold_seconds
+        if hold <= 0 or event.level != RiskLevel.HIGH_RISK:
+            return event
+        customer.held_since_ms, customer.held_how = frame.pts_ms, how
+        return replace(event, level=RiskLevel.WARNING,
+                       reason=event.reason + f" — {hold:g}초 안에 돌아오지 않으면 HIGH_RISK")
+
+    def _release_hold(self, customer: Customer, frame: Frame, suffix: str = "") -> RiskEvent:
+        """보류를 끝내고 지금까지의 기록(보류 중 도착한 결제 포함)으로 다시 판정한다."""
+        how = customer.held_how + suffix
+        customer.held_since_ms, customer.held_how = None, ""
+        return self._check_identity(customer, self._judge(customer, frame, how=how))
 
     def _check_identity(self, customer: Customer, event: RiskEvent) -> RiskEvent:
         """HIGH_RISK 확정 직전, 추적 번호가 다른 사람에게 옮겨 붙지 않았는지 확인한다.

@@ -195,6 +195,10 @@ class Customer:
     """이번 출구 방문에서 '다가섬'을 이미 처리했는가 (WARNING 을 냈거나, 낼 필요가 없었거나)."""
     departed: bool = False
     """'나갔다'고 확정하고 최종 판정했는가. 매장 안에서 다시 보이면 되돌린다."""
+    held_since_ms: float | None = None
+    """나감 판정(HIGH_RISK)을 보류하기 시작한 시각 (risk.exit_hold_seconds). 다시 보이면 버린다."""
+    held_how: str = ""
+    """보류한 나감의 방식 ("문 밖으로 나감" 등) — 보류가 끝나 내보낼 때 판정 이유에 붙인다."""
     last_exit_ms: float | None = None
     """마지막으로 출구 또는 문 밖 구역에 있었던 시각. 출구를 막 지나 사라진 경우를 잡는다."""
     outside_since_ms: float | None = None
@@ -336,6 +340,7 @@ class CustomerBook:
         dst.paid_items += src.paid_items
         dst.dwell_paid_items += src.dwell_paid_items
         dst.first_seen_ms = min(dst.first_seen_ms, src.first_seen_ms)
+        holds = [(c.held_since_ms, c.held_how) for c in (dst, src) if c.held_since_ms is not None]
         if src.last_seen_ms >= dst.last_seen_ms:
             # 지금 보이는 쪽은 합쳐지기 전 번호(src)다. 위치·구역 상태는 그쪽을 따른다.
             dst.last_seen_ms = src.last_seen_ms
@@ -345,6 +350,8 @@ class CustomerBook:
             dst.exit_left_ms, dst.exit_judged = src.exit_left_ms, src.exit_judged
             dst.departed = src.departed
             dst.last_exit_ms, dst.outside_since_ms = src.last_exit_ms, src.outside_since_ms
+        # 보류한 나감 판정은 어느 쪽 것이든 남긴다 — 매장 안으로 돌아온 게 확인(departed 해제)됐을 때만 버린다
+        dst.held_since_ms, dst.held_how = min(holds) if holds and dst.departed else (None, "")
         dst.seen_inside = dst.seen_inside or src.seen_inside
         for t in (src.last_checkout_ms, dst.last_checkout_ms):
             if t is not None and (dst.last_checkout_ms is None or t > dst.last_checkout_ms):
@@ -385,6 +392,7 @@ class CustomerBook:
                 customer.exit_judged = False
                 customer.exit_since_ms = None
                 customer.exit_left_ms = None
+                customer.held_since_ms, customer.held_how = None, ""   # 보류하던 나감 판정도 버린다
                 self.reappeared.append(customer.person_id)
             customer.last_seen_ms = now_ms
             customer.last_bbox = obs.bbox
@@ -399,6 +407,8 @@ class CustomerBook:
                     customer.seen_inside = True
             if self.config.inside_zones and not customer.seen_inside:
                 inside = any(h.zone in self.config.inside_zones and h.contains_foot for h in hits)
+                if inside and self.config.inside_excludes_exit:
+                    inside = not any(h.zone_type == ZoneType.EXIT and h.contains_foot for h in hits)
                 if not inside:
                     customer.inside_since_ms = None
                 else:

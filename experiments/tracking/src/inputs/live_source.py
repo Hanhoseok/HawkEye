@@ -5,8 +5,12 @@
 처리 쪽은 새 장면이 생길 때마다 그 마지막 장면을 가져간다 — 밀린 장면은 버린다.
 읽기가 실패하면(망 끊김, 카메라 재부팅) 잠깐 쉬었다가 다시 연다. 다시 연결된 동안의 시간은 장면이 없을 뿐 시계는 흐른다.
 
-장면 시각(pts_ms)은 '받은 순간의 실제 시계'에서 시작 시각을 뺀 값이다 — 카메라가 여러 대여도 같은 시계를 쓰므로
-녹화본처럼 시차를 맞출 필요가 없다 (PC 시계 하나 기준).
+장면 시각(pts_ms)은 '받은 순간의 실제 시계'에서 시작 시각(start_s)을 뺀 값이다. 카메라가 여러 대면 파이프라인이 카메라를 열기 전에
+정한 같은 start_s 를 모두에 준다 — 그러면 녹화본처럼 시차를 맞출 필요가 없다 (PC 시계 하나 기준).
+
+장면 번호(Frame.index)는 '처리한 순번'이 아니라 **0점 이후 밀리초** (늘 증가, 같으면 +1).
+판정(DualJudge)이 손 뻗기의 장면 번호를 TimeAxis.to_ms 로 시각으로 되돌리기 때문이다 — 순번이면 '순번 ÷ fps' 가 되어 크게 어긋났다.
+실시간 카메라의 시간축은 TimeAxis(INDEX_PER_SECOND, 0) 이다 (MultiCameraPipeline._live_axes). 카메라가 알려 준 fps 와 상관없다.
 """
 
 from __future__ import annotations
@@ -17,6 +21,22 @@ from datetime import datetime, timezone
 from typing import Callable, Iterator
 
 from ..core.types import Frame
+
+DEFAULT_FPS = 15.0
+"""카메라가 초당 장면 수를 알려 주지 않을 때 (CAP_PROP_FPS = 0)."""
+INDEX_PER_SECOND = 1000.0
+"""실시간 장면 번호의 단위 — 밀리초. 판정 시간축 TimeAxis(INDEX_PER_SECOND, 0).to_ms(index) == pts_ms."""
+
+
+def normalize_source(source):
+    """카메라 주소 정규화 — 숫자 문자열("0")은 장치 번호(int). LiveSource 와 build_multicam 의 크기 조회가 같은 장치를 열게."""
+    return int(source) if isinstance(source, str) and source.strip().isdigit() else source
+
+
+def is_live_source(source) -> bool:
+    """실시간 카메라(장치 번호·rtsp 등)인가. 아니면 녹화 파일."""
+    src = str(source).strip()
+    return src.isdigit() or src.lower().startswith(("rtsp://", "rtsps://", "rtmp://", "http://", "https://"))
 
 
 class LiveSource:
@@ -30,12 +50,14 @@ class LiveSource:
         idle_timeout_seconds: float = 30.0,
         opener: Callable | None = None,
         clock: Callable[[], float] = time.time,
+        start_s: float | None = None,
     ) -> None:
-        """opener: source → cv2.VideoCapture 같은 것 (테스트에서 가짜를 넣는다)."""
+        """opener: source → cv2.VideoCapture 같은 것 (테스트에서 가짜를 넣는다).
+        start_s: 시각 0점 (clock 기준). 카메라 여러 대가 같은 값을 써야 같은 순간이 같은 pts_ms 가 된다. 없으면 연 직후."""
         if opener is None:
             import cv2
             opener = cv2.VideoCapture
-        self.source = int(source) if isinstance(source, str) and source.isdigit() else source
+        self.source = normalize_source(source)
         self.camera_id = camera_id
         self.reconnect_seconds = reconnect_seconds
         self.max_reconnects = max_reconnects
@@ -44,11 +66,11 @@ class LiveSource:
         self._opener = opener
         self._clock = clock
         self._cap = self._open()
-        self.fps = float(self._cap.get(5) or 15.0)          # cv2.CAP_PROP_FPS
+        self.fps = float(self._cap.get(5) or DEFAULT_FPS)   # cv2.CAP_PROP_FPS
         self.width = int(self._cap.get(3) or 0)             # cv2.CAP_PROP_FRAME_WIDTH
         self.height = int(self._cap.get(4) or 0)            # cv2.CAP_PROP_FRAME_HEIGHT
         self.total_frames = 0
-        self.start_s = clock()
+        self.start_s = clock() if start_s is None else start_s
         self._latest = None          # (받은 시각 s, 이미지)
         self._seq = 0
         self._taken = 0
@@ -111,7 +133,8 @@ class LiveSource:
             pass
 
     def __iter__(self) -> Iterator[Frame]:
-        index = 0
+        index = -1
+        sent = 0
         while True:
             with self._lock:
                 waited = self._lock.wait_for(lambda: self._stop or self._seq > self._taken, self.idle_timeout_seconds)
@@ -120,12 +143,13 @@ class LiveSource:
                 self._taken = self._seq
                 got_s, image = self._latest
             pts_ms = (got_s - self.start_s) * 1000.0
+            index = max(index + 1, int(round(pts_ms * INDEX_PER_SECOND / 1000.0)))
             wall = got_s * 1000.0
             timestamp = datetime.fromtimestamp(got_s, timezone.utc).astimezone().isoformat()
             yield Frame(index=index, timestamp=timestamp, pts_ms=pts_ms, image=image,
                         camera_id=self.camera_id, wall_ms=wall)
-            index += 1
-            if self.max_frames is not None and index >= self.max_frames:
+            sent += 1
+            if self.max_frames is not None and sent >= self.max_frames:
                 return
             if not waited and self._stop:
                 return
