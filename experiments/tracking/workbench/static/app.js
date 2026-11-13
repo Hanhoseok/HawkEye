@@ -578,7 +578,13 @@ class Player {
       for (const el of this.logItems) if (Number(el.dataset.ms) <= this.t + 350) now = el;
       if (now !== this.nowLog) {
         if (this.nowLog) this.nowLog.classList.remove("now");
-        if (now) { now.classList.add("now"); if (this.playing) now.scrollIntoView({ block: "nearest" }); }
+        if (now) {
+          now.classList.add("now");
+          // 기록 칸 안에서만 굴린다 — scrollIntoView 는 페이지까지 굴려서, 기록 칸이 화면 아래에 있으면 영상이 밀려 올라갔다
+          const box = now.parentElement, a = now.getBoundingClientRect(), b = box.getBoundingClientRect();
+          if (a.top < b.top) box.scrollTop -= b.top - a.top;
+          else if (a.bottom > b.bottom) box.scrollTop += a.bottom - b.bottom;
+        }
         this.nowLog = now;
       }
     }
@@ -647,7 +653,10 @@ class Player {
   }
   foot(r) {
     const kp = r[9] || [];
-    const pts = [[kp[18], kp[19], kp[20]], [kp[21], kp[22], kp[23]]].filter(q => q[2] >= 30);
+    // 판정(src/zones/floor.py foot_pixel)과 같은 조건: 점수 0.3 이상, (0, 0) 아님(자세 모델이 못 찾은 표시), 상자 안(높이 5% 여유)
+    const pad = 0.05 * (r[6] - r[4]);
+    const pts = [[kp[18], kp[19], kp[20]], [kp[21], kp[22], kp[23]]].filter(q => q[2] >= 30 && (q[0] || q[1])
+      && r[3] - pad <= q[0] && q[0] <= r[5] + pad && r[4] - pad <= q[1] && q[1] <= r[6] + pad);
     if (pts.length) return [pts.reduce((a, q) => a + q[0], 0) / pts.length, pts.reduce((a, q) => a + q[1], 0) / pts.length, true];
     return [(r[3] + r[5]) / 2, r[6], false];
   }
