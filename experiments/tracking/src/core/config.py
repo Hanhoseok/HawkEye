@@ -27,6 +27,9 @@ class VideoConfig:
     blackout: str | None = None
     """"START:END" 형태. 이 원본 프레임 구간을 검은 화면으로 덮는다.
     tracker 버퍼보다 긴 공백을 인위적으로 만들어 신원 레지스트리를 검증하는 실험용."""
+    live_process_fps: float = 5.0
+    """실시간 카메라에서 초당 처리하는 장면 수 어림. 밀린 장면은 버리므로 카메라 fps 대신 이 값으로 선반 지도 확정 창(장면 수)을 정한다.
+    녹화본은 쓰지 않는다 (fps ÷ stride). docs/shoot4-demo-plan.md §4-2."""
 
 
 @dataclass
@@ -208,6 +211,12 @@ class IdentityConfig:
     MERL train 20명, 0.5초 간격 10장 평균 vs 과거 기록 평균에서 오병합 5% 가 되는 값(0.876).
     """
 
+    late_merge_overlap_seconds: float = 0.0
+    """나중에 합치기 상대가 새 신원과 이만큼까지 '함께 보인' 것은 봐준다 (0 = 함께 보였으면 절대 안 합침).
+    3차 C14: 손님이 문으로 나가는 0.66초 동안 유리 밖 모습에 새 신원이 먼저 생겨, 돌아온 뒤에도 원래 신원과 못 합쳤다
+    (docs/multiview-progress.md 후속 31).
+    """
+
 
 @dataclass
 class InteractionConfig:
@@ -307,6 +316,11 @@ class RiskConfig:
     inside_seconds: float = 0.0
     """inside_zones 안에 이만큼 연속으로 있어야 '매장 안에 들어온 손님'."""
 
+    inside_excludes_exit: bool = False
+    """True 면 발이 출구(EXIT) 구역 안일 때는 inside_zones 에 겹쳐 있어도 '매장 안'으로 치지 않는다.
+    3차 촬영 바닥 지도는 통로(aisle)가 문(door) 구역을 덮어, 입구에 서 있기만 한 사람(T05)이 1초 만에 손님이 됐다
+    (docs/multiview-progress.md 후속 27·29)."""
+
     exit_min_seconds: float = 0.5
     """발이 출구 구역 안에 이만큼 연속으로 있어야 '출구에 들어섰다'고 본다.
 
@@ -326,6 +340,13 @@ class RiskConfig:
       그 뒤 다시 나타나면 판정을 되돌리고 '이른 판정'으로 기록한다.
     - 대가: HIGH_RISK 가 이만큼 늦게 나온다. 다가선 순간의 WARNING 으로 직원이 먼저 알 수 있다.
     """
+
+    exit_hold_seconds: float = 0.0
+    """나감 확정(문 밖으로 나감·출구 쪽에서 사라짐)이 HIGH_RISK 일 때, 이만큼 더 기다렸다가 내보낸다 (0 = 바로).
+
+    그동안 같은 손님이 다시 보이면 보류를 버리고 다음 출구 방문 때 다시 판정한다 — 나갔다 곧 돌아와 결제한 손님(3차 C12·C15, 2차 C12)에게
+    HIGH_RISK 가 먼저 나가던 것을 막는다. 보류하는 동안은 WARNING 을 하나 낸다. 보류가 끝나면 그때까지 도착한 결제까지 넣어 다시 판정한다.
+    영상이 끝나면(finish) 보류 중인 손님은 바로 확정한다. 대가: HIGH_RISK 가 이만큼 늦다 (docs/multiview-progress.md 후속 33)."""
 
     zone_grace_seconds: float = 0.0
     """계산대·출구 구역에서 발 점이 이만큼 이하로 잠깐 벗어나면 머문 시간을 0 으로 되돌리지 않는다 (0 = 끔, 한 장면만 벗어나도 다시 셈).

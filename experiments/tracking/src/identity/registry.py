@@ -430,6 +430,8 @@ class IdentityRegistry:
         합칠 수 있는 상대의 조건:
           - 이 신원이 처음 나타나기 **전에** 사라졌다. 같은 시각에 함께 보인 적이 있다면
             한 사람일 수 없다. 이 조건이 오병합을 막는 가장 강한 근거다.
+            late_merge_overlap_seconds 를 주면 첫 관측 뒤 그 시간 안의 겹침은 봐주되, 상대가 지금부터
+            그 시간 이상 안 보였어야 한다 (계속 함께 보이는 두 사람은 합치지 않음).
           - 사라진 지 retire_after_seconds 이내였다.
           - 평균끼리의 유사도 >= late_merge_threshold.
         """
@@ -446,8 +448,11 @@ class IdentityRegistry:
         for other in self._people.values():
             if other is person or other.mean is None or other.tentative:
                 continue
-            if other.last_seen_ms >= person.first_seen_ms:
-                continue  # 함께 보인 적이 있다
+            overlap_ms = cfg.late_merge_overlap_seconds * 1000.0
+            if other.last_seen_ms >= person.first_seen_ms + overlap_ms:
+                continue  # 함께 보인 적이 있다 (late_merge_overlap_seconds 이내의 짧은 겹침은 봐줌)
+            if overlap_ms > 0 and frame.pts_ms - other.last_seen_ms < overlap_ms:
+                continue  # 겹침을 봐줄 때는 상대가 그만큼 안 보인 뒤에만 — 지금도 함께 보이는 두 사람을 합치지 않게
             if person.first_seen_ms - other.last_seen_ms > retire_ms:
                 continue
             sim = float(other.mean @ mean)

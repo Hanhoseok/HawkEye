@@ -237,9 +237,16 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     cfg.risk.payment_mode = "dwell"   # 결제 기록 없음: 계산대 체류 = 결제 (사용자 확인 규칙)
     # 매장 안 바닥(선반 앞·계산대·통로)에 1초 이상 들어온 사람만 손님 — 문 앞·창밖 행인·입장 순간 겹친 상자 제외 (C-20)
     cfg.risk.inside_zones, cfg.risk.inside_seconds = ["shelf", "counter", "aisle"], 1.0
+    # 문 구역 안이면 통로와 겹쳐도 매장 안이 아님 — 3차 통로가 문을 덮어 입구에 서 있던 사람이 손님이 됐다 (후속 29, 2차 그대로)
+    cfg.risk.inside_excludes_exit = True
+    # 출구 쪽에서 사라졌다 다시 나타난 사람: 옛 신원과 1초 미만 '함께 보인' 것은 봐주고 기준 0.8 로 나중에 합친다
+    # (3차 C14 손님 수 고침, 2차 신원 변화 0 — 후속 31)
+    cfg.identity.late_merge_overlap_seconds, cfg.identity.late_merge_threshold = 1.0, 0.8
     # 영상 끝에 출구 구역 안이면 나가는 중 — 화면 끝 조건을 끔 (2·3차 모두, 후속 23·25).
     # 3차는 출구가 화면 가운데, 2차는 출구(오른쪽 위)에서 상자가 위쪽 끝에만 걸려 '왼쪽·오른쪽 끝' 조건을 못 넘었다.
     cfg.risk.exit_end_at_edge_only = False
+    # 나감 HIGH_RISK 를 5초 보류 — 그 안에 돌아오면 버림 (3차 C12·C15, 2차 C12: 나갔다 곧 돌아와 결제). 3·5·8초 모두 같은 결과, 3차 C12 복귀가 2.7초 뒤라 여유를 둠 (후속 33)
+    cfg.risk.exit_hold_seconds = 5.0
     if OVERVIEW_POSE:
         cfg.fusion.overview_reach_seconds = 0.3   # 선반 카메라 손-칸 접촉과 같은 기준에서 시작 (N 으로 다시 본다)
     cfg.output.write_video = False
