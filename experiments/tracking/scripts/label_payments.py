@@ -31,7 +31,12 @@
     TAB     다음 짝 (저장)       BACKSPACE   이전 짝 (저장)
     s       저장          q/ESC   저장하고 종료
 
-결과: labels/store01_dual/payments.csv
+결과: labels/store01_dual/payments.csv  (3차: --shoot 3 → labels/store01_shoot3/payments.csv)
+
+3차 촬영(2026-11-11)은 바코드 삑 소리로 만든 초안(scripts/beep_payments.py, checked_by=beep-draft)을 검증한다.
+    python scripts/label_payments.py --shoot 3            # 초안·빈 짝부터 차례로
+    g / h   다음 / 이전 표시(라벨·삑 소리) 시각으로 이동    v   이 짝 확인 완료 (checked_by 를 --by 이름으로)
+3차 전체 카메라는 장면을 빠뜨리는 영상(VFR)이라 시각은 장면 번호가 아니라 실제 장면 시각으로 잰다.
 
     pair,attempt,time_sec,items,result,checked_by,note
     N1,1,11.2,1,paid,hoseok,
@@ -62,12 +67,17 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.inputs.frame_times import end_ms, first_ms, index_at  # noqa: E402
 from src.inputs.sync import SyncTable  # noqa: E402
 from src.risk.payments import PaymentEvent, PaymentFeed  # noqa: E402
 
 SOURCE = ROOT.parent.parent / "source"
 LABELS = ROOT / "labels" / "store01_dual"
 OUT = LABELS / "payments.csv"
+BEEPS = LABELS / "beeps.csv"
+SHOOT = 2
+DRAFT_BY = "beep-draft"
+"""scripts/beep_payments.py 가 만든 초안 줄의 checked_by. 사람이 확인하면 이름으로 바뀐다."""
 FIELDS = ("pair", "attempt", "time_sec", "items", "result", "checked_by", "note")
 RESULTS = ("paid", "failed", "incomplete", "cancelled", "none")
 
@@ -97,7 +107,15 @@ SCENARIO = {
     "T10": "2개 집고 1개 반납 -> 1개 결제 없이 퇴장",
     "C10": "화면 이탈 -> 반납 후 퇴장 (대본 기준)",
     "C11": "화면 이탈 -> 결제 후 퇴장 (대본 기준)",
+    "C16": "물건 위치 바꾸기 (결제 없음)",
 }
+
+
+def set_shoot(shoot: int) -> None:
+    """라벨 폴더를 촬영 회차에 맞춘다 (2: store01_dual, 3: store01_shoot3)."""
+    global LABELS, OUT, BEEPS, SHOOT
+    LABELS = ROOT / "labels" / ("store01_dual" if shoot == 2 else "store01_shoot3")
+    OUT, BEEPS, SHOOT = LABELS / "payments.csv", LABELS / "beeps.csv", shoot
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 # 방향키 코드는 OS/백엔드마다 다르다. Windows 는 waitKeyEx 로만 잡히고 값도 크다.
@@ -121,14 +139,37 @@ class PaymentLabel:
     note: str = ""
 
 
+def scenario_id(pair: str) -> str:
+    """짝 이름 → 대본 이름 (N01 → N1, N08-2 → N8)."""
+    m = re.match(r"([A-Z])0*(\d+)", pair)
+    return f"{m.group(1)}{m.group(2)}" if m else pair
+
+
 def scenario_hint(pair: str) -> str:
-    base = re.match(r"[A-Z]\d+", pair)
-    return SCENARIO.get(base.group(0) if base else pair, "대본 없음 — 영상에서 판단")
+    return SCENARIO.get(scenario_id(pair), "대본 없음 — 영상에서 판단")
+
+
+def label_state(labels: dict[str, list[PaymentLabel]], pair: str) -> str:
+    """missing(줄 없음) / draft(초안 줄이 남음) / verified(사람이 확인). 확인된 none 은 missing 과 다르다."""
+    rows = labels.get(pair) or []
+    if not rows:
+        return "missing"
+    return "draft" if any(r.checked_by == DRAFT_BY for r in rows) else "verified"
+
+
+def load_beeps(pair: str, path: Path | None = None) -> list[tuple[float, str]]:
+    """beeps.csv 의 그 짝 (공통 시각 초, scan/short). 파일이 없으면 빈 목록."""
+    path = path or BEEPS
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return [(float(r["axis_sec"]), r["kind"]) for r in csv.DictReader(f) if r["pair"] == pair]
 
 
 # ---------------------------------------------------------------- 파일 읽고 쓰기
 
-def load_labels(path: Path = OUT) -> dict[str, list[PaymentLabel]]:
+def load_labels(path: Path | None = None) -> dict[str, list[PaymentLabel]]:
+    path = path or OUT   # 기본값을 부를 때 정한다 — set_shoot 뒤에는 3차 파일
     out: dict[str, list[PaymentLabel]] = {}
     if not path.exists():
         return out
@@ -142,7 +183,8 @@ def load_labels(path: Path = OUT) -> dict[str, list[PaymentLabel]]:
     return out
 
 
-def save_labels(labels: dict[str, list[PaymentLabel]], path: Path = OUT) -> None:
+def save_labels(labels: dict[str, list[PaymentLabel]], path: Path | None = None) -> None:
+    path = path or OUT
     def pair_key(p: str):
         m = re.match(r"([A-Z])(\d+)(.*)", p)
         return (m.group(1), int(m.group(2)), m.group(3)) if m else (p, 0, "")
@@ -158,7 +200,7 @@ def save_labels(labels: dict[str, list[PaymentLabel]], path: Path = OUT) -> None
                 w.writerow(row)
 
 
-def load_feed(pair: str, path: Path = OUT) -> PaymentFeed:
+def load_feed(pair: str, path: Path | None = None) -> PaymentFeed:
     """판정용: 그 짝의 완료된 결제만 결제 기록으로. 라벨이 없으면 빈 기록."""
     rows = load_labels(path).get(pair, [])
     return PaymentFeed([PaymentEvent(time_sec=r.time_sec, items=r.items)
@@ -181,6 +223,9 @@ class FrameCache:
     2차 촬영 영상(HEVC, 휴대폰)은 cv2.CAP_PROP_POS_FRAMES 로 탐색하면 엉뚱한 장면이 나온다 —
     C01 에서 598번(10초)을 요청하면 1168번(19.5초)이 나오고, 15초 넘게는 읽지도 못했다 (2026-11-04 측정).
     그래서 순서대로 읽은 번호만 믿는다. 읽는 동안에도 이미 읽은 장면은 바로 볼 수 있다 (뒤 스레드).
+
+    장면마다 실제 시각(POS_MSEC)도 `times`(ms) 에 담는다 — 3차 angle1 은 장면을 빠뜨려 '번호 ÷ fps' 가 끝에서 최대 10초 틀린다.
+    시각이 필요한 곳은 `time_sec(i)`·`index_at(sec)` 를 쓴다 (2차 화면은 정상 영상이라 기존 번호 계산 그대로).
     """
 
     def __init__(self, path: Path, width: int) -> None:
@@ -191,6 +236,7 @@ class FrameCache:
         self.expected = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
         self.width = width
         self.frames: list[np.ndarray] = []
+        self.times: list[float] = []
         self.done = False
         self._cap = cap
         self._thread = threading.Thread(target=self._load, daemon=True)
@@ -202,8 +248,12 @@ class FrameCache:
                 ok, frame = self._cap.read()
                 if not ok:
                     break
+                ms = self._cap.get(cv2.CAP_PROP_POS_MSEC)
+                if len(self.times) == 1:   # 첫 장면 시각은 OpenCV 가 엉뚱하게 줄 때가 있다
+                    self.times[0] = first_ms(self.times[0], ms, self.fps)
                 h, w = frame.shape[:2]
                 frame = cv2.resize(frame, (self.width, int(h * self.width / w)), interpolation=cv2.INTER_AREA)
+                self.times.append(ms if self.times else max(ms, 0.0))   # 시각을 먼저 — frames 에 있는 장면은 늘 시각이 있다
                 self.frames.append(cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])[1])
         finally:
             self._cap.release()
@@ -217,6 +267,31 @@ class FrameCache:
     def progress(self) -> float:
         return 1.0 if self.done else min(len(self.frames) / self.expected, 0.99)
 
+    def _wait(self, i: int) -> None:
+        while i >= len(self.frames) and not self.done:
+            time.sleep(0.005)
+
+    def time_sec(self, i: int) -> float:
+        """i 번째 장면의 실제 시각 (초). 범위 밖은 첫·마지막 장면."""
+        self._wait(i)
+        if not self.times:
+            return i / self.fps
+        return self.times[max(0, min(i, len(self.times) - 1))] / 1000.0
+
+    def index_at(self, sec: float) -> int:
+        """sec 에 가장 가까운 장면 번호 (필요한 만큼 읽힐 때까지 기다린다)."""
+        ms = sec * 1000.0
+        while not self.done and (not self.times or self.times[-1] < ms):
+            time.sleep(0.005)
+        return index_at(self.times, ms)
+
+    @property
+    def duration_sec(self) -> float:
+        """영상 길이 (초). 다 읽기 전에는 표시 장면 수로 어림."""
+        if self.done:
+            return end_ms(self.times, self.fps) / 1000.0
+        return max(self.expected / self.fps, (self.times[-1] / 1000.0) if self.times else 0.0)
+
     def get(self, i: int) -> np.ndarray | None:
         """i 번째 장면. 아직 안 읽었으면 읽힐 때까지 기다린다."""
         while i >= len(self.frames) and not self.done:
@@ -229,7 +304,10 @@ class FrameCache:
 class PairPlayer:
     """전체 카메라를 기준으로 선반 카메라를 시차만큼 맞춰 보여준다."""
 
-    def __init__(self, ov_path: Path, de_path: Path, offset_ms: float, width: int = 800) -> None:
+    def __init__(self, ov_path: Path, de_path: Path, offset_ms: float, width: int = 800,
+                 real_times: bool = False) -> None:
+        self.real_times = real_times
+        """True: 실제 장면 시각(3차 VFR). False: 번호 ÷ fps (2차 — 기존 그대로)."""
         self.ov = FrameCache(ov_path, width)
         self.de = FrameCache(de_path, width) if de_path.exists() else None
         self.fps = self.ov.fps
@@ -240,6 +318,19 @@ class PairPlayer:
     @property
     def n(self) -> int:
         return self.ov.n
+
+    def time_sec(self, idx: int) -> float:
+        """전체 카메라 idx 번째 장면의 공통 시각 (초)."""
+        return self.ov.time_sec(idx) if self.real_times else idx / self.fps
+
+    def index_at(self, sec: float) -> int:
+        if self.real_times:
+            return self.ov.index_at(sec)
+        return max(0, min(int(round(sec * self.fps)), self.n - 1))
+
+    @property
+    def duration_sec(self) -> float:
+        return self.time_sec(self.n - 1) if self.real_times else (self.n - 1) / self.fps
 
     @property
     def de_n(self) -> int:
@@ -254,8 +345,13 @@ class PairPlayer:
         if self.de is None:
             return left
         # 공통 시각 = 선반 카메라 재생 시각 + offset → 선반 카메라 시각 = 공통 − offset
-        de_t = idx / self.fps - self.offset_ms / 1000.0
-        de_idx = int(round(de_t * self.de_fps))
+        de_t = self.time_sec(idx) - self.offset_ms / 1000.0
+        if self.real_times:
+            half = 0.5 / self.de_fps
+            inside = -half <= de_t <= self.de.duration_sec + half
+            de_idx = self.de.index_at(de_t) if inside else -1
+        else:
+            de_idx = int(round(de_t * self.de_fps))
         if 0 <= de_idx < self.de_n:
             right = self._fit(self.de.get(de_idx))
         else:
@@ -277,12 +373,14 @@ class PairPlayer:
         pass  # 읽기 스레드가 끝나면 스스로 닫는다. 메모리는 참조가 사라지면 풀린다.
 
 
-def draw_hud(img, pair, idx, player: PairPlayer, rows, pending_items, playing, done, total, saved_offset=None):
-    t = idx / player.fps
+def draw_hud(img, pair, idx, player: PairPlayer, rows, pending_items, playing, done, total, saved_offset=None,
+             beeps=(), state=""):
+    t = player.time_sec(idx)
     bar = np.full((190, img.shape[1], 3), 30, np.uint8)
     put = lambda s, x, y, c=(230, 230, 230), sc=0.6: cv2.putText(bar, s, (x, y), FONT, sc, c, 1, cv2.LINE_AA)
     put(f"{pair}  [{done}/{total} labeled]   t={t:6.2f}s  frame {idx}/{player.n}   "
-        f"{'PLAY' if playing else 'PAUSE'}   next items={pending_items}", 10, 24, (255, 255, 255), 0.65)
+        f"{'PLAY' if playing else 'PAUSE'}   next items={pending_items}   {state}", 10, 24,
+        (0, 200, 255) if state == "draft" else (255, 255, 255), 0.65)
     if player.progress < 1.0:
         put(f"loading {player.progress * 100:3.0f}%", img.shape[1] - 560, 24, (0, 200, 255), 0.6)
     changed = saved_offset is not None and abs(player.offset_ms - saved_offset) > 0.5
@@ -291,23 +389,29 @@ def draw_hud(img, pair, idx, player: PairPlayer, rows, pending_items, playing, d
     put("SPACE play | <- -> 1 frame | up/down -1s/+1s | [ ] offset 1 frame   { } 10 frames   0 reset offset",
         10, 50, (170, 170, 170), 0.45)
     put("1-9 items | p paid  f failed  i incomplete  x cancelled  n none | u undo | TAB next  BKSP prev | "
-        "s save  q quit", 10, 70, (170, 170, 170), 0.45)
+        "s save  q quit" + ("  | g/h next/prev mark  v verified" if SHOOT == 3 else ""), 10, 70, (170, 170, 170), 0.45)
     y = 96
     if not rows:
         put("(no label yet)", 10, y, (120, 120, 255))
     for r in rows:
-        txt = f"#{r.attempt} {r.result:<10} items={r.items}" + (f" at {r.time_sec:.2f}s" if r.time_sec is not None else "")
+        txt = f"#{r.attempt} {r.result:<10} items={r.items}" + (f" at {r.time_sec:.2f}s" if r.time_sec is not None else "") \
+            + ("  (draft)" if r.checked_by == DRAFT_BY else "")
         put(txt, 10, y, RESULT_COLOR.get(r.result, (255, 255, 255)))
         y += 22
     # 타임라인
     x0, x1, ty = 10, img.shape[1] - 10, 178
     cv2.line(bar, (x0, ty), (x1, ty), (90, 90, 90), 2)
-    cx = int(x0 + (x1 - x0) * idx / max(player.n - 1, 1))
-    cv2.line(bar, (cx, ty - 8), (cx, ty + 4), (255, 255, 255), 2)
+    span = max(player.duration_sec, 1e-6)
+
+    def pos(sec: float) -> int:
+        return int(x0 + (x1 - x0) * min(max(sec / span, 0.0), 1.0))
+
+    for sec, kind in beeps:   # 삑 소리: 스캔 = 노랑, 짧은 소리 = 회색
+        cv2.line(bar, (pos(sec), ty - 12), (pos(sec), ty - 4), (0, 220, 255) if kind == "scan" else (120, 120, 120), 2)
+    cv2.line(bar, (pos(t), ty - 8), (pos(t), ty + 4), (255, 255, 255), 2)
     for r in rows:
         if r.time_sec is not None:
-            mx = int(x0 + (x1 - x0) * r.time_sec * player.fps / max(player.n - 1, 1))
-            cv2.circle(bar, (mx, ty), 5, RESULT_COLOR.get(r.result, (255, 255, 255)), -1)
+            cv2.circle(bar, (pos(r.time_sec), ty), 5, RESULT_COLOR.get(r.result, (255, 255, 255)), -1)
     return np.vstack([img, bar])
 
 
@@ -343,18 +447,24 @@ def label_pair(pair: str, row, labels, checked_by: str, done: int, total: int, w
     player = player or open_player(row, width)
     rows = labels.setdefault(pair, [])
     idx, playing, pending = 0, False, 1
+    mark_at: float | None = None   # g/h 로 마지막에 간 표시 시각
     win = "label_payments"
     hint = scenario_hint(pair)
+    beeps = load_beeps(pair) if SHOOT == 3 else []
     print(f"\n== {pair}  시나리오: {hint}   시차 {row.offset_ms:+.0f}ms ({row.method})")
-    step_1s = int(round(player.fps))
+    for r in rows:
+        if r.note:
+            print(f"   메모 #{r.attempt}: {r.note}")
     offset_step = 1000.0 / player.de_fps  # 선반 카메라 1 프레임
     try:
         while True:
             idx = max(0, min(idx, player.n - 1))  # 다 읽고 나면 실제 장면 수가 메타값보다 적을 수 있다
             img = player.frame(idx)  # OpenCV 는 한글을 못 그린다 — 시나리오 힌트는 터미널에 출력
-            cv2.imshow(win, draw_hud(img, pair, idx, player, rows, pending, playing, done, total, row.offset_ms))
+            cv2.imshow(win, draw_hud(img, pair, idx, player, rows, pending, playing, done, total, row.offset_ms,
+                                     beeps, label_state(labels, pair) if SHOOT == 3 else ""))
             key = normalize_key(cv2.waitKeyEx(int(1000 / player.fps) if playing else 0))
-            t = round(idx / player.fps, 2)
+            now = player.time_sec(idx)
+            t = round(now, 2)
             if playing and key == 255:
                 idx = min(idx + 1, player.n - 1)
                 if idx == player.n - 1:
@@ -367,9 +477,18 @@ def label_pair(pair: str, row, labels, checked_by: str, done: int, total: int, w
             elif key == ord("a"):
                 idx = max(idx - 1, 0)
             elif key == KEY_DOWN:
-                idx = min(idx + step_1s, player.n - 1)
+                idx = max(min(player.index_at(now + 1.0), player.n - 1), idx + 1 if idx < player.n - 1 else idx)
             elif key == KEY_UP:
-                idx = max(idx - step_1s, 0)
+                idx = min(max(player.index_at(now - 1.0), 0), max(idx - 1, 0))
+            elif key in (ord("g"), ord("h")):
+                moved = step_mark(now, mark_at, idx, player.index_at, marks(rows, beeps), forward=key == ord("g"))
+                if moved is not None:
+                    idx, mark_at = moved
+            elif key == ord("v") and rows:
+                for r in rows:
+                    r.checked_by = checked_by
+                save_labels(labels)
+                print(f"   확인 완료 ({checked_by})")
             elif key in (ord("["), ord("]"), ord("{"), ord("}")):
                 # 선반 카메라 시각 = 공통 시각 − offset → offset 을 키우면 오른쪽 화면이 더 이른 장면이 된다
                 steps = 10 if key in (ord("{"), ord("}")) else 1
@@ -410,9 +529,33 @@ def label_pair(pair: str, row, labels, checked_by: str, done: int, total: int, w
         save_labels(labels)
 
 
+def marks(rows: list[PaymentLabel], beeps) -> list[float]:
+    """g/h 로 건너뛸 시각들 — 라벨 시각과 삑 소리 시각."""
+    return sorted({round(r.time_sec, 2) for r in rows if r.time_sec is not None} | {round(s, 2) for s, _ in beeps})
+
+
+def jump_target(now: float, times: list[float], forward: bool, eps: float = 0.05) -> float | None:
+    if forward:
+        return next((x for x in times if x > now + eps), None)
+    return next((x for x in reversed(times) if x < now - eps), None)
+
+
+def step_mark(now: float, mark_at: float | None, idx: int, index_at, times: list[float],
+              forward: bool) -> tuple[int, float] | None:
+    """g/h 한 번: (갈 장면 번호, 표시 시각). VFR 빈 구간 안의 표시는 가장 가까운 장면에 머무르므로,
+    지금 장면이 마지막에 간 표시의 장면이면 장면 시각이 아니라 그 표시 시각에서 이어 찾는다."""
+    from_mark = mark_at is not None and index_at(mark_at) == idx
+    # 표시 시각에서 이을 때는 그 표시만 건너뛴다 (장면 시각의 반올림 여유 0.05초는 붙어 있는 표시를 삼킨다)
+    target = jump_target(mark_at if from_mark else now, times, forward, eps=0.005 if from_mark else 0.05)
+    return None if target is None else (index_at(target), target)
+
+
 def summary(labels: dict[str, list[PaymentLabel]], pairs: list[str]) -> None:
     missing = [p for p in pairs if p not in labels]
     print(f"라벨 {len(pairs) - len(missing)}/{len(pairs)}  (없음: {', '.join(missing) or '-'})")
+    if SHOOT == 3:
+        drafts = [p for p in pairs if label_state(labels, p) == "draft"]
+        print(f"확인 안 한 초안 {len(drafts)}  ({', '.join(drafts) or '-'})")
     for p in pairs:
         if p not in labels:
             continue
@@ -420,11 +563,12 @@ def summary(labels: dict[str, list[PaymentLabel]], pairs: list[str]) -> None:
         paid = sum(r.items for r in rows if r.result == "paid")
         desc = " / ".join(f"{r.result}" + (f"({r.items})" if r.result == "paid" else "")
                           + (f"@{r.time_sec:.1f}s" if r.time_sec is not None else "") for r in rows)
-        print(f"  {p:<6} 결제 품목 {paid}  | {desc:<45} | 시나리오: {scenario_hint(p)}")
+        flag = " [초안]" if label_state(labels, p) == "draft" else ""
+        print(f"  {p:<6} 결제 품목 {paid}  | {desc:<45} | 시나리오: {scenario_hint(p)}{flag}")
 
 
 def open_player(row, width: int) -> PairPlayer:
-    return PairPlayer(SOURCE / row.reference, SOURCE / row.video, row.offset_ms, width)
+    return PairPlayer(SOURCE / row.reference, SOURCE / row.video, row.offset_ms, width, real_times=SHOOT == 3)
 
 
 def main() -> None:
@@ -438,11 +582,15 @@ def main() -> None:
     ap.add_argument("--summary", action="store_true", help="요약만 출력")
     ap.add_argument("--by", default=os.environ.get("USERNAME", ""), help="checked_by 에 남길 이름")
     ap.add_argument("--width", type=int, default=800, help="카메라 한 화면 폭(px)")
+    ap.add_argument("--shoot", type=int, choices=(2, 3), default=2, help="촬영 회차 (3: 2026-11-11 삑 소리 초안 검증)")
     args = ap.parse_args()
+    set_shoot(args.shoot)
 
     sync = SyncTable.load(LABELS / "sync.csv")
     table = dict(sync.rows)
     all_pairs = sorted(table, key=lambda p: (p[0], int(re.match(r"[A-Z](\d+)", p).group(1)), p))
+    if SHOOT == 3:
+        all_pairs = [p for p in all_pairs if p != "area_setting"]
     labels = load_labels()
 
     if args.summary:
@@ -451,7 +599,9 @@ def main() -> None:
     unknown = [p for p in args.pairs if p not in table]
     if unknown:
         sys.exit(f"sync.csv 에 없는 짝: {unknown}")
-    todo = args.pairs or [p for p in all_pairs if args.all or p not in labels]
+    # 3차: 줄이 없거나 초안이 남은 짝 (소리를 못 읽어 초안이 없는 짝도 빠지지 않게)
+    todo = args.pairs or [p for p in all_pairs if args.all or (
+        label_state(labels, p) != "verified" if SHOOT == 3 else p not in labels)]
     if not todo:
         print("모든 짝을 찍었다. 다시 보려면 --all 또는 짝 이름을 준다.")
         summary(labels, all_pairs)

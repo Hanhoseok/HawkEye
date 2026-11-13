@@ -29,11 +29,19 @@ class TimeAxis:
 
     fps: float
     offset_ms: float = 0.0
+    times: tuple | None = None
+    """장면 번호 → 실제 시각(ms). 장면을 빠뜨리는 영상(3차 angle1)용. 없으면 번호 ÷ fps (기존 그대로)."""
 
     def to_ms(self, frame: int) -> float:
+        if self.times:
+            return self.times[max(0, min(int(frame), len(self.times) - 1))] + self.offset_ms
         return frame * 1000.0 / self.fps + self.offset_ms
 
     def to_frame(self, ms: float) -> int:
+        if self.times:
+            from ..inputs.frame_times import index_at
+
+            return index_at(self.times, ms - self.offset_ms)
         return int(round((ms - self.offset_ms) * self.fps / 1000.0))
 
 
@@ -197,7 +205,7 @@ class ShelfEventFuser:
                                start_frame=self.overview_axis.to_frame(s.time_ms - tol),
                                end_frame=self.overview_axis.to_frame(s.time_ms + tol),
                                removed=removed, added=added, zone=self.config.shelf_zone,
-                               detail=f"센서 {s.slot} {s.delta_g:+.0f}g", source="sensor")
+                               detail=f"센서 {s.slot} {self._delta_text(s)}", source="sensor")
             self.records.append(FusedRecord("sensor", s.time_ms, s.time_ms, visit.person_id,
                                             how if owner is not None else "모름", visit.detail))
             out.append(visit)
@@ -239,6 +247,12 @@ class ShelfEventFuser:
                 hits.append(s)
                 self._sensor_used.add(i)
         return hits
+
+    def _delta_text(self, s: SensorEvent) -> str:
+        """칸 무게(sensor_unit_g)가 있으면 g(무게 변화), 없으면 개수 변화 — 3차 실제 레인 센서는 개수를 delta_g 칸에 넣는다."""
+        if self.config.sensor_unit_g.get(s.slot):
+            return f"{s.delta_g:+.0f}g"
+        return f"{s.delta_g:+.0f}개"
 
     def _sensor_counts(self, events: list[SensorEvent]) -> tuple[int, int]:
         removed = added = 0

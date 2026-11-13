@@ -1,4 +1,4 @@
-"""두 화면 짝이 왜 끊기나 — 저장된 기록만 다시 돌려서 잰다 (docs/multiview-progress.md 후속 14, 한계 B-14).
+"""두 화면 짝이 왜 끊기나 — 저장된 기록만 다시 돌려서 잰다 (docs/multiview-progress.md 후속 13-1, 한계 B-14).
 
     python scripts/link_diagnose.py why     # 0.5초 조각마다 짝이 안 맺힌 이유를 나눠 센다
     python scripts/link_diagnose.py fit     # 선반 카메라의 어떤 값이 '선반 앞 띠 위치'를 잘 맞히나 (정상 영상, 짝 하나씩 빼고 시험)

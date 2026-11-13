@@ -4,9 +4,11 @@
     python scripts/dual_eval.py sync       # 두 화면의 손님 위치 변화로 짝마다 시차 추정 → labels/store01_dual/sync.csv
     python scripts/dual_eval.py calibrate  # 정상(N) 영상으로 선반 카메라 x → 선반 앞 띠 위치 변환을 맞춤 → angle0.yaml
     python scripts/dual_eval.py judge      # 저장된 기록으로 합치기·판정만 다시 (몇 초)
+    python scripts/dual_eval.py --shoot 3 run|calibrate|judge   # 3차 촬영 (source/2(angle*), 영상별 구역·실제 장면 시각 — scripts/shoot3_eval.py)
         --only "N*,T1"   짝 이름 패턴     --detail-off  선반 카메라 없이 (전체 카메라만, 1-2 기준선)
         --sensor          가짜 센서 기록(labels/store01_dual/fake_sensor/<짝>.csv)을 함께 (1-6)
-        --payments        계산대 체류 대신 결제 라벨(labels/store01_dual/payments.csv)을 결제 기록으로 (E-13)
+        --payments        계산대 체류 대신 결제 라벨(<라벨 폴더>/payments.csv)을 결제 기록으로 (E-13).
+                          3차는 바코드 삑 소리 초안(scripts/beep_payments.py)을 label_payments.py --shoot 3 으로 확인한 것
 
 기준값은 정상(N) 영상으로 정하고 고정한 뒤 절도(T)·복합(C)으로 채점한다 (1차 촬영과 같은 방식).
 영상은 저장소 밖 ../../source/1(angle0)·1(angle1).
@@ -56,11 +58,51 @@ JUDGE_FILE: Path | None = ROOT / "configs" / "store01_dual_judge.yaml"
 OVERRIDES: list[str] = []
 OVERVIEW_POSE = False
 OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
+SHOOT = 2
+"""촬영 회차. 3 이면 set_profile(3) 이 경로를 바꾸고, 영상별 구역·실제 장면 시각·카메라 움직임을 되돌린 선반 카메라 위치를 쓴다."""
+_PAIR_ZONES: dict[str, Path] = {}
+PAIR_ERRORS = (KeyError, ValueError, FileNotFoundError)
+SENSOR_LANES: tuple[str, ...] | None = None
+"""3차 --sensor 에서 쓸 레인 (None = 전부). --sensor-lanes L1,L2"""
+"""3차에서 한 짝만 실패로 기록하고 넘어갈 오류 (카메라 맞추기 없음·장면 수 불일치·파일 없음). 2차는 그대로 멈춘다."""
 TENTATIVE = 0.0   # 전체 카메라 임시 신원 시간 (identity.tentative_seconds, C-11) — 0 이면 끔
 """전체 카메라 팔 뻗기를 판정에 넣음 (--overview-pose). 관절 모델 자체는 OVERVIEW_DETECTOR 가 정한다."""
 EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "right"]}
 """가장자리 규칙을 적용할 변 — 화각 때문에 늘 잘리는 변(전체 카메라 위쪽 머리, 선반 카메라 아래쪽 발)은 뺀다 (C-18)."""
 """60FPS 전체 카메라는 4장에 1장, 30FPS 선반 카메라는 2장에 1장 — 둘 다 초당 15장."""
+
+
+def set_profile(shoot: int) -> None:
+    """촬영 회차별 경로. 2 는 지금까지 그대로."""
+    global SHOOT, OUT, ZONES, LABELS
+    SHOOT = shoot
+    _PAIR_ZONES.clear()
+    if shoot == 3:
+        OUT = ROOT / "outputs" / "dual_eval_shoot3"
+        ZONES = ROOT / "zones" / "store01_shoot3"
+        LABELS = ROOT / "labels" / "store01_shoot3"
+    else:
+        OUT = ROOT / "outputs" / "dual_eval_pose3"
+        ZONES = ROOT / "zones" / "store01_dual"
+        LABELS = ROOT / "labels" / "store01_dual"
+
+
+def zones_dir(pair: str) -> Path:
+    """그 짝이 쓸 구역 폴더. 3차는 기본 구역을 그 영상의 카메라 위치로 옮긴 파일을 (한 번 실행에 한 번) 새로 만든다."""
+    if SHOOT != 3:
+        return ZONES
+    if pair not in _PAIR_ZONES:
+        import shoot3_eval
+        _PAIR_ZONES[pair] = shoot3_eval.make_pair_zones(pair, OUT / "zones", ZONES)
+    return _PAIR_ZONES[pair]
+
+
+def detail_point_for(pair: str):
+    """3차: 선반 카메라 사람 위치를 area_setting 좌표로 (band_map 입력). 2차: None (상자 가운데 x 그대로)."""
+    if SHOOT != 3:
+        return None
+    import shoot3_eval
+    return shoot3_eval.detail_point(shoot3_eval.homographies("angle0")[pair])
 
 
 def kind(pair: str) -> str:
@@ -157,7 +199,7 @@ def print_summary(summary: dict, label: str = "") -> None:
 
 
 def pairs(pattern: str | None) -> list[str]:
-    names = sync_pair.all_pairs()
+    names = sync_pair.all_pairs(SHOOT)
     if not pattern:
         return names
     pats = [p.strip() for p in pattern.split(",")]
@@ -180,12 +222,13 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     # 관절이 없는 예전 기록은 상자 아래 가운데로 대신한다. --set zones.foot_point=bbox 로 예전 방식.
     cfg.zones.foot_point = "ankle"
     _apply_set(cfg, overrides)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
-    video, ref = sync_pair.pair_files(pair)
+    video, ref = sync_pair.pair_files(pair, SHOOT)
+    zdir = zones_dir(pair)
     cfg.cameras = [
-        CameraConfig("angle1", str(ref), "overview", str(ZONES / "floor.yaml"), 0.0, STRIDE["angle1"],
+        CameraConfig("angle1", str(ref), "overview", str(zdir / "floor.yaml"), 0.0, STRIDE["angle1"],
                      OVERVIEW_DETECTOR,
                      {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE}),
-        CameraConfig("angle0", str(video), "detail", str(ZONES / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
+        CameraConfig("angle0", str(video), "detail", str(zdir / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
                      {"edge_sides": EDGE_SIDES["angle0"]}),
     ]
     # 선반 카메라 손 뻗기 = 손목이 칸(SHELF 구역) 안에 0.3초 이상 (설계 M-6). 기준값은 N 으로 다시 본다.
@@ -194,6 +237,9 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     cfg.risk.payment_mode = "dwell"   # 결제 기록 없음: 계산대 체류 = 결제 (사용자 확인 규칙)
     # 매장 안 바닥(선반 앞·계산대·통로)에 1초 이상 들어온 사람만 손님 — 문 앞·창밖 행인·입장 순간 겹친 상자 제외 (C-20)
     cfg.risk.inside_zones, cfg.risk.inside_seconds = ["shelf", "counter", "aisle"], 1.0
+    # 영상 끝에 출구 구역 안이면 나가는 중 — 화면 끝 조건을 끔 (2·3차 모두, 후속 23·25).
+    # 3차는 출구가 화면 가운데, 2차는 출구(오른쪽 위)에서 상자가 위쪽 끝에만 걸려 '왼쪽·오른쪽 끝' 조건을 못 넘었다.
+    cfg.risk.exit_end_at_edge_only = False
     if OVERVIEW_POSE:
         cfg.fusion.overview_reach_seconds = 0.3   # 선반 카메라 손-칸 접촉과 같은 기준에서 시작 (N 으로 다시 본다)
     cfg.output.write_video = False
@@ -232,7 +278,13 @@ def run(pattern: str | None) -> None:
         if (out / ".done").exists():
             print(f"{pair}: 이미 있음 (건너뜀)", flush=True)
             continue
-        cfg = dual_config(base, pair)
+        try:
+            cfg = dual_config(base, pair)
+        except PAIR_ERRORS as e:
+            if SHOOT != 3:
+                raise
+            print(f"{pair}: 실패 {type(e).__name__}: {e} — 건너뜀", flush=True)
+            continue
         pipe = build_multicam(cfg, out, build_detector=build_detector, build_tracker=build_tracker,
                               build_embedder=build_embedder, build_item_detector=build_item_detector,
                               IdentityRegistry=IdentityRegistry, InteractionDetector=InteractionDetector,
@@ -267,6 +319,13 @@ class PairLog:
         self.merges = {cam: self._jsonl(d / cam / "identity_merges.jsonl") for cam in ("angle0", "angle1")}
         self.visits = self._jsonl(d / "angle0" / "shelf_visits.jsonl")
         self.slot_changes = self._jsonl(d / "angle0" / "slot_changes.jsonl")
+        self.times: dict[str, list[float] | None] = {"angle0": None, "angle1": None}
+        """3차: 카메라별 실제 장면 시각(ms). 2차: None (번호 ÷ fps)."""
+        if SHOOT == 3:
+            import shoot3_eval
+            video, ref = sync_pair.pair_files(pair, SHOOT)
+            for cam, path in (("angle0", video), ("angle1", ref)):
+                self.times[cam] = shoot3_eval.cached_times(path, d / f"times_{cam}.json", self.meta[cam]["frames"])
         self.app: dict[tuple[str, int], list[tuple[float, np.ndarray]]] = {}
         for r in self._jsonl(d / "appearance.jsonl"):
             self.app.setdefault((r["camera"], r["person_id"]), []).append((r["ms"], np.asarray(r["vec"])))
@@ -291,6 +350,13 @@ class PairLog:
 
     def fps(self, cam: str) -> float:
         return self.meta[cam]["fps"]
+
+    def ms(self, cam: str, idx: int) -> float:
+        """장면 번호 → 그 카메라 시각(ms, 시차 전). 3차는 실제 장면 시각."""
+        times = self.times.get(cam)
+        if times:
+            return times[max(0, min(idx, len(times) - 1))]
+        return idx * 1000.0 / self.meta[cam]["fps"]
 
     def appearance(self, cam: str, offset: float, now_ms: float):
         def lookup(pid: int):
@@ -320,7 +386,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         truth = load_truth()
     log = PairLog(pair)
     cfg = dual_config(base, pair, offset_ms)
-    floor = FloorMap.load(ZONES / "floor.yaml")
+    zdir = zones_dir(pair)
+    floor = FloorMap.load(zdir / "floor.yaml")
     floor.foot_mode, floor.ankle_conf = cfg.zones.foot_point, cfg.zones.ankle_conf
     fz = FloorZoneMap(floor)
     m1, m0 = log.meta["angle1"], log.meta["angle0"]
@@ -330,18 +397,25 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         # 결제 라벨(scripts/label_payments.py)의 완료된 결제만 결제 기록으로 — 계산대 체류 규칙은 끈다
         from label_payments import load_feed
         cfg.risk.payment_mode = "feed"
-        feed = load_feed(pair)
+        feed = load_feed(pair, LABELS / "payments.csv")
     risk = RiskEngine(cfg.risk, fz, feed)
-    detail_setup = yaml.safe_load((ZONES / "angle0.yaml").read_text(encoding="utf-8"))
+    detail_setup = yaml.safe_load((zdir / "angle0.yaml").read_text(encoding="utf-8"))
     slot_shelf = {z["name"]: detail_setup["shelves"][0]["name"] for z in detail_setup["zones"]}
     sensors = []
-    if sensor:
+    if sensor and SHOOT == 3:
+        # 3차: 실제 센서 (angle0 시각 → +시차 = 공통 시각). SENSOR_LANES 로 레인 고름
+        import shoot3_eval
+        sensors = shoot3_eval.load_sensor(LABELS / "sensor" / f"{pair}.csv", offset_ms, SENSOR_LANES)
+    elif sensor:
         path = LABELS / "fake_sensor" / f"{pair}.csv"
         if path.exists():
             sensors = load_sensor_events(path)
-    floor_raw = yaml.safe_load((ZONES / "floor.yaml").read_text(encoding="utf-8")) or {}
-    judge = DualJudge(cfg.fusion, risk, floor, band_map, TimeAxis(m0["fps"], offset_ms), TimeAxis(m1["fps"]),
-                      m0["width"], (m1["width"], m1["height"]), slot_shelf, sensors, shelf_image_zones(floor_raw))
+    floor_raw = yaml.safe_load((zdir / "floor.yaml").read_text(encoding="utf-8")) or {}
+    t0, t1 = log.times["angle0"], log.times["angle1"]
+    judge = DualJudge(cfg.fusion, risk, floor, band_map,
+                      TimeAxis(m0["fps"], offset_ms, tuple(t0) if t0 else None), TimeAxis(m1["fps"], 0.0, tuple(t1) if t1 else None),
+                      m0["width"], (m1["width"], m1["height"]), slot_shelf, sensors, shelf_image_zones(floor_raw),
+                      detail_point=detail_point_for(pair))
     judge.reset()
     if use_detail:
         from src.shelf.slot_diff import SlotChange
@@ -349,9 +423,9 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
             judge.fuser.note_slot_change(SlotChange(**{**r, "start_ms": r["start_ms"] + offset_ms,
                                                        "end_ms": r["end_ms"] + offset_ms}))
     # 공통 시각 순서로 두 카메라 장면을 섞는다 (파이프라인과 같은 순서)
-    timeline = [(i * 1000.0 / m1["fps"], "angle1", i) for i in range(0, m1["frames"], m1["stride"])]
+    timeline = [(log.ms("angle1", i), "angle1", i) for i in range(0, m1["frames"], m1["stride"])]
     if use_detail:
-        timeline += [(i * 1000.0 / m0["fps"] + offset_ms, "angle0", i) for i in range(0, m0["frames"], m0["stride"])]
+        timeline += [(log.ms("angle0", i) + offset_ms, "angle0", i) for i in range(0, m0["frames"], m0["stride"])]
     timeline.sort()
     take_at = {cam: {} for cam in ("angle0", "angle1")}
     for cam in take_at:
@@ -401,9 +475,27 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
 
 
 def load_band_map() -> tuple[float, float]:
+    if SHOOT == 3:
+        import shoot3_eval
+        a, b = shoot3_eval.load_band_map(ZONES / "band_map.yaml")
+        return float(a), float(b)
     raw = yaml.safe_load((ZONES / "angle0.yaml").read_text(encoding="utf-8"))
     a, b = raw.get("band_map") or (1.0, 0.0)
     return float(a), float(b)
+
+
+def check_payment_labels(todo: list[str], path: Path | None = None) -> list[str]:
+    """--payments 전에: 라벨 줄이 없는 짝은 '결제 없음'으로 읽히므로 멈춘다. 확인 안 한 초안 짝 목록을 돌려준다."""
+    from label_payments import label_state, load_labels
+    labels = load_labels(path or LABELS / "payments.csv")
+    state = {p: label_state(labels, p) for p in todo}
+    missing = [p for p, s in state.items() if s == "missing"]
+    if missing:
+        raise SystemExit(f"결제 라벨 없는 짝: {', '.join(missing)} — scripts/label_payments.py 로 먼저 찍는다")
+    drafts = [p for p, s in state.items() if s == "draft"]
+    if drafts:
+        print(f"주의: 확인 안 한 결제 초안(beep-draft) {len(drafts)}짝 — {', '.join(drafts)}")
+    return drafts
 
 
 def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", before: bool = False,
@@ -414,12 +506,21 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
     table = SyncTable.load(LABELS / "sync.csv")
     band = load_band_map()
     truth = load_truth()
-    rows = []
+    rows, failed = [], []
+    if payments:
+        check_payment_labels([p for p in pairs(pattern) if (OUT / p / ".done").exists()])
     for pair in pairs(pattern):
         if not (OUT / pair / ".done").exists():
             continue
-        rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor, payments, truth))
+        try:
+            rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor, payments, truth))
+        except PAIR_ERRORS as e:
+            if SHOOT != 3:
+                raise
+            failed.append({"pair": pair, "error": f"{type(e).__name__}: {e}"})
     print_summary(summarize(rows), label)
+    for f in failed:
+        print(f"  실패  {f['pair']:6s} {f['error']} — 채점에서 뺌")
     for r in rows:
         # OK = 맞음, OK? = 정상인데 판정이 안 나와 맞음으로만 센 짝, XX = 틀림
         mark = "XX " if not r["correct"] else ("OK?" if r["no_verdict"] else "OK ")
@@ -436,6 +537,8 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
                 print(f"        행동: {a}")
     name = f"results{('_' + label.strip()) if label.strip() else ''}.json"
     (OUT / name).write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+    if failed:
+        (OUT / name.replace("results", "failed")).write_text(json.dumps(failed, ensure_ascii=False, indent=1), encoding="utf-8")
     return rows
 
 
@@ -443,14 +546,16 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
 
 def _tracks(log: PairLog):
     """한 명만 보이는 장면의 (ms, 위치): 선반 카메라 x(화면 비율), 전체 카메라 띠 위치."""
-    floor = FloorMap.load(ZONES / "floor.yaml")
+    floor = FloorMap.load(zones_dir(log.pair) / "floor.yaml")
     m1, m0 = log.meta["angle1"], log.meta["angle0"]
+    point = detail_point_for(log.pair)
     a0 = []
     for idx, obs in sorted(log.ids["angle0"].items()):
         obs = [o for o in obs if o.person_id > 0]
         if len(obs) == 1:
             b = obs[0].bbox
-            a0.append((idx * 1000.0 / m0["fps"], (b[0] + b[2]) / 2.0 / m0["width"]))
+            x = point(b, m0["width"]) if point else (b[0] + b[2]) / 2.0 / m0["width"]
+            a0.append((log.ms("angle0", idx), x))
     a1 = []
     for idx, obs in sorted(log.ids["angle1"].items()):
         obs = [o for o in obs if o.person_id > 0]
@@ -458,7 +563,7 @@ def _tracks(log: PairLog):
             p = floor.foot_on_floor(obs[0].bbox, m1["width"], m1["height"])
             band = floor.band_position(p)
             if band is not None and -0.3 <= band <= 1.6:
-                a1.append((idx * 1000.0 / m1["fps"], band))
+                a1.append((log.ms("angle1", idx), band))
     return a0, a1
 
 
@@ -508,7 +613,7 @@ def sync(pattern: str | None, max_lag_s: float = 3.0) -> None:
     good = [v[0] for v in found.values() if v[2] >= MIN_SYNC_SAMPLES and v[1] >= MIN_SYNC_CORR]
     fallback = float(np.median(good)) if good else 0.0
     for pair, (lag, corr, n) in found.items():
-        video, ref = sync_pair.pair_files(pair)
+        video, ref = sync_pair.pair_files(pair, SHOOT)
         ok = n >= MIN_SYNC_SAMPLES and corr >= MIN_SYNC_CORR
         note = f"손님 위치 상관 {corr:.2f} (표본 {n})" + ("" if ok else f" — 믿기 어려워 중앙값 {fallback:+.0f}ms 사용 (추정 {lag:+.0f}ms)")
         table.upsert(SyncRow(pair, f"1(angle0)/{video.name}", f"1(angle1)/{ref.name}", lag if ok else fallback,
@@ -527,14 +632,28 @@ def calibrate(pattern: str = "N*") -> None:
         row = table.rows.get(pair)
         if row is None or row.method not in ("trajectory", "manual"):
             continue   # 시차를 믿을 수 없는 짝은 빼고 맞춘다
-        a0, a1 = _tracks(PairLog(pair))
+        try:
+            a0, a1 = _tracks(PairLog(pair))
+        except PAIR_ERRORS as e:
+            if SHOOT != 3:
+                raise
+            print(f"  {pair}: 실패 {type(e).__name__}: {e} — 빼고 맞춤")
+            continue
         xs, ys = _pairs_at(a0, a1, row.offset_ms)
         xs_all += list(xs)
         ys_all += list(ys)
     xs, ys = np.asarray(xs_all), np.asarray(ys_all)
     a, b = np.polyfit(xs, ys, 1)
     resid = np.abs(ys - (a * xs + b))
-    print(f"띠 축 변환: band = {a:.3f}·x + {b:.3f}  (표본 {len(xs)}, 중앙 오차 {np.median(resid):.3f}, 상관 {np.corrcoef(xs, ys)[0, 1]:.2f})")
+    corr = np.corrcoef(xs, ys)[0, 1]
+    print(f"띠 축 변환: band = {a:.3f}·x + {b:.3f}  (표본 {len(xs)}, 중앙 오차 {np.median(resid):.3f}, 상관 {corr:.2f})")
+    if SHOOT == 3:
+        import shoot3_eval
+        shoot3_eval.save_band_map(a, b, f"dual_eval.py --shoot 3 calibrate ({pattern}): 표본 {len(xs)}, 중앙 오차 "
+                                        f"{np.median(resid):.3f}, 상관 {corr:.2f}. 입력 x = area_setting 좌표로 옮긴 선반 카메라 사람 위치",
+                                  ZONES / "band_map.yaml")
+        _PAIR_ZONES.clear()   # 영상별 구역 파일에 새 band_map 이 들어가게 다음에 다시 만든다
+        return
     path = ZONES / "angle0.yaml"
     text = path.read_text(encoding="utf-8")
     lines = [f"band_map: [{a:.4f}, {b:.4f}]" if l.startswith("band_map:") else l for l in text.splitlines()]
@@ -562,10 +681,15 @@ def main() -> int:
                     help="가장자리 규칙을 네 변 모두에 (늘 잘리는 변을 빼기 전, C-18 비교용)")
     ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
                     help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
+    ap.add_argument("--sensor-lanes", help="3차 --sensor: 쓸 레인 쉼표 (기본 전부, 예: L1,L2)")
+    ap.add_argument("--shoot", type=int, choices=[2, 3], default=2, help="촬영 회차 (기본 2). 3 = 2026-11-11 3차")
     ap.add_argument("--payments", action="store_true",
-                    help="계산대 체류 대신 결제 라벨(labels/store01_dual/payments.csv, scripts/label_payments.py)을 결제 기록으로")
+                    help="계산대 체류 대신 결제 라벨(<라벨 폴더>/payments.csv, scripts/label_payments.py)을 결제 기록으로")
     args = ap.parse_args()
     global OUT, OVERRIDES, OVERVIEW_POSE, OVERVIEW_DETECTOR, TENTATIVE, ZONES
+    set_profile(args.shoot)
+    global SENSOR_LANES
+    SENSOR_LANES = tuple(x.strip() for x in args.sensor_lanes.split(",")) if args.sensor_lanes else None
     OVERVIEW_POSE = args.overview_pose
     OVERVIEW_DETECTOR = args.overview_detector
     TENTATIVE = args.tentative

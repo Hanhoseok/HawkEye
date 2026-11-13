@@ -63,6 +63,36 @@ def _normalize(pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return moved[:, :2], t
 
 
+def foot_pixel(bbox: tuple[float, float, float, float], keypoints=None, ankle_conf: float = 0.3) -> tuple[Point, bool]:
+    """(발 위치 픽셀, 발목에서 얻었나). keypoints 가 있으면 COCO 15·16 발목 중 신뢰도 ankle_conf 이상이고 (0, 0) 이 아니며
+    상자 안(높이 5% 여유)인 것의 가운데, 없으면 상자 아래 가운데."""
+    x1, y1, x2, y2 = bbox
+    if keypoints is not None and len(keypoints) >= 17:
+        pad = 0.05 * (y2 - y1)
+        pts = [(k[0], k[1]) for k in keypoints[15:17]
+               if k[2] >= ankle_conf and not (k[0] == 0 and k[1] == 0)
+               and x1 - pad <= k[0] <= x2 + pad and y1 - pad <= k[1] <= y2 + pad]
+        if pts:
+            return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)), True
+    return ((x1 + x2) / 2.0, y2), False
+
+
+def _w(h: np.ndarray, x: float, y: float) -> float:
+    return float((h @ np.array([x, y, 1.0]))[2])
+
+
+def _side_ref(h: np.ndarray, points) -> tuple[float, float]:
+    """보정점들의 w 부호와 |w| 최소값."""
+    ws = [_w(h, x, y) for x, y in points]
+    return (1.0 if ws[0] > 0 else -1.0), min(abs(w) for w in ws)
+
+
+def _same_side(h: np.ndarray, ref: tuple[float, float], x: float, y: float) -> bool:
+    sign, wmin = ref
+    w = _w(h, x, y)
+    return w * sign > 0 and abs(w) >= 0.05 * wmin
+
+
 def apply_homography(h: np.ndarray, x: float, y: float) -> Point:
     u, v, w = h @ np.array([x, y, 1.0])
     if abs(w) < 1e-12:
@@ -97,6 +127,8 @@ class FloorMap:
         self.ankle_conf = 0.3
         self._h = fit_homography(self.image_points, self.floor_points)
         self._h_inv = np.linalg.inv(self._h)
+        self._side_img = _side_ref(self._h, self.image_points)
+        self._side_floor = _side_ref(self._h_inv, self.floor_points)
 
     # ------------------------------------------------------------------
 
@@ -151,15 +183,17 @@ class FloorMap:
 
     def foot_pixel(self, bbox: tuple[float, float, float, float], keypoints=None) -> Point:
         """발 위치 (픽셀). 발목: COCO 15·16 중 신뢰도 ankle_conf 이상이고 (0, 0) 이 아니며 상자 안(높이 5% 여유)인 것의 가운데."""
-        x1, y1, x2, y2 = bbox
-        if self.foot_mode == "ankle" and keypoints is not None and len(keypoints) >= 17:
-            pad = 0.05 * (y2 - y1)
-            pts = [(k[0], k[1]) for k in keypoints[15:17]
-                   if k[2] >= self.ankle_conf and not (k[0] == 0 and k[1] == 0)
-                   and x1 - pad <= k[0] <= x2 + pad and y1 - pad <= k[1] <= y2 + pad]
-            if pts:
-                return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
-        return ((x1 + x2) / 2.0, y2)
+        return foot_pixel(bbox, keypoints if self.foot_mode == "ankle" else None, self.ankle_conf)[0]
+
+    def on_floor_side(self, x: float, y: float) -> bool:
+        """화면 비율 (x, y) 가 보정점과 같은 쪽(지평선 이쪽)인가. 호모그래피의 w 부호는 정규화에 따라 아무 값이나
+        될 수 있으므로 보정점의 w 부호를 기준으로 삼고, |w| 가 보정점 최소값의 5% 미만(지평선 근처)도 뺀다."""
+        return _same_side(self._h, self._side_img, x, y)
+
+    def image_side_ok(self, fx: float, fy: float) -> bool:
+        """바닥 cm (fx, fy) 가 이 카메라 앞쪽(화면에 투영 가능한 쪽)인가."""
+        return _same_side(self._h_inv, self._side_floor, fx, fy)
+
 
     def band_position(self, point: Point) -> float | None:
         """바닥 점의 선반 앞 띠 위치 (0 = 시작, 1 = 끝). 띠 축이 없으면 None."""

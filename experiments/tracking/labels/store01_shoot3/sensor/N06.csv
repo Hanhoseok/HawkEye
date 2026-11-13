@@ -1,0 +1,5 @@
+time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+8.52,15:31:02,L2,동과루,REMOVE,3,2,-1,269,1,8.52,8.52
+21.51,15:31:15,L3,애플사이다,REMOVE,1,0,-1,323,1,21.51,21.52
+23.51,15:31:17,L2,동과루,ADD,2,3,1,205,1,23.51,23.52
+25.51,15:31:19,L3,애플사이다,ADD,0,1,1,315,1,25.51,25.52
