@@ -3,9 +3,11 @@
     python scripts/link_diagnose.py why     # 0.5초 조각마다 짝이 안 맺힌 이유를 나눠 센다
     python scripts/link_diagnose.py fit     # 선반 카메라의 어떤 값이 '선반 앞 띠 위치'를 잘 맞히나 (정상 영상, 짝 하나씩 빼고 시험)
     python scripts/link_diagnose.py try     # 해결 후보를 실행 중에만 바꿔 끼워 38쌍을 다시 판정해 견준다
-    python scripts/link_diagnose.py --shoot 3 why|fit|try   # 3차 촬영 (선반 카메라에도 바닥 지도 — 후속 27)
-        fit = 같은 사람의 두 카메라 발이 바닥 위에서 얼마나 떨어져 나오나 (정상 영상) → fusion.max_floor_gap_cm 을 정하는 근거
-        try = 띠 위치(한 줄) / 바닥 위 거리 / 짝 유지를 견준다
+    python scripts/link_diagnose.py --shoot 3 why|fit|try|check   # 3차 촬영 (선반 카메라에도 바닥 지도 — 후속 27)
+        why   = 3차 기본(바닥 위 거리)의 끊김. 예전 방식은 --set fusion.position_mode=band
+        fit   = 같은 사람의 두 카메라 발이 바닥 위에서 얼마나 떨어져 나오나 (정상 영상) → fusion.max_floor_gap_cm·ray_slack_cm 의 근거
+        try   = 띠 위치(한 줄) / 바닥 위 거리 / 짝 유지를 견준다 (연결·끊김·채점)
+        check = 두 명 이상 장면에서 맺은 짝이 '맞는 사람'인가 (발목이 두 화면 모두 보인 조각을 기준으로)
 
 아무것도 고치지 않는다 — 설정·기록·코드를 그대로 두고, `try` 의 후보(위치식 바꾸기·짝 유지)는 이 실행 안에서만 바꿔 끼운다.
 영상·모델이 필요 없다. 기록(`outputs/dual_eval_pose3`)만 있으면 된다. `why` 약 1분, `fit` 수 초, `try` 는 후보마다 약 1분.
@@ -113,6 +115,22 @@ class Recorder:
                 dists.append(cv.floor_distance(s, near))
         return (float(np.mean(dists)) if dists else None), len(dists), n
 
+    @staticmethod
+    def _point_gap(linker, a, b, start: float, end: float) -> tuple[float | None, int]:
+        """(두 화면 모두 발목이 보인 표본만으로 잰 바닥 위 거리 평균 cm, 그 표본 수). 발이 가려 반직선으로 본 표본은 뺀다 —
+        반직선까지의 거리는 실제 거리의 하한일 뿐이라, '누가 맞는 짝인가'의 기준으로는 이 값만 쓴다 (check)."""
+        tol = linker.config.pair_tolerance_seconds * 1000.0
+        bs = [s for s in b.samples if start - tol <= s.pts_ms <= end + tol]
+        dists = []
+        for s in a.samples:
+            if not (start <= s.pts_ms <= end) or not bs or s.floor is None or s.ray is not None:
+                continue
+            near = min(bs, key=lambda x: abs(x.pts_ms - s.pts_ms))
+            if abs(near.pts_ms - s.pts_ms) > tol or near.floor is None or near.ray is not None:
+                continue
+            dists.append(float(np.hypot(s.floor[0] - near.floor[0], s.floor[1] - near.floor[1])))
+        return (float(np.mean(dists)) if dists else None), len(dists)
+
     def _candidates(self, linker, d: int, overview: list[int], start: float, end: float) -> dict:
         tol = linker.config.pair_tolerance_seconds * 1000.0
         dband, _ = self._band(linker._detail[d], start, end)
@@ -122,14 +140,17 @@ class Recorder:
             app = linker._appearance_score(linker._detail[d], linker._overview[o])
             oband, seen = self._band(linker._overview[o], start, end, tol)
             fgap, n_floor, n_all = self._floor_gap(linker, linker._detail[d], linker._overview[o], start, end)
+            pgap, n_point = self._point_gap(linker, linker._detail[d], linker._overview[o], start, end)
             cands.append({"o": o, "pos": pos, "app": app, "score": linker._combine(pos, app), "oband": oband, "seen": seen,
-                          "fgap": fgap, "n_floor": n_floor, "n_all": n_all})
+                          "fgap": fgap, "n_floor": n_floor, "n_all": n_all, "pgap": pgap, "n_point": n_point})
         return {"dband": dband, "cands": cands}
 
     def _row(self, linker, d: int, before: dict, link, overview: list[int], prev: int | None, start: float) -> dict:
         row = {"pair": self.pair, "d": d, "start": start, "dband": before["dband"], "n_over": len(overview), "o": None}
         cands = before["cands"]
         row["fgaps"] = sorted(c["fgap"] for c in cands if c["fgap"] is not None)   # 후보마다의 바닥 위 거리 (가까운 순)
+        row["overs"] = list(overview)
+        row["cands"] = [{k: c[k] for k in ("o", "fgap", "pgap", "n_point", "n_all")} for c in cands]
         if link is not None:
             mine = next((c for c in cands if c["o"] == link.overview_id), None) or {}
             oband = mine.get("oband")
@@ -207,6 +228,17 @@ class Recorder:
         return 100.0 * sum(r["reason"] == "linked" for r in rows) / max(1, len(rows))
 
 
+_BASE_SET: list[str] = []
+"""명령줄 --set (모든 실행에 얹는다)."""
+
+
+def _apply(base: AppConfig, fusion: dict) -> None:
+    """이 실행에서만 fusion 설정을 바꾼다. position_mode 는 회차별 기본값(3차 = floor, dual_config)보다 나중에 먹도록 --set 과 같은 길로."""
+    for key, value in fusion.items():
+        setattr(base.fusion, key, value)
+    de.OVERRIDES[:] = _BASE_SET + ([f"fusion.position_mode={fusion['position_mode']}"] if "position_mode" in fusion else [])
+
+
 def _judge_all(recorder: Recorder, base: AppConfig, pattern: str | None = None) -> list[dict]:
     table = SyncTable.load(de.LABELS / "sync.csv")
     band, truth = de.load_band_map(), de.load_truth()
@@ -237,15 +269,18 @@ def why() -> None:
         print(f"  {name:38s} {count[key]:5d}  {100 * count[key] / len(rows):5.1f}%")
     print("  세트별 짝 있음: " + " · ".join(f"{s} {rec.linked_pct(s):.0f}%" for s in "NTC"))
     n_breaks, n_switch, lengths = rec.breaks()
-    print(f"중간에 끊겼다 다시 이어진 횟수 {n_breaks} (길이 중앙 {np.median(lengths):.1f}초, 최장 {max(lengths):.1f}초) · 짝이 다른 사람으로 바뀐 횟수 {n_switch}")
+    span = f" (길이 중앙 {np.median(lengths):.1f}초, 최장 {max(lengths):.1f}초)" if lengths else ""
+    print(f"중간에 끊겼다 다시 이어진 횟수 {n_breaks}{span} · 짝이 다른 사람으로 바뀐 횟수 {n_switch}")
     print(f"짝 있음 중 '후보 한 명이면 외형으로 잇기' 덕인 것: {sum(1 for r in rows if r.get('rescued'))}")
 
     low = [r for r in rows if r["reason"] == "low_score"]
     pos = np.array([r["pos"] for r in low])
     app = np.array([np.nan if r["app"] is None else r["app"] for r in low])
     gap = np.array([abs(r["dband"] - r["oband"]) for r in low if r["dband"] is not None and r["oband"] is not None])
-    print(f"\n위치가 안 맞은 조각 {len(low)}개: 위치 점수 중앙 {np.median(pos):.2f} (0 인 것 {int((pos == 0).sum())}), "
-          f"외형 중앙 {np.nanmedian(app):.2f}, 띠 위치 차이 25·50·75% = " + " · ".join(f"{v:.2f}" for v in np.percentile(gap, [25, 50, 75])))
+    if low:
+        print(f"\n위치가 안 맞은 조각 {len(low)}개: 위치 점수 중앙 {np.median(pos):.2f} (0 인 것 {int((pos == 0).sum())}), "
+              f"외형 중앙 {np.nanmedian(app):.2f}"
+              + (", 띠 위치 차이 25·50·75% = " + " · ".join(f"{v:.2f}" for v in np.percentile(gap, [25, 50, 75])) if len(gap) else ""))
 
     solo = [r for r in rows if r["pair"].startswith("N") and r["n_over"] == 1 and r["dband"] is not None and r.get("oband") is not None]
     print(f"\n정상 영상에서 전체 카메라에 한 명뿐인 조각 {len(solo)}개 — 선반 카메라가 본 띠 위치 구간별 (선반 − 전체)")
@@ -428,7 +463,7 @@ TWO_PEOPLE_N = ("N09", "N9")
 def fit3() -> None:
     """같은 사람의 두 카메라 발이 바닥 위에서 얼마나 떨어져 나오나 — max_floor_gap_cm 을 정상 영상으로 정하는 근거."""
     base = AppConfig.load(ROOT / "config.yaml")
-    base.fusion.position_mode = "floor"
+    _apply(base, {"position_mode": "floor"})
     rec = Recorder()
     rec.install()
     _judge_all(rec, base, "N*")
@@ -442,6 +477,13 @@ def fit3() -> None:
     print("  같은 사람의 바닥 위 거리(cm): " + " · ".join(f"{q}% {np.percentile(gaps, q):.0f}" for q in (50, 75, 90, 95, 99)))
     for half in (15, 20, 30, 40, 50):
         print(f"    허용 거리 {2 * half:3d}cm (외형 없이 {half}cm 안이면 짝): 같은 사람 조각의 {100 * (gaps <= half).mean():.0f}% 가 들어옴")
+    # 발목이 두 화면 모두 보인 조각과, 한쪽이라도 발이 가려 반직선으로 견준 조각을 갈라 본다 → fusion.ray_slack_cm 의 근거
+    one = [(r, r["cands"][0]) for r in solo if len(r.get("cands") or []) == 1 and r["cands"][0]["fgap"] is not None]
+    seen_feet = np.array([c["pgap"] for _, c in one if c["n_point"] and c["n_point"] == c["n_all"]])
+    hidden = np.array([c["fgap"] for _, c in one if not c["n_point"]])
+    for name, arr in (("발목이 두 화면 모두 보인 조각", seen_feet), ("발이 가려 반직선으로만 견준 조각", hidden)):
+        if len(arr):
+            print(f"  {name} {len(arr)}개: " + " · ".join(f"{q}% {np.percentile(arr, q):.0f}" for q in (50, 75, 90, 95, 99)))
     print("  짝마다 중앙 거리: " + " · ".join(
         f"{p} {np.median([r['fgap'] for r in solo if r['pair'] == p and r.get('fgap') is not None] or [np.nan]):.0f}"
         for p in dict.fromkeys(r["pair"] for r in solo)))
@@ -463,19 +505,17 @@ def fit3() -> None:
 def try3() -> None:
     print("3차 기록 다시 판정 — 연결 = 선반 카메라에 사람이 보인 조각 중 짝이 있는 비율, 채점 = 쌍 단위(truth.csv)")
     for label, sticky, fusion in (
-            ("지금 (띠 위치 한 줄)", False, {}),
-            ("바닥 위 거리, 허용 40cm", False, {"position_mode": "floor", "max_floor_gap_cm": 40.0}),
-            ("바닥 위 거리, 허용 60cm", False, {"position_mode": "floor", "max_floor_gap_cm": 60.0}),
-            ("바닥 위 거리, 허용 80cm", False, {"position_mode": "floor", "max_floor_gap_cm": 80.0}),
-            ("바닥 위 거리, 허용 100cm", False, {"position_mode": "floor", "max_floor_gap_cm": 100.0}),
-            ("띠 위치 + 짝 유지", True, {}),
-            ("바닥 60cm + 짝 유지", True, {"position_mode": "floor", "max_floor_gap_cm": 60.0}),
-            ("바닥 80cm + 짝 유지", True, {"position_mode": "floor", "max_floor_gap_cm": 80.0})):
+            ("예전 (띠 위치 한 줄)", False, {"position_mode": "band"}),
+            ("바닥 60cm, 가린 발 여유 0", False, {"position_mode": "floor", "max_floor_gap_cm": 60.0, "ray_slack_cm": 0.0}),
+            ("바닥 40cm, 여유 25", False, {"position_mode": "floor", "max_floor_gap_cm": 40.0}),
+            ("바닥 60cm, 여유 25 (기본)", False, {"position_mode": "floor", "max_floor_gap_cm": 60.0}),
+            ("바닥 80cm, 여유 25", False, {"position_mode": "floor", "max_floor_gap_cm": 80.0}),
+            ("띠 위치 + 짝 유지", True, {"position_mode": "band"}),
+            ("바닥 60cm, 여유 25 + 짝 유지", True, {"position_mode": "floor", "max_floor_gap_cm": 60.0})):
         rec = Recorder(sticky)
         rec.install()
         base = AppConfig.load(ROOT / "config.yaml")
-        for key, value in fusion.items():
-            setattr(base.fusion, key, value)
+        _apply(base, fusion)
         results = _judge_all(rec, base)
         n_breaks, n_switch, _ = rec.breaks()
         wrong = [r["pair"] for r in results if not r["correct"]]
@@ -485,16 +525,137 @@ def try3() -> None:
               f"틀린 쌍 {','.join(wrong)}", flush=True)
 
 
+REF_NEAR_CM, REF_FAR_CM = 15.0, 30.0
+"""'맞는 짝'을 확실히 아는 조각의 조건: 두 화면 모두 발목이 보인 거리로 한 명이 15cm 안, 나머지 후보는 모두 30cm 밖."""
+
+
+def sure_pairs(rows: list[dict]) -> dict[tuple, int]:
+    """전체 카메라에 후보가 둘 이상인 조각 중 '맞는 짝'이 확실한 것: (쌍, 선반 카메라 사람, 조각 시작) → 전체 카메라 사람.
+
+    발목이 두 화면 모두 보인 표본의 거리(같은 사람이면 중앙 4cm — floor_check feet)로 한 명만 15cm 안이고,
+    나머지 후보는 바닥 위 거리(발이 가렸으면 반직선까지 = 실제 거리의 하한)가 30cm 이상일 때만 센다."""
+    sure = {}
+    for r in rows:
+        live = [c for c in r.get("cands") or [] if c["n_all"]]
+        if len(live) < 2:
+            continue
+        near = [c for c in live if c["pgap"] is not None and c["n_point"] >= 2 and c["pgap"] <= REF_NEAR_CM]
+        if len(near) != 1:
+            continue
+        if all(c["fgap"] is not None and c["fgap"] >= REF_FAR_CM for c in live if c["o"] != near[0]["o"]):
+            sure[(r["pair"], r["d"], r["start"])] = near[0]["o"]
+    return sure
+
+
+def carried_pairs(rows: list[dict], sure: dict[tuple, int]) -> dict[tuple, int]:
+    """확실하지 않은 조각(발이 가렸거나 두 사람이 붙어 있음)의 기준: 같은 선반 카메라 사람의 가장 가까운 '확실한 조각'에서 맺힌
+    전체 카메라 사람이 지금도 보이면 그 사람. 추적 번호가 안 바뀌었다는 데 기대므로, 번호가 서로 바뀐 영상에서는 틀릴 수 있다."""
+    by: dict[tuple, list[tuple[float, int]]] = collections.defaultdict(list)
+    for (pair, d, start), o in sure.items():
+        by[(pair, d)].append((start, o))
+    carried = {}
+    for r in rows:
+        key = (r["pair"], r["d"], r["start"])
+        marks = by.get((r["pair"], r["d"]))
+        if key in sure or not marks or sum(1 for c in r.get("cands") or [] if c["n_all"]) < 2:
+            continue
+        _, o = min(marks, key=lambda m: abs(m[0] - r["start"]))
+        if o in r["overs"]:
+            carried[key] = o
+    return carried
+
+
+def score_links(rows: list[dict], ref: dict[tuple, int]) -> tuple[int, int, int]:
+    """(기준과 같은 짝, 다른 사람과 맺힘, 짝 없음)."""
+    right = wrong = none = 0
+    for r in rows:
+        o = ref.get((r["pair"], r["d"], r["start"]))
+        if o is None:
+            continue
+        if r["o"] is None:
+            none += 1
+        elif r["o"] == o:
+            right += 1
+        else:
+            wrong += 1
+    return right, wrong, none
+
+
+def real_switches(rows: list[dict]) -> tuple[int, int]:
+    """(직전 짝이 아직 보이는데 다른 사람으로 바뀐 횟수, 직전 짝이 사라져 새 사람과 맺힌 횟수)."""
+    by: dict[tuple, list[dict]] = collections.defaultdict(list)
+    for r in rows:
+        by[(r["pair"], r["d"])].append(r)
+    stay = gone = 0
+    for rs in by.values():
+        last = None
+        for r in sorted(rs, key=lambda r: r["start"]):
+            if r["o"] is None:
+                continue
+            if last is not None and last != r["o"]:
+                if last in r["overs"]:
+                    stay += 1
+                else:
+                    gone += 1
+            last = r["o"]
+    return stay, gone
+
+
+def check3() -> None:
+    """두 명 이상 장면에서 맺은 짝이 '맞는 사람'인가. 기준은 발목이 두 화면 모두 보인 조각(sure_pairs)과 그걸 이어 붙인 조각(carried_pairs)."""
+    def run(sticky: bool, fusion: dict) -> Recorder:
+        rec = Recorder(sticky)
+        rec.install()
+        base = AppConfig.load(ROOT / "config.yaml")
+        _apply(base, fusion)
+        _judge_all(rec, base)
+        return rec
+
+    floor60 = run(False, {"position_mode": "floor", "max_floor_gap_cm": 60.0, "ray_slack_cm": 0.0})
+    multi =[r for r in floor60.rows if sum(1 for c in r["cands"] if c["n_all"]) >= 2]
+    sure = sure_pairs(floor60.rows)
+    carried = carried_pairs(floor60.rows, sure)
+    print(f"전체 카메라에 후보가 둘 이상인 조각 {len(multi)}개 ({len({r['pair'] for r in multi})}쌍)")
+    print(f"  맞는 짝이 확실한 조각 {len(sure)}개 (발목이 두 화면 모두 보이고 한 명만 {REF_NEAR_CM:.0f}cm 안, 나머지는 {REF_FAR_CM:.0f}cm 밖)")
+    print(f"  확실한 조각에서 이어 붙여 기준을 준 조각 {len(carried)}개 (발 가림·두 사람이 붙음) · 기준 없음 {len(multi) - len(sure) - len(carried)}개")
+    print("  * 확실한 조각은 바닥 방식과 같은 정보로 고른 것이라 바닥 방식에 유리하다 — 바닥 방식의 시험은 '이어 붙인 조각' 쪽이다.")
+    print(f"\n  {'방식':22s} {'확실한 조각: 맞음/다른 사람/없음':30s} {'이어 붙인 조각: 맞음/다른 사람/없음':32s} 짝 바뀜(직전 짝 있음/사라짐)")
+    for label, sticky, fusion in (
+            ("예전 (띠 위치 한 줄)", False, {"position_mode": "band"}),
+            ("바닥 60cm, 가린 발 여유 0", False, None),
+            ("바닥 40cm, 여유 25", False, {"position_mode": "floor", "max_floor_gap_cm": 40.0}),
+            ("바닥 60cm, 여유 15", False, {"position_mode": "floor", "max_floor_gap_cm": 60.0, "ray_slack_cm": 15.0}),
+            ("바닥 60cm, 여유 25 (기본)", False, {"position_mode": "floor", "max_floor_gap_cm": 60.0}),
+            ("바닥 60cm, 여유 35", False, {"position_mode": "floor", "max_floor_gap_cm": 60.0, "ray_slack_cm": 35.0}),
+            ("바닥 80cm, 여유 25", False, {"position_mode": "floor", "max_floor_gap_cm": 80.0}),
+            ("바닥 60cm, 여유 25 + 짝 유지", True, {"position_mode": "floor", "max_floor_gap_cm": 60.0})):
+        rec = floor60 if fusion is None else run(sticky, fusion)
+        a, b = score_links(rec.rows, sure), score_links(rec.rows, carried)
+        stay, gone = real_switches(rec.rows)
+        print(f"  {label:22s} {a[0]:4d} / {a[1]:3d} / {a[2]:3d} ({100 * a[0] / max(1, sum(a)):3.0f}%)        "
+              f"{b[0]:4d} / {b[1]:3d} / {b[2]:3d} ({100 * b[0] / max(1, sum(b)):3.0f}%)          {stay:3d} / {gone:3d}", flush=True)
+        n_breaks, _, _ = rec.breaks()
+        print(f"      연결 {rec.linked_pct():.1f}% · 끊김 {n_breaks}", flush=True)
+        both = {**carried, **sure}
+        bad = collections.Counter(r["pair"] for r in rec.rows
+                                  if r["o"] is not None and both.get((r["pair"], r["d"], r["start"]), r["o"]) != r["o"])
+        if bad:
+            print("      다른 사람과 맺힌 조각이 있는 쌍: " + " · ".join(f"{p} {n}" for p, n in sorted(bad.items())))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=("why", "fit", "try"))
+    ap.add_argument("what", choices=("why", "fit", "try", "check"))
     ap.add_argument("--shoot", type=int, choices=(2, 3), default=2, help="촬영 회차 (기본 2). 3 = 선반 카메라에도 바닥 지도")
     ap.add_argument("--set", action="append", default=[], metavar="절.키=값", help="why 에서 설정을 바꿔 본다 (예: fusion.position_mode=floor)")
     args = ap.parse_args()
     de.set_profile(args.shoot)
+    _BASE_SET[:] = args.set
     de.OVERRIDES[:] = args.set
+    if args.what == "check" and args.shoot != 3:
+        ap.error("check 는 --shoot 3 에서만 (두 카메라 모두 바닥 지도가 있어야 기준을 만들 수 있다)")
     if args.shoot == 3:
-        {"why": why, "fit": fit3, "try": try3}[args.what]()
+        {"why": why, "fit": fit3, "try": try3, "check": check3}[args.what]()
     else:
         {"why": why, "fit": fit, "try": try_all}[args.what]()
     return 0

@@ -221,6 +221,10 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     # 바닥 구역 판단의 발 점 = 발목 (B-15, 2026-11-09 채택) — 사용자가 실제 바닥 자리에 맞춰 그린 구역과 짝.
     # 관절이 없는 예전 기록은 상자 아래 가운데로 대신한다. --set zones.foot_point=bbox 로 예전 방식.
     cfg.zones.foot_point = "ankle"
+    # 3차: 선반 카메라에도 바닥 지도가 있다 → 두 화면 짝을 바닥 위 거리로 (후속 27, 2026-11-13).
+    # 39쌍에서 끊김 23 → 2번, 다른 사람과 맺힘은 그대로. --set fusion.position_mode=band 로 예전 방식(띠 한 줄).
+    if SHOOT == 3:
+        cfg.fusion.position_mode = "floor"
     _apply_set(cfg, overrides)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair, SHOOT)
     zdir = zones_dir(pair)

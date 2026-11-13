@@ -208,7 +208,10 @@ class CrossViewLinker:
             if abs(nearest.pts_ms - s.pts_ms) > tol:
                 continue
             if use_floor and s.floor is not None and nearest.floor is not None:
-                sims.append(max(0.0, 1.0 - floor_distance(s, nearest) / self.config.max_floor_gap_cm))
+                gap = floor_distance(s, nearest)
+                if s.ray is not None or nearest.ray is not None:
+                    gap = max(0.0, gap - self.config.ray_slack_cm)   # 가린 발은 이 정도 차이를 못 가른다
+                sims.append(max(0.0, 1.0 - gap / self.config.max_floor_gap_cm))
             elif s.band is not None and nearest.band is not None:
                 gap = abs(nearest.band - s.band)
                 sims.append(max(0.0, 1.0 - gap / self.config.max_band_gap))

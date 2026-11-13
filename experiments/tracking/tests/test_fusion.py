@@ -351,8 +351,26 @@ def test_floor_mode_treats_a_hidden_foot_as_a_ray_not_a_point():
     assert as_point.current(1) is None
     # 반직선의 반대쪽(화면 위쪽)에 있는 사람은 시작점까지의 거리 그대로 — 발이 상자 아래보다 위일 수는 없다
     behind = CrossViewLinker(FusionConfig(position_mode="floor"))
-    feed_floor(behind, {("detail", 1): (0.4, (22.0, 20.0)), ("overview", 3): (0.85, (20.0, 75.0), (0.0, 1.0))})
+    feed_floor(behind, {("detail", 1): (0.4, (22.0, -15.0)), ("overview", 3): (0.85, (20.0, 75.0), (0.0, 1.0))})
     assert behind.current(1) is None
+
+
+def test_floor_mode_does_not_rank_hidden_feet_by_a_few_centimetres():
+    # 선반 카메라 사람(발 보임)과 전체 카메라의 발 가린 두 사람. 진짜 짝(외형 닮음)의 반직선은 12cm 옆을 지나고,
+    # 다른 사람의 반직선은 우연히 정확히 지나간다(0cm). 가린 발은 그 차이를 가를 정밀도가 없다 → ray_slack_cm 안은 같은 자리, 외형이 가른다.
+    me, other = np.array([1.0, 0.0]), np.array([0.6, 0.8])
+
+    def run(slack):
+        linker = CrossViewLinker(FusionConfig(position_mode="floor", ray_slack_cm=slack))
+        for t in range(0, 3000, 66):
+            linker.observe("detail", 1, float(t), 0.5, me, (30.0, 100.0), None)
+            linker.observe("overview", 4, float(t), 0.5, me, (42.0, 60.0), (0.0, 1.0))       # 진짜 짝: 12cm 옆
+            linker.observe("overview", 6, float(t), 0.5, other, (30.0, 40.0), (0.0, 1.0))    # 다른 사람: 0cm
+            linker.update(float(t))
+        return linker.current(1)
+
+    assert run(25.0) == 4
+    assert run(0.0) == 6                                   # 여유가 없으면 우연히 겹친 사람이 이긴다
 
 
 def test_floor_distance_between_two_rays():
