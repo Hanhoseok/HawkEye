@@ -403,3 +403,92 @@ def test_detail_floor_map_reads_calibration_from_zone_file():
                                                  "floor": [[0, 0], [64, 0], [0, 74], [64, 74]]}})
     fx, fy = fm.to_floor(0.6, 0.9)
     assert abs(fx - 64) < 1e-6 and abs(fy - 74) < 1e-6
+
+
+# ---------------------------------------------------------------- 매장 안 바닥을 밟은 신원만 짝 후보 (link_customers_only, 후속 31)
+
+
+def test_linker_skips_overview_identities_without_a_candidate_sample():
+    # 3차 N09: 창가의 가짜 사람 상자(8번)는 발이 없어 반직선인데, 그 반직선이 손님 자리를 정확히 지나가 위치 점수 만점.
+    # 진짜 짝(3번)은 발목이 보이고 20cm 옆. 표시가 없으면 가짜가 이기고, 후보 표시가 없는 신원을 빼면 진짜가 맺힌다.
+    def run(ghost_is_candidate):
+        linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+        for t in range(0, 3000, 66):
+            linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.observe("overview", 3, float(t), 0.5, None, (50.0, 100.0), None)
+            linker.observe("overview", 8, float(t), 0.5, None, (30.0, 300.0), (0.0, -1.0), candidate=ghost_is_candidate)
+            linker.update(float(t))
+        return linker
+
+    assert run(True).current(1) == 8                       # 기본(표시 안 씀): 예전과 같다
+    skipped = run(False)
+    assert skipped.current(1) == 3 and {l.overview_id for l in skipped.links} == {3}
+    assert skipped.overview_candidates(2500.0) == [3]
+
+
+def test_linker_keeps_an_identity_with_one_candidate_sample_in_the_window():
+    # 막 들어온 손님: 조각(0.5초) 안에 발목이 보인 장면이 하나뿐이어도 후보다. 나머지 표본도 위치에는 그대로 쓴다 —
+    # 표본을 걸러 넣으면 남은 몇 장만으로 점수가 달라졌다 (3차 C19 17.7초).
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    for i, t in enumerate(range(0, 3000, 66)):
+        linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+        linker.observe("overview", 3, float(t), 0.5, None, (32.0, 98.0), None, candidate=i % 6 == 0)
+        linker.update(float(t))
+    assert linker.current(1) == 3
+    never = CrossViewLinker(FusionConfig(position_mode="floor"))
+    for t in range(0, 3000, 66):
+        never.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+        never.observe("overview", 3, float(t), 0.5, None, (32.0, 98.0), None, candidate=False)
+        never.update(float(t))
+    assert never.current(1) is None and never.links == []
+
+
+def test_dual_judge_marks_only_customers_and_people_standing_on_the_store_floor():
+    from types import SimpleNamespace
+
+    from src.core.types import Frame, IdentityObservation
+    from src.fusion.judge import DualJudge
+
+    img = [(0.4, 1.0), (0.6, 1.0), (0.45, 0.4), (0.6, 0.4)]
+    flr = [(0, 0), (100, 0), (0, 200), (100, 200)]
+    shelf = FloorZone("shelf", ZoneType.SHELF, ((-50, -50), (150, -50), (150, 100), (-50, 100)))      # 화면 아래쪽 = 매장 안
+    street = FloorZone("street", ZoneType.CHECKOUT, ((-50, 100), (150, 100), (150, 250), (-50, 250)))  # 화면 위쪽 = 매장 밖
+    floor = FloorMap("angle1", img, flr, [shelf, street], (0.0, 200.0))
+    w = h = 1000
+
+    class BookRisk(RecordingRisk):
+        def __init__(self):
+            super().__init__()
+            self.book = SimpleNamespace(customers={}, config=SimpleNamespace(inside_zones=["shelf"]))
+
+    def ankles(x, y, conf=0.9):
+        return tuple([(0.0, 0.0, 0.0)] * 15 + [(x - 10.0, y, conf), (x + 10.0, y, conf)])
+
+    def obs(pid, bbox, keypoints=None):
+        return IdentityObservation(person_id=pid, track_id=pid, bbox=bbox, frame=0, timestamp="", keypoints=keypoints)
+
+    def judge_with(only):
+        risk = BookRisk()
+        judge = DualJudge(FusionConfig(link_customers_only=only), risk, floor, (1.0, 0.0), TimeAxis(30.0), TimeAxis(60.0),
+                          w, (w, h), {}, None, None)
+        judge.reset()
+        return judge, risk
+
+    near, far = (450.0, 500.0, 550.0, 990.0), (480.0, 100.0, 560.0, 520.0)
+    judge, risk = judge_with(True)
+    assert judge._link_candidate(1, obs(1, near, ankles(500.0, 980.0)), w, h)          # 발목이 보이고 매장 안 바닥
+    assert not judge._link_candidate(2, obs(2, near), w, h)                            # 발목이 안 보임 — 상자 아래는 발이 아닐 수 있다
+    assert not judge._link_candidate(3, obs(3, far, ankles(520.0, 510.0)), w, h)       # 발목은 보이지만 매장 밖
+    risk.book.customers[2] = SimpleNamespace(seen_inside=True)
+    assert judge._link_candidate(2, obs(2, near), w, h)                                # 이미 손님으로 센 신원은 가려져도 후보
+    risk.book.customers[3] = SimpleNamespace(seen_inside=False)
+    assert not judge._link_candidate(3, obs(3, far), w, h)
+
+    # 장면을 넣으면 표본은 모두 쌓이고, 후보 표시만 다르다
+    people = [obs(1, near, ankles(500.0, 980.0)), obs(4, far), obs(5, near)]
+    frame = Frame(index=0, timestamp="", pts_ms=0.0, image=None, camera_id="angle1")
+    judge.overview_step(frame, people, [], [])
+    assert set(judge.linker._overview) == {1, 4, 5} and judge.linker.overview_candidates(0.0) == [1]
+    off, _ = judge_with(False)                                                         # 기본(꺼짐): 보인 신원 전부
+    off.overview_step(frame, people, [], [])
+    assert off.linker.overview_candidates(0.0) == [1, 4, 5]

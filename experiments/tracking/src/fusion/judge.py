@@ -80,6 +80,27 @@ class DualJudge:
 
     # ------------------------------------------------------------------
 
+    def _link_candidate(self, person_id: int, obs: IdentityObservation, width: int, height: int) -> bool:
+        """이 전체 카메라 표본이 그 신원을 두 화면 짝의 후보로 만들어도 되나 (`fusion.link_customers_only`).
+        한 조각(0.5초)에 이런 표본이 하나라도 있는 신원만 후보다.
+
+        ① 손님 장부가 손님으로 센 신원이면 된다 (매장 안 바닥에 risk.inside_seconds 이상 — 한 번 세면 그대로라,
+           그 뒤 앞사람에게 가려 발이 안 보여도 후보로 남는다).
+        ② 아직 아니어도, **지금 발목이 보이고 그 발이 매장 안 바닥 구역(risk.inside_zones)에 있으면** 된다 — 막 들어온 손님이
+           1초를 채우기 전에도 짝이 맺히게. 발목이 안 보이는 표본은 여기에 못 든다: 상자 아래 가운데는 발이 아닐 수 있고
+           (3차 N09 20.5초: 겹친 두 손님을 덮은 가짜 상자의 아래 가운데가 계산대 구역 안이었다), 반직선은 어디든 지나간다.
+        창가 겉옷·가방의 가짜 사람 상자는 매장 안 바닥을 밟지 않아 둘 다 못 넘는다.
+        장부는 이 장면의 짝짓기 뒤에 갱신되므로 ① 은 한 장면 늦다 — 조각(0.5초)에 견주면 무시할 만하다."""
+        book = self.risk.book
+        customer = book.customers.get(person_id)
+        if customer is not None and customer.seen_inside:
+            return True
+        (px, py), ankle = foot_pixel(tuple(obs.bbox), getattr(obs, "keypoints", None), self.floor.ankle_conf)
+        x, y = px / width, py / height
+        if not ankle or not self.floor.on_floor_side(x, y):
+            return False
+        return any(z.name in book.config.inside_zones for z in self.floor.zones_at(self.floor.to_floor(x, y)))
+
     def detail_band(self, bbox) -> float:
         a, b = self.band_map
         if self.detail_point is not None:
@@ -159,7 +180,10 @@ class DualJudge:
                 band = None
             floor_cm, ray = (self.floor_point(self.floor, obs.bbox, getattr(obs, "keypoints", None), w, h)
                              if self.config.position_mode == "floor" else (None, None))
-            self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None, floor_cm, ray)
+            # 짝 후보 표시만 다르다 — 표본은 그대로 넣고, 선반 앞에 누가 있었나(note_band)·손님 장부·위험 판정도 그대로 본다
+            candidate = not self.config.link_customers_only or self._link_candidate(pid, obs, w, h)
+            self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None, floor_cm, ray,
+                                candidate)
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
         self.linker.update(frame.pts_ms)

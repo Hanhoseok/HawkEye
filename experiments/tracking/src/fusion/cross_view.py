@@ -70,6 +70,8 @@ class _Track:
     samples: deque = field(default_factory=lambda: deque(maxlen=200))
     appearance: np.ndarray | None = None
     last_ms: float = -1e18
+    candidate_ms: float = -1e18
+    """짝 후보로 삼아도 된다고 표시된 마지막 표본의 시각 (전체 카메라 — observe 의 candidate)."""
 
 
 @dataclass
@@ -109,15 +111,21 @@ class CrossViewLinker:
 
     def observe(self, view: str, person_id: int, pts_ms: float, band: float | None,
                 appearance: np.ndarray | None = None, floor: tuple[float, float] | None = None,
-                ray: tuple[float, float] | None = None) -> None:
+                ray: tuple[float, float] | None = None, candidate: bool = True) -> None:
         """view: 'detail'(선반 카메라) / 'overview'(전체 카메라). floor·ray = 발의 바닥 좌표(cm)와, 발목이 안 보일 때의 방향
-        — position_mode "floor" 에서 쓴다."""
+        — position_mode "floor" 에서 쓴다.
+
+        candidate=False 인 표본도 위치·외형에는 그대로 쓰지만, **그 조각에 candidate=True 표본이 하나도 없는 전체 카메라 신원은
+        짝 후보에서 빠진다** (overview_candidates). 표본을 아예 안 넣으면 남은 몇 장만으로 위치 점수가 높게 나와
+        오히려 짝을 가로챘다 (3차 C19 17.7초, 후속 31)."""
         if person_id <= 0:
             return
         tracks = self._detail if view == "detail" else self._overview
         track = tracks.setdefault(person_id, _Track())
         track.samples.append(_Sample(pts_ms, band, floor, ray))
         track.last_ms = pts_ms
+        if candidate:
+            track.candidate_ms = pts_ms
         if appearance is not None:
             track.appearance = appearance
 
@@ -139,7 +147,7 @@ class CrossViewLinker:
         self._last_window_ms = now_ms
 
         detail = [pid for pid, t in self._detail.items() if t.last_ms >= start]
-        overview = [pid for pid, t in self._overview.items() if t.last_ms >= start]
+        overview = self.overview_candidates(start)
         if not detail or not overview:
             return []
 
@@ -176,6 +184,11 @@ class CrossViewLinker:
                 self._current.pop(d, None)
         self.links.extend(made)
         return made
+
+    def overview_candidates(self, start: float) -> list[int]:
+        """이 조각(start 부터)에 보인 전체 카메라 신원 중 짝 후보 — 후보 표시(candidate)가 붙은 표본이 이 조각에 하나라도 있는 신원.
+        표시를 안 쓰면(기본) 보인 신원 전부다."""
+        return [pid for pid, t in self._overview.items() if t.last_ms >= start and t.candidate_ms >= start]
 
     def _combine(self, pos: float | None, app: float | None) -> float | None:
         if pos is None:

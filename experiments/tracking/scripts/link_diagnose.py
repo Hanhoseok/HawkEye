@@ -8,6 +8,7 @@
         fit   = 같은 사람의 두 카메라 발이 바닥 위에서 얼마나 떨어져 나오나 (정상 영상) → fusion.max_floor_gap_cm·ray_slack_cm 의 근거
         try   = 띠 위치(한 줄) / 바닥 위 거리 / 짝 유지를 견준다 (연결·끊김·채점)
         check = 두 명 이상 장면에서 맺은 짝이 '맞는 사람'인가 (발목이 두 화면 모두 보인 조각을 기준으로)
+    python scripts/link_diagnose.py [--shoot 3] gate   # 손님으로 센 신원만 짝 후보로 삼으면(fusion.link_customers_only) 무엇이 달라지나 (후속 31)
 
 아무것도 고치지 않는다 — 설정·기록·코드를 그대로 두고, `try` 의 후보(위치식 바꾸기·짝 유지)는 이 실행 안에서만 바꿔 끼운다.
 영상·모델이 필요 없다. 기록(`outputs/dual_eval_pose3`)만 있으면 된다. `why` 약 1분, `fit` 수 초, `try` 는 후보마다 약 1분.
@@ -78,7 +79,7 @@ class Recorder:
                 return _orig_update(linker, now_ms)
             start, end = linker._last_window_ms, now_ms
             detail = [pid for pid, t in linker._detail.items() if t.last_ms >= start]
-            overview = [pid for pid, t in linker._overview.items() if t.last_ms >= start]
+            overview = linker.overview_candidates(start)
             prev = dict(linker._current)
             before = {d: recorder._candidates(linker, d, overview, start, end) for d in detail}
             made = _orig_update(linker, now_ms)
@@ -236,7 +237,7 @@ def _apply(base: AppConfig, fusion: dict) -> None:
     """이 실행에서만 fusion 설정을 바꾼다. position_mode 는 회차별 기본값(3차 = floor, dual_config)보다 나중에 먹도록 --set 과 같은 길로."""
     for key, value in fusion.items():
         setattr(base.fusion, key, value)
-    de.OVERRIDES[:] = _BASE_SET + ([f"fusion.position_mode={fusion['position_mode']}"] if "position_mode" in fusion else [])
+    de.OVERRIDES[:] = _BASE_SET + [f"fusion.{key}={fusion[key]}" for key in ("position_mode", "link_customers_only") if key in fusion]
 
 
 def _judge_all(recorder: Recorder, base: AppConfig, pattern: str | None = None) -> list[dict]:
@@ -643,9 +644,72 @@ def check3() -> None:
             print("      다른 사람과 맺힌 조각이 있는 쌍: " + " · ".join(f"{p} {n}" for p, n in sorted(bad.items())))
 
 
+def gate() -> None:
+    """손님으로 센 신원만 짝 후보로 삼으면(`fusion.link_customers_only`) 무엇이 달라지나 — 끔/켬을 같은 기록으로 견준다 (후속 31).
+
+    손님 여부는 그 쌍을 끝까지 판정한 뒤의 손님 장부(seen_inside)로 센다. 2·3차 모두 된다."""
+    seen: dict[str, dict[str, set[int]]] = {}
+    orig_finish = jd.DualJudge.finish
+
+    def run(on: bool) -> tuple[Recorder, list[dict]]:
+        rec = Recorder()
+        rec.install()
+        key = "on" if on else "off"
+
+        def finish(judge, frame, resolve=None):
+            done = orig_finish(judge, frame, resolve)
+            seen.setdefault(rec.pair, {})[key] = {pid for pid, c in judge.risk.book.customers.items() if c.seen_inside}
+            return done
+
+        jd.DualJudge.finish = finish
+        try:
+            base = AppConfig.load(ROOT / "config.yaml")
+            _apply(base, {"link_customers_only": on})
+            return rec, _judge_all(rec, base)
+        finally:
+            jd.DualJudge.finish = orig_finish
+
+    (off, res_off), (on, res_on) = run(False), run(True)
+    people = {r["pair"]: r["people"] for r in res_off}
+    solo = {p for p, n in people.items() if p.startswith("N") and n == 1}
+    print(f"{de.SHOOT}차 기록 — 조각 = 선반 카메라 사람 × 0.5초. 정상 한 명 영상 {len(solo)}쌍: {' '.join(sorted(solo))}")
+    print(f"  {'':18s} {'조각':>5s} {'짝 있음':>7s} {'끊김':>4s} {'짝 바뀜':>6s} {'손님 아닌 번호와 맺힘':>12s}   채점")
+    for label, rec, results, key in (("끔 (지금까지)", off, res_off, "off"), ("켬 (손님만 후보)", on, res_on, "on")):
+        for name, keep in (("정상 한 명", lambda p: p in solo), ("전체", lambda p: True)):
+            part = Recorder()
+            part.rows = [r for r in rec.rows if keep(r["pair"])]
+            ghost = sum(1 for r in part.rows if r["o"] is not None and r["o"] not in seen[r["pair"]][key])
+            n_breaks, n_switch, _ = part.breaks()
+            scored = [r for r in results if keep(r["pair"])]
+            wrong = [r["pair"] for r in scored if not r["correct"]]
+            print(f"  {label:14s} {name:6s} {len(part.rows):5d} {part.linked_pct():6.1f}% {n_breaks:4d} {n_switch:6d} {ghost:12d}   "
+                  f"{len(scored) - len(wrong)}/{len(scored)}" + (f"  틀린 쌍 {','.join(wrong)}" if name == "전체" else ""), flush=True)
+    before = {(r["pair"], r["d"], r["start"]): r for r in off.rows}
+    changed = [(before[k], r) for r in on.rows for k in [(r["pair"], r["d"], r["start"])] if k in before and before[k]["o"] != r["o"]]
+    kinds = collections.Counter()
+    print(f"\n달라진 조각 {len(changed)}개")
+    for a, b in changed:
+        cust = seen[a["pair"]]["off"]
+        if a["o"] is not None and a["o"] not in cust:
+            kind = "가짜 번호 → 손님" if b["o"] is not None else "가짜 번호 → 짝 없음"
+        elif b["o"] is None:
+            kind = "손님 → 짝 없음 (아직 손님으로 안 세어짐)"
+        elif a["o"] is None:
+            kind = "짝 없음 → 손님"
+        else:
+            kind = "손님 → 다른 손님"
+        kinds[kind] += 1
+        print(f"  {a['pair']:6s} 선반 {a['d']:2d}  {a['start'] / 1000:6.2f}초  {a['o']} → {b['o']}   {kind}")
+    for kind, n in kinds.most_common():
+        print(f"  {kind}: {n}")
+    verdicts = {r["pair"]: r for r in res_off}
+    moved = [r["pair"] for r in res_on if (r["verdicts"], r["correct"]) != (verdicts[r["pair"]]["verdicts"], verdicts[r["pair"]]["correct"])]
+    print("판정이 달라진 쌍: " + (", ".join(moved) if moved else "없음"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=("why", "fit", "try", "check"))
+    ap.add_argument("what", choices=("why", "fit", "try", "check", "gate"))
     ap.add_argument("--shoot", type=int, choices=(2, 3), default=2, help="촬영 회차 (기본 2). 3 = 선반 카메라에도 바닥 지도")
     ap.add_argument("--set", action="append", default=[], metavar="절.키=값", help="why 에서 설정을 바꿔 본다 (예: fusion.position_mode=floor)")
     args = ap.parse_args()
@@ -655,9 +719,9 @@ def main() -> int:
     if args.what == "check" and args.shoot != 3:
         ap.error("check 는 --shoot 3 에서만 (두 카메라 모두 바닥 지도가 있어야 기준을 만들 수 있다)")
     if args.shoot == 3:
-        {"why": why, "fit": fit3, "try": try3, "check": check3}[args.what]()
+        {"why": why, "fit": fit3, "try": try3, "check": check3, "gate": gate}[args.what]()
     else:
-        {"why": why, "fit": fit, "try": try_all}[args.what]()
+        {"why": why, "fit": fit, "try": try_all, "gate": gate}[args.what]()
     return 0
 
 
