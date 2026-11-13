@@ -9,6 +9,9 @@
 위치를 비교하는 공통 축 = '선반 앞 띠' 좌표 (0 = 선반의 카메라 쪽 끝, 1 = 계산대·문 쪽 끝).
   - 전체 카메라: 발의 바닥 좌표를 띠 축에 내린 값 (src/zones/floor.py)
   - 선반 카메라: 사람 상자의 가운데 x 를 띠 축으로 옮긴 값 (1차식, 정상 영상으로 맞춤 — scripts/dual_eval.py)
+
+선반 카메라에도 발과 바닥이 보이면(3차 촬영) `fusion.position_mode: floor` — 두 카메라의 발을 같은 바닥 좌표(cm)로 옮겨
+바닥 위 거리로 견준다. 한 줄 좌표로는 못 가르던 '같은 좌우 위치에 앞뒤로 선 두 사람'(B-14)을 가른다.
 """
 
 from __future__ import annotations
@@ -27,6 +30,37 @@ class _Sample:
     pts_ms: float
     band: float | None
     """선반 앞 띠 위치 0~1. 띠 축으로 옮길 수 없으면 None."""
+    floor: tuple[float, float] | None = None
+    """발의 바닥 좌표 (cm, 두 카메라 공통). 바닥 지도가 없거나 지평선 너머면 None."""
+    ray: tuple[float, float] | None = None
+    """발목이 안 보일 때(화면 아래로 잘림·가림): 실제 발은 floor 에서 이 방향(단위 벡터)으로 뻗는 반직선 위 어딘가. 발목이 보이면 None."""
+
+
+def _point_to_ray(p: tuple[float, float], origin: tuple[float, float], direction: tuple[float, float]) -> float:
+    vx, vy = p[0] - origin[0], p[1] - origin[1]
+    t = vx * direction[0] + vy * direction[1]
+    if t <= 0.0:
+        return float(np.hypot(vx, vy))
+    return float(abs(vx * direction[1] - vy * direction[0]))
+
+
+def floor_distance(a: _Sample, b: _Sample) -> float:
+    """두 표본의 바닥 위 거리 (cm). 발목이 안 보이는 쪽은 반직선 — 점과 반직선, 반직선과 반직선 사이의 가장 가까운 거리."""
+    if a.ray is None and b.ray is None:
+        return float(np.hypot(a.floor[0] - b.floor[0], a.floor[1] - b.floor[1]))
+    if a.ray is None:
+        return _point_to_ray(a.floor, b.floor, b.ray)
+    if b.ray is None:
+        return _point_to_ray(b.floor, a.floor, a.ray)
+    # 둘 다 반직선: 만나면 0, 아니면 한쪽 시작점에서 다른 반직선까지 가까운 쪽
+    (ax, ay), (adx, ady), (bx, by), (bdx, bdy) = a.floor, a.ray, b.floor, b.ray
+    det = adx * (-bdy) - ady * (-bdx)
+    if abs(det) > 1e-9:
+        t = ((bx - ax) * (-bdy) - (by - ay) * (-bdx)) / det
+        s = (adx * (by - ay) - ady * (bx - ax)) / det
+        if t >= 0.0 and s >= 0.0:
+            return 0.0
+    return min(_point_to_ray(a.floor, b.floor, b.ray), _point_to_ray(b.floor, a.floor, a.ray))
 
 
 @dataclass
@@ -74,13 +108,15 @@ class CrossViewLinker:
     # ------------------------------------------------------------------ 입력
 
     def observe(self, view: str, person_id: int, pts_ms: float, band: float | None,
-                appearance: np.ndarray | None = None) -> None:
-        """view: 'detail'(선반 카메라) / 'overview'(전체 카메라)."""
+                appearance: np.ndarray | None = None, floor: tuple[float, float] | None = None,
+                ray: tuple[float, float] | None = None) -> None:
+        """view: 'detail'(선반 카메라) / 'overview'(전체 카메라). floor·ray = 발의 바닥 좌표(cm)와, 발목이 안 보일 때의 방향
+        — position_mode "floor" 에서 쓴다."""
         if person_id <= 0:
             return
         tracks = self._detail if view == "detail" else self._overview
         track = tracks.setdefault(person_id, _Track())
-        track.samples.append(_Sample(pts_ms, band))
+        track.samples.append(_Sample(pts_ms, band, floor, ray))
         track.last_ms = pts_ms
         if appearance is not None:
             track.appearance = appearance
@@ -154,20 +190,28 @@ class CrossViewLinker:
         return floor > 0 and app is not None and app >= floor
 
     def _position_score(self, a: _Track, b: _Track, start: float, end: float) -> float | None:
-        """같은 때(±pair_tolerance) 두 화면의 띠 위치가 얼마나 가까운가. 0~1."""
+        """같은 때(±pair_tolerance) 두 화면의 위치가 얼마나 가까운가. 0~1.
+
+        position_mode "band": 띠 위치 차이. "floor": 바닥 위 거리(floor_distance) — 한쪽이라도 바닥 좌표가 없는 표본은 띠 위치로 대신한다.
+        """
         tol = self.config.pair_tolerance_seconds * 1000.0
-        bs = [s for s in b.samples if start - tol <= s.pts_ms <= end + tol and s.band is not None]
+        use_floor = self.config.position_mode == "floor"
+        bs = [s for s in b.samples if start - tol <= s.pts_ms <= end + tol
+              and (s.band is not None or (use_floor and s.floor is not None))]
         if not bs:
             return None
         sims = []
         for s in a.samples:
-            if not (start <= s.pts_ms <= end) or s.band is None:
+            if not (start <= s.pts_ms <= end) or (s.band is None and not (use_floor and s.floor is not None)):
                 continue
             nearest = min(bs, key=lambda x: abs(x.pts_ms - s.pts_ms))
             if abs(nearest.pts_ms - s.pts_ms) > tol:
                 continue
-            gap = abs(nearest.band - s.band)
-            sims.append(max(0.0, 1.0 - gap / self.config.max_band_gap))
+            if use_floor and s.floor is not None and nearest.floor is not None:
+                sims.append(max(0.0, 1.0 - floor_distance(s, nearest) / self.config.max_floor_gap_cm))
+            elif s.band is not None and nearest.band is not None:
+                gap = abs(nearest.band - s.band)
+                sims.append(max(0.0, 1.0 - gap / self.config.max_band_gap))
         return float(np.mean(sims)) if sims else None
 
     @staticmethod

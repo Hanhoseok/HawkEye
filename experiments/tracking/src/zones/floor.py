@@ -232,6 +232,14 @@ def shelf_image_zones(raw: dict) -> "ZoneMap | None":
                     for i, poly in enumerate(polys)])
 
 
+def detail_floor_map(raw: dict | None) -> FloorMap | None:
+    """선반 카메라 구역 파일의 `floor_calibration`(화면 보정점 + 전체 카메라와 같은 바닥 cm) → 바닥 지도. 없으면 None."""
+    cal = (raw or {}).get("floor_calibration")
+    if not cal:
+        return None
+    return FloorMap("detail", [tuple(p) for p in cal["image"]], [tuple(p) for p in cal["floor"]])
+
+
 class FloorZoneMap:
     """바닥 구역을 화면 구역(ZoneMap)과 같은 방식으로 쓰게 하는 어댑터.
 

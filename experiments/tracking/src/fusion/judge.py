@@ -19,7 +19,7 @@ from ..core.config import FusionConfig, InteractionConfig
 from ..core.types import Frame, IdentityObservation, RiskEvent, TakeCandidate
 from ..interaction.detector import InteractionDetector
 from ..risk.customers import ShelfVisit
-from ..zones.floor import FloorMap
+from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
@@ -40,6 +40,8 @@ class DualJudge:
         sensors: list[SensorEvent] | None = None,
         shelf_image: ZoneMap | None = None,
         detail_point=None,
+        detail_floor: FloorMap | None = None,
+        detail_height: int | None = None,
     ) -> None:
         self.config = config
         self.risk = risk
@@ -49,6 +51,9 @@ class DualJudge:
         self.detail_width = detail_width
         self.detail_point = detail_point
         """선반 카메라 사람 상자 → band_map 입력 x (화면 비율). 없으면 상자 가운데 x ÷ 화면 폭 (2차). 3차는 카메라 움직임을 되돌린 좌표."""
+        self.detail_floor = detail_floor
+        """선반 카메라 바닥 지도 (전체 카메라와 같은 바닥 좌표). 있으면 선반 카메라 사람의 발도 바닥 cm 로 연결에 넘긴다 (3차)."""
+        self.detail_height = detail_height or round(detail_width * 9 / 16)
         self.overview_size = overview_size
         self.linker = CrossViewLinker(config)
         self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors)
@@ -81,6 +86,30 @@ class DualJudge:
             return a * self.detail_point(bbox, self.detail_width) + b
         return a * ((bbox[0] + bbox[2]) / 2.0 / self.detail_width) + b
 
+    RAY_STEP = 0.02
+    """발목이 안 보일 때 반직선 방향을 잴 화면 세로 간격 (화면 높이 비율)."""
+
+    @classmethod
+    def floor_point(cls, fm: FloorMap, bbox, keypoints, width: int, height: int):
+        """사람의 발을 바닥 cm 로: (점, 방향). 지평선 너머면 (None, None).
+
+        발목이 보이면 두 발목의 가운데, 방향 None. 발목이 안 보이면(발이 화면 아래로 잘렸거나 앞사람·가구에 가림) 상자 아래 가운데와
+        '화면 아래쪽'이 바닥에서 가리키는 방향 — 실제 발은 그 반직선 위 어딘가다 (2026-11-13: 3차 전체 카메라는 선반 앞 사람의 발이
+        화면 아래로 잘리고, 계산대 사람의 발은 앞사람에게 가린다. 상자 아래를 발로 믿으면 40cm~1m 어긋났다)."""
+        (px, py), ankle = foot_pixel(tuple(bbox), keypoints, fm.ankle_conf)
+        x, y = px / width, py / height
+        if not fm.on_floor_side(x, y):
+            return None, None
+        point = fm.to_floor(x, y)
+        if ankle:
+            return point, None
+        if not fm.on_floor_side(x, y + cls.RAY_STEP):
+            return point, None
+        below = fm.to_floor(x, y + cls.RAY_STEP)
+        dx, dy = below[0] - point[0], below[1] - point[1]
+        norm = (dx * dx + dy * dy) ** 0.5
+        return point, ((dx / norm, dy / norm) if norm > 1e-9 else None)
+
     def detail_step(
         self,
         pts_ms: float,
@@ -97,8 +126,11 @@ class DualJudge:
             if obs.person_id <= 0:
                 continue
             pid = resolve(obs.person_id) if resolve else obs.person_id
+            floor, ray = (self.floor_point(self.detail_floor, obs.bbox, getattr(obs, "keypoints", None),
+                                           self.detail_width, self.detail_height)
+                          if self.detail_floor is not None else (None, None))
             self.linker.observe("detail", pid, pts_ms, self.detail_band(obs.bbox),
-                                appearance(pid) if appearance else None)
+                                appearance(pid) if appearance else None, floor, ray)
         for t in takes:
             pid = resolve(t.person_id) if resolve and t.person_id > 0 else t.person_id
             self._pending_takes.append((self.fuser.detail_axis.to_ms(t.end_frame), replace(t, person_id=pid)))
@@ -125,7 +157,9 @@ class DualJudge:
             in_band = any(z.name == self.config.shelf_zone for z in self.floor.zones_at(foot))
             if band is not None and not (-0.3 <= band <= 1.3):
                 band = None
-            self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None)
+            floor_cm, ray = (self.floor_point(self.floor, obs.bbox, getattr(obs, "keypoints", None), w, h)
+                             if self.config.position_mode == "floor" else (None, None))
+            self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None, floor_cm, ray)
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
         self.linker.update(frame.pts_ms)

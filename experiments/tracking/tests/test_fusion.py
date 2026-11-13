@@ -299,3 +299,89 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
         last = frame
     judge.finish(last)
     assert risk.takes == [] and not any(r.kind == "reach" for r in judge.fuser.records)
+
+
+# ---------------------------------------------------------------- 바닥 위 거리로 잇기 (3차 촬영, position_mode "floor")
+
+
+def feed_floor(linker, moves, t0=0, t1=3000, step=66):
+    """moves: {(view, pid): (띠 위치, 바닥 cm 또는 None[, 발목이 안 보일 때의 방향])}."""
+    for t in range(t0, t1, step):
+        for (view, pid), (band, floor, *ray) in moves.items():
+            linker.observe(view, pid, float(t), band, None, floor, ray[0] if ray else None)
+        linker.update(float(t))
+
+
+def test_floor_mode_separates_two_people_at_the_same_band_position():
+    # 선반 앞 같은 좌우 위치(띠 0.5)에 앞뒤로 선 두 사람 — 한 줄 좌표로는 못 가르고(B-14), 바닥 위 거리로는 가른다.
+    people = {("detail", 7): (0.5, (10.0, 40.0)), ("detail", 9): (0.5, (70.0, 40.0)),
+              ("overview", 2): (0.5, (68.0, 42.0)), ("overview", 5): (0.5, (12.0, 38.0))}
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, people)
+    assert linker.current(7) == 5 and linker.current(9) == 2
+    scores = {l.detail_id: l.position for l in linker.links}
+    assert scores[7] > 0.9 and scores[9] > 0.9
+    band_only = CrossViewLinker(FusionConfig())            # 기본(band)은 바닥 좌표를 줘도 쓰지 않는다
+    feed_floor(band_only, people)
+    assert {l.position for l in band_only.links} == {1.0}  # 네 조합 모두 위치 점수 1 — 누가 누구인지 위치로는 모른다
+
+
+def test_floor_mode_refuses_a_far_person_even_with_the_same_band_position():
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, {("detail", 1): (0.5, (0.0, 40.0)), ("overview", 3): (0.5, (90.0, 40.0))})
+    assert linker.current(1) is None                       # 90cm 떨어짐 (기준 60cm 에서 점수 0)
+
+
+def test_floor_mode_falls_back_to_band_when_there_is_no_floor_point():
+    # 전체 카메라 사람이 지평선 너머라 바닥 좌표가 없다 — 그 표본은 띠 위치로 견준다.
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, {("detail", 1): (0.60, (20.0, 60.0)), ("overview", 3): (0.62, None)})
+    assert linker.current(1) == 3
+
+
+def test_floor_mode_treats_a_hidden_foot_as_a_ray_not_a_point():
+    # 전체 카메라에서 선반 앞 사람의 발이 화면 아래로 잘렸다: 상자 아래는 (20, 75) 인데 실제 발은 그 아래쪽(+y) 어딘가.
+    # 선반 카메라는 발목을 (22, 115) 로 본다 — 점으로 견주면 40cm 라 못 잇고, 반직선으로 견주면 2cm.
+    hidden = {("detail", 1): (0.9, (22.0, 115.0)), ("overview", 3): (0.85, (20.0, 75.0), (0.0, 1.0))}
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, hidden)
+    assert linker.current(1) == 3 and linker.links[-1].position > 0.9
+    as_point = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(as_point, {k: v[:2] for k, v in hidden.items()})
+    assert as_point.current(1) is None
+    # 반직선의 반대쪽(화면 위쪽)에 있는 사람은 시작점까지의 거리 그대로 — 발이 상자 아래보다 위일 수는 없다
+    behind = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(behind, {("detail", 1): (0.4, (22.0, 20.0)), ("overview", 3): (0.85, (20.0, 75.0), (0.0, 1.0))})
+    assert behind.current(1) is None
+
+
+def test_floor_distance_between_two_rays():
+    from src.fusion.cross_view import _Sample, floor_distance
+
+    crossing = floor_distance(_Sample(0, None, (0.0, 0.0), (1.0, 0.0)), _Sample(0, None, (30.0, -20.0), (0.0, 1.0)))
+    apart = floor_distance(_Sample(0, None, (0.0, 0.0), (1.0, 0.0)), _Sample(0, None, (-30.0, 20.0), (0.0, 1.0)))
+    assert crossing == 0.0 and abs(apart - (30.0 ** 2 + 20.0 ** 2) ** 0.5) < 1e-6
+
+
+def test_dual_judge_floor_point_is_a_point_with_ankles_and_a_ray_without():
+    from src.fusion.judge import DualJudge
+
+    fm = FloorMap("detail", [(0.2, 0.5), (0.8, 0.5), (0.2, 1.0), (0.8, 1.0)], [(0, 0), (100, 0), (0, 100), (100, 100)])
+    ankles = [[0.0, 0.0, 0.0]] * 15 + [[940.0, 800.0, 0.9], [980.0, 820.0, 0.9]]
+    (x, y), ray = DualJudge.floor_point(fm, (900.0, 300.0, 1020.0, 830.0), ankles, 1920, 1080)
+    ex, ey = fm.to_floor(960 / 1920, 810 / 1080)           # 두 발목의 가운데
+    assert abs(x - ex) < 1e-6 and abs(y - ey) < 1e-6 and ray is None
+    # 발목이 안 보이면 상자 아래 가운데에서 화면 아래쪽(이 지도에서는 바닥 +y)으로 뻗는 반직선
+    (bx, by), ray = DualJudge.floor_point(fm, (900.0, 300.0, 1020.0, 830.0), None, 1920, 1080)
+    assert (round(bx, 3), round(by, 3)) == tuple(round(v, 3) for v in fm.to_floor(960 / 1920, 830 / 1080))
+    assert abs(ray[0]) < 1e-6 and abs(ray[1] - 1.0) < 1e-6
+
+
+def test_detail_floor_map_reads_calibration_from_zone_file():
+    from src.zones.floor import detail_floor_map
+
+    assert detail_floor_map({}) is None and detail_floor_map(None) is None
+    fm = detail_floor_map({"floor_calibration": {"image": [[0.2, 0.7], [0.2, 0.9], [0.6, 0.7], [0.6, 0.9]],
+                                                 "floor": [[0, 0], [64, 0], [0, 74], [64, 74]]}})
+    fx, fy = fm.to_floor(0.6, 0.9)
+    assert abs(fx - 64) < 1e-6 and abs(fy - 74) < 1e-6

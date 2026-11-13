@@ -69,8 +69,15 @@ def pair_floor(base: dict, h1: np.ndarray) -> dict:
     return out
 
 
-def pair_detail(base: dict, h0: np.ndarray, band_map: list[float]) -> dict:
+def pair_detail(base: dict, h0: np.ndarray, band_map: list[float], floor0: dict | None = None) -> dict:
+    """floor0 = 선반 카메라 바닥 지도(floor_angle0.yaml). 주면 보정점을 그 영상 화면으로 옮겨 `floor_calibration` 으로 싣는다 —
+    두 화면 짝을 바닥 위 거리로 맺을 때 쓴다 (fusion.position_mode floor)."""
     out = json.loads(json.dumps(base))
+    if floor0 and floor0.get("calibration"):
+        cal = floor0["calibration"]
+        out["floor_calibration"] = {
+            "image": [[round(float(x), 5), round(float(y), 5)] for x, y in _to_clip(cal["image"], h0, SIZE["angle0"])],
+            "floor": [[float(x), float(y)] for x, y in cal["floor"]]}
     for s in out.get("shelves", []):
         s["box"] = _box(_to_clip(_rect_points(s["box"]), h0, SIZE["angle0"]))
         s.pop("polygon", None)
@@ -86,10 +93,12 @@ def make_pair_zones(pair: str, out_root: Path, base_dir: Path = BASE) -> Path:
     h1, h0 = homographies("angle1")[pair], homographies("angle0")[pair]
     floor = yaml.safe_load((base_dir / "floor.yaml").read_text(encoding="utf-8"))
     detail = yaml.safe_load((base_dir / "angle0.yaml").read_text(encoding="utf-8"))
+    floor0_path = base_dir / "floor_angle0.yaml"
+    floor0 = yaml.safe_load(floor0_path.read_text(encoding="utf-8")) if floor0_path.exists() else None
     d = out_root / pair
     d.mkdir(parents=True, exist_ok=True)
     (d / "floor.yaml").write_text(yaml.safe_dump(pair_floor(floor, h1), allow_unicode=True, sort_keys=False), encoding="utf-8")
-    (d / "angle0.yaml").write_text(yaml.safe_dump(pair_detail(detail, h0, load_band_map(base_dir / "band_map.yaml")),
+    (d / "angle0.yaml").write_text(yaml.safe_dump(pair_detail(detail, h0, load_band_map(base_dir / "band_map.yaml"), floor0),
                                                   allow_unicode=True, sort_keys=False), encoding="utf-8")
     return d
 
