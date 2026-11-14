@@ -40,6 +40,7 @@ class DualJudge:
         sensors: list[SensorEvent] | None = None,
         shelf_image: ZoneMap | None = None,
         detail_point=None,
+        lanes_image: ZoneMap | None = None,
     ) -> None:
         self.config = config
         self.risk = risk
@@ -60,6 +61,13 @@ class DualJudge:
             self.reach = InteractionDetector(
                 InteractionConfig(signal="hand", dwell_seconds=config.overview_reach_seconds,
                                   hand_conf=config.overview_reach_conf), shelf_image)
+        self.lanes_image = lanes_image
+        """전체(위쪽) 카메라 화면의 센서 레인 다각형 (floor.yaml lanes_image). 손이 레인 안·몸이 받침을 덮음을 기록한다."""
+        self.tray_box: tuple[float, float, float, float] | None = None
+        if lanes_image:
+            lanes_image.resolve(*overview_size)
+            pts = [p for z in lanes_image.zones for p in lanes_image.polygon_of(z.name)]
+            self.tray_box = (min(x for x, _ in pts), min(y for _, y in pts), max(x for x, _ in pts), max(y for _, y in pts))
         self.reset()
 
     def reset(self) -> None:
@@ -128,6 +136,8 @@ class DualJudge:
             self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None)
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
+            if self.lanes_image is not None:
+                self._note_lanes(frame.pts_ms, pid, obs)
         self.linker.update(frame.pts_ms)
         reach_takes = (self._reach_takes(self.reach.update(frame, self._standing(identities)), resolve)
                        if self.reach else [])
@@ -155,6 +165,42 @@ class DualJudge:
         done = self.risk.finish(frame, self.overview_size)
         self.events.extend(done)
         return done
+
+    def _note_lanes(self, ms: float, pid: int, obs: IdentityObservation) -> None:
+        """위쪽 카메라: 손이 센서 레인 안이면 레인을, 사람 상자가 받침 상자를 덮으면 그 비율을 적는다."""
+        from ..zones.geometry import contains_point
+
+        for x, y in self._hand_points(obs.keypoints):
+            for z in self.lanes_image.zones:
+                if contains_point(self.lanes_image.polygon_of(z.name), x, y):
+                    self.fuser.note_overview_lane(ms, pid, z.name)
+                    break
+        tx1, ty1, tx2, ty2 = self.tray_box
+        bx1, by1, bx2, by2 = obs.bbox
+        inter = max(0.0, min(tx2, bx2) - max(tx1, bx1)) * max(0.0, min(ty2, by2) - max(ty1, by1))
+        area = (tx2 - tx1) * (ty2 - ty1)
+        if area > 0 and inter > 0:
+            self.fuser.note_tray_cover(ms, pid, inter / area)
+
+    def _hand_points(self, keypoints) -> list[tuple[float, float]]:
+        """손목에서 팔 방향(팔꿈치→손목)으로 overview_hand_extend 만큼 더 나간 점. 팔꿈치가 안 보이면 손목 그대로."""
+        from ..interaction.pose_features import WRISTS
+
+        if not keypoints:
+            return []
+        conf, k = self.config.overview_reach_conf, self.config.overview_hand_extend
+        out = []
+        for wrist_idx, elbow_idx, *_ in WRISTS:
+            if max(wrist_idx, elbow_idx) >= len(keypoints):
+                continue
+            wx, wy, wc = keypoints[wrist_idx]
+            if wc < conf or (wx <= 0 and wy <= 0):
+                continue
+            ex, ey, ec = keypoints[elbow_idx]
+            if ec >= conf and (ex > 0 or ey > 0):
+                wx, wy = wx + k * (wx - ex), wy + k * (wy - ey)
+            out.append((float(wx), float(wy)))
+        return out
 
     def _standing(self, identities: list[IdentityObservation]) -> list[IdentityObservation]:
         """발(상자 아래 가운데)이 화면의 선반 영역 밖인 사람만 — 선반 위 상품 포장의 사람 그림에 관절이 잡힌

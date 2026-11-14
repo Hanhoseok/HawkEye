@@ -232,6 +232,19 @@ def shelf_image_zones(raw: dict) -> "ZoneMap | None":
                     for i, poly in enumerate(polys)])
 
 
+def lanes_image_zones(raw: dict) -> "ZoneMap | None":
+    """floor.yaml 의 `lanes_image`(전체 카메라 화면의 레인 다각형, {레인 이름: 화면 비율 다각형}) → 화면 구역. 없으면 None.
+    레인 이름은 센서 레인과 같아야 한다 (3차 L1·L2·L3)."""
+    from .zone_map import ZoneMap
+
+    lanes = raw.get("lanes_image") or {}
+    if not lanes:
+        return None
+    return ZoneMap([Zone(name=str(name), type=ZoneType.SHELF,
+                         polygon=tuple((float(x), float(y)) for x, y in poly), normalized=True)
+                    for name, poly in lanes.items()])
+
+
 class FloorZoneMap:
     """바닥 구역을 화면 구역(ZoneMap)과 같은 방식으로 쓰게 하는 어댑터.
 

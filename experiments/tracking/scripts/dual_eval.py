@@ -45,7 +45,7 @@ from src.risk.customers import ShelfVisit  # noqa: E402
 from src.risk.engine import RiskEngine  # noqa: E402
 from src.risk.payments import PaymentFeed  # noqa: E402
 from src.sinks.observation_log import read_identities  # noqa: E402
-from src.zones.floor import FloorMap, FloorZoneMap, shelf_image_zones  # noqa: E402
+from src.zones.floor import FloorMap, FloorZoneMap, lanes_image_zones, shelf_image_zones  # noqa: E402
 import sync_pair  # noqa: E402
 
 OUT = ROOT / "outputs" / "dual_eval_pose3"
@@ -508,7 +508,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     judge = DualJudge(cfg.fusion, risk, floor, band_map,
                       TimeAxis(m0["fps"], offset_ms, tuple(t0) if t0 else None), TimeAxis(m1["fps"], 0.0, tuple(t1) if t1 else None),
                       m0["width"], (m1["width"], m1["height"]), slot_shelf, sensors, shelf_image_zones(floor_raw),
-                      detail_point=detail_point_for(pair))
+                      detail_point=detail_point_for(pair), lanes_image=lanes_image_zones(floor_raw))
     judge.reset()
     if use_detail:
         from src.shelf.slot_diff import SlotChange

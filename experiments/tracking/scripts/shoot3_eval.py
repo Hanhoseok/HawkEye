@@ -36,6 +36,14 @@ def _to_clip(points_norm, h_clip_to_ref: np.ndarray, size: tuple[int, int]) -> n
     return out / [w, h]
 
 
+def _from_clip(points_norm, h_clip_to_ref: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """그 영상 화면 비율 점들 → area_setting 화면 비율 (_to_clip 의 반대)."""
+    w, h = size
+    pts = np.asarray(points_norm, float).reshape(-1, 2) * [w, h]
+    out = cv2.perspectiveTransform(pts.reshape(-1, 1, 2), h_clip_to_ref).reshape(-1, 2)
+    return out / [w, h]
+
+
 def _box(points_norm: np.ndarray) -> list[float]:
     return [round(float(v), 5) for v in (points_norm[:, 0].min(), points_norm[:, 1].min(),
                                          points_norm[:, 0].max(), points_norm[:, 1].max())]
@@ -58,7 +66,9 @@ def save_band_map(a: float, b: float, note: str, path: Path = BAND_MAP) -> None:
                                    sort_keys=False), encoding="utf-8")
 
 
-def pair_floor(base: dict, h1: np.ndarray) -> dict:
+def pair_floor(base: dict, h1: np.ndarray, h_ref: np.ndarray | None = None) -> dict:
+    """바닥 구역 파일을 그 영상 화면으로. lanes_image 는 lanes_image_ref 영상에서 그렸으면 h_ref(그 영상 → area_setting)로
+    먼저 area_setting 에 옮긴다. ref 가 있는데 h_ref 가 없으면 lanes_image 를 뺀다."""
     out = json.loads(json.dumps(base))
     cal = out["calibration"]
     cal["image"] = [[round(float(x), 5), round(float(y), 5)] for x, y in _to_clip(cal["image"], h1, SIZE["angle1"])]
@@ -66,6 +76,18 @@ def pair_floor(base: dict, h1: np.ndarray) -> dict:
     if base.get("shelf_image"):
         out["shelf_image"] = [[[round(float(x), 5), round(float(y), 5)] for x, y in _to_clip(p, h1, SIZE["angle1"])]
                               for p in base["shelf_image"]]
+    if base.get("lanes_image"):
+        if base.get("lanes_image_ref") and h_ref is None:
+            out.pop("lanes_image")
+        else:
+            lanes = {}
+            for name, poly in base["lanes_image"].items():
+                pts = np.asarray(poly, float)
+                if h_ref is not None:
+                    pts = _from_clip(pts, h_ref, SIZE["angle1"])
+                lanes[name] = [[round(float(x), 5), round(float(y), 5)] for x, y in _to_clip(pts, h1, SIZE["angle1"])]
+            out["lanes_image"] = lanes
+        out.pop("lanes_image_ref", None)
     return out
 
 
@@ -83,12 +105,17 @@ def pair_detail(base: dict, h0: np.ndarray, band_map: list[float]) -> dict:
 
 def make_pair_zones(pair: str, out_root: Path, base_dir: Path = BASE) -> Path:
     """outputs/.../zones/<짝>/{floor,angle0}.yaml 을 기본 파일에서 늘 새로 만든다 (band_map 최신 반영). 호모그래피 없으면 KeyError."""
-    h1, h0 = homographies("angle1")[pair], homographies("angle0")[pair]
+    h1s = homographies("angle1")
+    h1, h0 = h1s[pair], homographies("angle0")[pair]
     floor = yaml.safe_load((base_dir / "floor.yaml").read_text(encoding="utf-8"))
+    ref = floor.get("lanes_image_ref")
+    h_ref = h1s.get(ref) if ref else None
+    if ref and h_ref is None:
+        print(f"  {pair}: lanes_image 기준 영상 {ref} 의 카메라 맞추기(register) 없음 — 위쪽 카메라 레인 없이", flush=True)
     detail = yaml.safe_load((base_dir / "angle0.yaml").read_text(encoding="utf-8"))
     d = out_root / pair
     d.mkdir(parents=True, exist_ok=True)
-    (d / "floor.yaml").write_text(yaml.safe_dump(pair_floor(floor, h1), allow_unicode=True, sort_keys=False), encoding="utf-8")
+    (d / "floor.yaml").write_text(yaml.safe_dump(pair_floor(floor, h1, h_ref), allow_unicode=True, sort_keys=False), encoding="utf-8")
     (d / "angle0.yaml").write_text(yaml.safe_dump(pair_detail(detail, h0, load_band_map(base_dir / "band_map.yaml")),
                                                   allow_unicode=True, sort_keys=False), encoding="utf-8")
     return d

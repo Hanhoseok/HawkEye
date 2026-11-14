@@ -7,6 +7,8 @@
     3. 그 시간 바닥의 선반 앞 띠에 서 있던 전체 카메라 손님이 한 명뿐이면 그 사람
     4. 여러 명이면 '누구 것인지 모름' (-1) — 지금과 같다
   센서 기록은 같은 시간(±event_tolerance)의 카메라 변화와 묶는다. 개수는 센서를 믿는다.
+  센서 레인의 주인 (_lane_owner, 위 순서로 못 정할 때 — sensor_lane_first 면 먼저):
+    위쪽(전체) 카메라에서 그 레인에 가장 오래 손이 머문 사람 → 선반 카메라 그 레인 손-칸 접촉 → 위쪽 카메라에서 그 시각 받침을 몸으로 덮은 사람
 
 카메라마다 장면 번호가 다르므로(30/60FPS) 손님 장부로 넘기기 전에 모두 전체 카메라의 장면 번호로 바꾼다.
 """
@@ -14,6 +16,7 @@
 from __future__ import annotations
 
 import csv
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -103,6 +106,10 @@ class ShelfEventFuser:
         """선반 카메라의 칸 그림 비교 결과 (SlotChange, 공통 시각)."""
         self._reaches: list[tuple[float, float, int]] = []
         """전체 카메라 팔 뻗기: (시작 ms, 끝 ms, 전체 카메라 손님)."""
+        self._ov_lane: list[tuple[float, int, str]] = []
+        """위쪽(전체) 카메라에서 손이 레인 안에 찍힌 장면: (ms, 손님, 레인)."""
+        self._cover: list[tuple[float, int, float]] = []
+        """위쪽(전체) 카메라에서 사람 상자가 받침을 덮은 장면: (ms, 손님, 덮은 비율)."""
         self.records: list[FusedRecord] = []
 
     # ------------------------------------------------------------------ 입력
@@ -116,6 +123,16 @@ class ShelfEventFuser:
         self._reaches.append((start_ms, end_ms, overview_id))
         self.records.append(FusedRecord("reach", start_ms, end_ms, overview_id, "전체 카메라 팔 뻗기",
                                         "손목이 화면의 선반 영역 안"))
+
+    def note_overview_lane(self, ms: float, overview_id: int, lane: str) -> None:
+        self._ov_lane.append((ms, overview_id, lane))
+        if len(self._ov_lane) > 20000:
+            self._ov_lane = self._ov_lane[-10000:]
+
+    def note_tray_cover(self, ms: float, overview_id: int, ratio: float) -> None:
+        self._cover.append((ms, overview_id, ratio))
+        if len(self._cover) > 20000:
+            self._cover = self._cover[-10000:]
 
     def note_slot_change(self, change) -> None:
         self._slot_changes.append(change)
@@ -241,16 +258,56 @@ class ShelfEventFuser:
         return owners
 
     def _lane_owner(self, sensors: list[SensorEvent], start: float, end: float, shelf: str) -> tuple[int | None, str]:
-        """센서가 바뀐 칸(레인)에 그 시간 손이 닿은 손님이 한 명이면 그 사람. (주인, 이유)
+        """센서가 바뀐 칸(레인)의 주인을 카메라로 가린다. (주인, 이유) — 못 정하면 (None, "").
 
-        선반 카메라 손-칸 접촉의 칸 이름이 센서 칸 이름과 같아야 한다 (3차: 둘 다 L1·L2·L3)."""
-        if not self.config.sensor_lane_match or not sensors:
+        순서 (센서 시각 근처, 위쪽 카메라는 sensor_lookback/lookahead 구간):
+          1. 위쪽 카메라: 그 레인 안에 손이 들어간 사람이 한 명 (overview_lane_match, floor.yaml lanes_image)
+          2. 선반 카메라: 그 레인에 손-칸 접촉한 사람이 한 명 (sensor_lane_match, 칸 이름 = 센서 칸 이름)
+          3. 위쪽 카메라: 손은 안 보이지만 그 시각 받침을 몸으로 덮은 사람이 한 명
+        """
+        if not sensors:
             return None, ""
         lanes = {s.slot for s in sensors}
-        owners = self._touch_owners(start, end, shelf, slots=lanes)
-        if len(owners) == 1:
-            return owners.pop(), f"센서 레인 {','.join(sorted(lanes))} 손 접촉"
+        names = ",".join(sorted(lanes))
+        w0 = min(s.time_ms for s in sensors) - self.config.sensor_lookback_seconds * 1000.0
+        w1 = max(s.time_ms for s in sensors) + self.config.sensor_lookahead_seconds * 1000.0
+        detail = self._touch_owners(start, end, shelf, slots=lanes) if self.config.sensor_lane_match else set()
+        hands = self._overview_lane_owners(lanes, w0, w1) if self.config.overview_lane_match else set()
+        if len(hands) == 1:
+            owner = next(iter(hands))
+            note = f" (선반 카메라 손 접촉 {sorted(detail)})" if detail and detail != {owner} else ""
+            return owner, f"위쪽 카메라 센서 레인 {names} 손{note}"
+        if len(detail) == 1 and (not hands or detail <= hands):
+            return next(iter(detail)), f"센서 레인 {names} 손 접촉"
+        if self.config.overview_lane_match:
+            cover = self._cover_owners(w0, w1)
+            if len(cover) == 1:
+                return next(iter(cover)), f"센서 레인 {names} 시각 받침을 가린 사람 (위쪽 카메라)"
         return None, ""
+
+    def _overview_lane_owners(self, lanes: set[str], start: float, end: float) -> set[int]:
+        """위쪽 카메라에서 그 시간 가장 오래 연속으로 손이 머문 레인이 센서 레인이고, 그 연속이
+        overview_lane_min_frames 장면 이상인 손님들."""
+        gap = self.config.overview_lane_gap_seconds * 1000.0
+        times: dict[tuple[int, str], list[float]] = {}
+        for ms, pid, lane in self._ov_lane:
+            if start <= ms <= end:
+                times.setdefault((pid, lane), []).append(ms)
+        best: dict[int, tuple[int, str]] = {}
+        for (pid, lane), ts in times.items():
+            ts = sorted(set(ts))
+            run = longest = 1
+            for a, b in zip(ts, ts[1:]):
+                run = run + 1 if b - a <= gap else 1
+                longest = max(longest, run)
+            if longest > best.get(pid, (0, ""))[0]:
+                best[pid] = (longest, lane)
+        return {pid for pid, (n, lane) in best.items() if lane in lanes and n >= self.config.overview_lane_min_frames}
+
+    def _cover_owners(self, start: float, end: float) -> set[int]:
+        """그 시간 받침을 tray_cover_ratio 이상 덮은 장면이 tray_cover_min_frames 이상인 손님들."""
+        n = Counter(pid for ms, pid, r in self._cover if start <= ms <= end and r >= self.config.tray_cover_ratio)
+        return {pid for pid, k in n.items() if k >= self.config.tray_cover_min_frames}
 
     def _reach_owners(self, start: float, end: float) -> set[int]:
         tol = self.config.event_tolerance_seconds * 1000.0

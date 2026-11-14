@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from src.core.config import FusionConfig  # noqa: E402
 from src.core.types import TakeCandidate, ZoneType  # noqa: E402
@@ -207,6 +208,97 @@ def test_lane_first_overrides_single_reach_only_when_enabled():
         assert two_person_visit(fuser).person_id == expect
 
 
+# ---------------------------------------------------------------- 위쪽(전체) 카메라로 센서 레인 주인 (3차 C02)
+
+def hands(fuser, pid, lane, times):
+    for t in times:
+        fuser.note_overview_lane(t, pid, lane)
+
+
+def test_overview_hand_in_lane_picks_owner():
+    # 선반 카메라 손 접촉 없음, 선반 앞 2명 — 위쪽 카메라에서 L2 에 손을 넣은 사람(12)
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L2", -1.0, unit="count")], [])
+    hands(fuser, 12, "L2", (2000.0, 2066.0, 2133.0))
+    hands(fuser, 11, "L1", (2000.0, 2066.0, 2133.0))
+    assert two_person_visit(fuser).person_id == 12
+    assert "위쪽 카메라 센서 레인 L2 손" in fuser.records[-1].how
+
+
+def test_overview_hand_uses_longest_stay_lane():
+    # 11 은 L2 를 잠깐 지나갔지만 L3 에 오래 머묾 — 레인 폭이 좁아 손이 옆 레인 위를 지나가는 것은 가장 오래 머문 레인으로 거른다
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L2", -1.0, unit="count")], [])
+    hands(fuser, 11, "L2", (2000.0, 2066.0))
+    hands(fuser, 11, "L3", (2100.0, 2166.0, 2233.0, 2300.0, 2366.0))
+    hands(fuser, 12, "L2", (2400.0, 2466.0))
+    assert two_person_visit(fuser).person_id == 12
+
+
+def test_overview_hand_window_is_before_sensor():
+    # 센서는 손보다 늦게 찍힌다 — 센서 3초 전까지 보고, 그보다 이른 손은 안 본다
+    sensors = [SensorEvent(3000.0, "L2", -1.0, unit="count")]
+    fuser = lane_fuser(FusionConfig(), sensors, [])
+    hands(fuser, 12, "L2", (100.0, 166.0))
+    assert two_person_visit(fuser).person_id == 12
+    fuser = lane_fuser(FusionConfig(), sensors, [])
+    hands(fuser, 12, "L2", (-500.0, -434.0))
+    assert two_person_visit(fuser).person_id == -1
+
+
+def test_tray_cover_when_hand_is_hidden():
+    # C02 14초: 패딩 손님이 받침 앞에 서서 손이 안 보임 — 그 시각 받침을 몸으로 덮은 사람(11)
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L1", -1.0, unit="count")], [])
+    for t in (2500.0, 2600.0, 2700.0, 2800.0):
+        fuser.note_tray_cover(t, 11, 0.95)
+        fuser.note_tray_cover(t, 12, 0.2)
+    assert two_person_visit(fuser).person_id == 11
+    assert "받침을 가린 사람" in fuser.records[-1].how
+
+
+def test_tray_cover_by_two_people_stays_unknown():
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L1", -1.0, unit="count")], [])
+    for t in (2500.0, 2600.0, 2700.0):
+        fuser.note_tray_cover(t, 11, 0.9)
+        fuser.note_tray_cover(t, 12, 0.7)
+    assert two_person_visit(fuser).person_id == -1
+
+
+def test_overview_lane_match_off_ignores_overview():
+    cfg = FusionConfig(overview_lane_match=False)
+    fuser = lane_fuser(cfg, [SensorEvent(3000.0, "L2", -1.0, unit="count")], [])
+    hands(fuser, 12, "L2", (2000.0, 2066.0, 2133.0))
+    for t in (2500.0, 2600.0, 2700.0):
+        fuser.note_tray_cover(t, 11, 0.9)
+    assert two_person_visit(fuser).person_id == -1
+
+
+def test_sensor_only_uses_overview_hand():
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L2", -1.0, unit="count")], [])
+    hands(fuser, 11, "L2", (2200.0, 2266.0))
+    out = fuser.sensor_only(20000.0)
+    assert len(out) == 1 and out[0].person_id == 11
+
+
+def test_pair_floor_moves_lanes_from_reference_clip():
+    import numpy as np
+    import shoot3_eval as E
+
+    base = {"calibration": {"image": [[0, 0]], "floor": [[0, 0]]}, "lanes_image_ref": "C02",
+            "lanes_image": {"L1": [[0.5, 0.5], [0.6, 0.5], [0.6, 0.6], [0.5, 0.6]]}}
+    shift = np.array([[1, 0, 19.2], [0, 1, 0], [0, 0, 1]], float)       # 기준 영상 → area_setting: 오른쪽 1%
+    out = E.pair_floor(base, np.eye(3), shift)
+    assert "lanes_image_ref" not in out
+    assert out["lanes_image"]["L1"][0] == [0.51, 0.5]
+    assert "lanes_image" not in E.pair_floor(base, np.eye(3), None)     # 기준 영상 맞추기가 없으면 뺀다
+
+
+def test_lanes_image_zones_reads_named_lanes():
+    from src.zones.floor import lanes_image_zones
+
+    zm = lanes_image_zones({"lanes_image": {"L1": [[0, 0], [1, 0], [1, 1]], "L2": [[0, 0], [1, 1], [0, 1]]}})
+    assert [z.name for z in zm.zones] == ["L1", "L2"]
+    assert lanes_image_zones({}) is None
+
+
 def test_slot_change_keeps_take_when_detector_sees_nothing():
     # 물건 탐지 '변화 없음' + 칸 줄어듦 → 집음 1개 / 칸 바뀜(방향 모름) + 손 뻗기 → 확인 못 함(+1) / 칸 그대로 → 만지기만
     take = TakeCandidate(1, "shelf", 10, 40, "", "", 1.0, 5, 0.0, 0.0)
@@ -372,3 +464,62 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
         last = frame
     judge.finish(last)
     assert risk.takes == [] and not any(r.kind == "reach" for r in judge.fuser.records)
+
+
+def test_dual_judge_notes_overview_lane_hand_and_tray_cover():
+    # 3차 위쪽 카메라 레인(floor.yaml lanes_image, C02 화면 기준): 손이 L2 안이면 레인 손, 몸이 받침을 덮으면 가림
+    from src.core.types import Frame, IdentityObservation
+    from src.fusion.judge import DualJudge
+    from src.zones.floor import lanes_image_zones
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    raw = yaml.safe_load((root / "zones" / "store01_shoot3" / "floor.yaml").read_text(encoding="utf-8"))
+    floor = FloorMap.load(root / "zones" / "store01_shoot3" / "floor.yaml")
+    w, h = 1920, 1080
+    judge = DualJudge(FusionConfig(), RecordingRisk(), floor, (1.0, 0.0), TimeAxis(30.0), TimeAxis(60.0), w, (w, h),
+                      {}, None, None, lanes_image=lanes_image_zones(raw))
+    judge.reset()
+    l2 = raw["lanes_image"]["L2"]
+    cx = sum(x for x, _ in l2) / 4 * w
+    cy = sum(y for _, y in l2) / 4 * h
+    beside = (1200.0, 300.0, 1450.0, 1000.0)          # 받침 옆에 선 사람 — 손만 레인 안
+    front = (1350.0, 450.0, 1700.0, 1080.0)           # 받침 앞에 선 사람 — 몸이 받침을 다 덮음
+    for i in range(0, 12, 4):
+        frame = Frame(index=i, timestamp="", pts_ms=i * 1000.0 / 60, image=None, camera_id="angle1")
+        judge.overview_step(frame, [
+            IdentityObservation(person_id=3, track_id=3, bbox=beside, frame=i, timestamp="", keypoints=kp_with_wrist(cx, cy)),
+            IdentityObservation(person_id=4, track_id=4, bbox=front, frame=i, timestamp="", keypoints=kp_with_wrist(0, 0, 0.0)),
+        ], [], [])
+    lanes = {(pid, lane) for _, pid, lane in judge.fuser._ov_lane}
+    assert lanes == {(3, "L2")}
+    cover = {pid: r for _, pid, r in judge.fuser._cover}
+    assert cover[4] == 1.0 and cover.get(3, 0.0) < 0.6
+
+
+def test_c02_pose_trace_picks_both_owners():
+    # 3차 C02 위쪽 카메라를 yolov8n-pose 로 돌린 실제 기록 (요약). 센서: L2 6.67초, L1 14.67초 (위쪽 카메라 시각)
+    # 니트 손님(1): 손이 L2 에 4.34~5.21초 연속, 들어오고 나가며 L3 위를 지나감. 패딩 손님(2): 12.1~15.9초 받침을 90% 넘게 덮음,
+    # 가려진 손목은 L1·L2·L3 에 흩어져 찍힘. 둘 다 선반 앞에 있어 선반 앞 한 명으로는 못 정함.
+    sensors = [SensorEvent(6670.0, "L2", -1.0, unit="count"), SensorEvent(14670.0, "L1", -1.0, unit="count")]
+    fuser = lane_fuser(FusionConfig(), sensors, [])
+    step = 1000.0 / 15
+    frames = lambda a, b: [a + k * step for k in range(int(round((b - a) / step)) + 1)]
+    hands(fuser, 11, "L3", frames(4070.0, 4270.0) + frames(5270.0, 5410.0) + frames(5540.0, 5670.0))
+    hands(fuser, 11, "L2", frames(4340.0, 5210.0))
+    for t in frames(4270.0, 5610.0):
+        fuser.note_tray_cover(t, 11, 0.75)
+    hands(fuser, 12, "L2", (13020.0, 13150.0, 13220.0, 13750.0, 13880.0, 14480.0))
+    hands(fuser, 12, "L3", (13080.0, 13280.0, 13420.0, 13550.0, 13620.0, 13680.0, 13820.0))
+    hands(fuser, 12, "L1", (13950.0, 14020.0, 14080.0, 14150.0, 14280.0, 14350.0, 14420.0))
+    for t in frames(12100.0, 15900.0):
+        fuser.note_tray_cover(t, 12, 0.93)
+    for t in frames(14820.0, 15020.0):
+        fuser.note_tray_cover(t, 11, 0.2)
+    for t in frames(3000.0, 17000.0):
+        fuser.note_band(t, 11)
+        fuser.note_band(t, 12)
+    out = fuser.sensor_only(60000.0)
+    assert [(v.detail, v.person_id) for v in out] == [("센서 L2 -1개", 11), ("센서 L1 -1개", 12)]
+    hows = [r.how for r in fuser.records if r.kind == "sensor"]
+    assert "위쪽 카메라 센서 레인 L2 손" in hows[0]

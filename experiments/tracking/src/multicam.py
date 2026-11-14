@@ -27,7 +27,7 @@ from .fusion.shelf_events import TimeAxis, load_sensor_events
 from .inputs.live_source import INDEX_PER_SECOND, is_live_source, normalize_source
 from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
-from .zones.floor import FloorMap, FloorZoneMap, shelf_image_zones
+from .zones.floor import FloorMap, FloorZoneMap, lanes_image_zones, shelf_image_zones
 from .zones.zone_map import ZoneMap
 
 
@@ -336,5 +336,6 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
         d_fps, d_size = 30.0, (1920, 1080)
     judge = DualJudge(config.fusion, risk, floor, setup.band_map if setup else (1.0, 0.0),
                       TimeAxis(d_fps, detail_cam.offset_ms if detail_cam else 0.0), TimeAxis(ov_fps, overview_cam.offset_ms),
-                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors, shelf_image_zones(floor_raw))
+                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors, shelf_image_zones(floor_raw),
+                      lanes_image=lanes_image_zones(floor_raw))
     return MultiCameraPipeline(config, overview, detail, overview_cam, detail_cam, judge, out_dir)
