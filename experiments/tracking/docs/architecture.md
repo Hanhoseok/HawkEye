@@ -4,7 +4,7 @@
 결과는 `docs/results-summary.md`, 안 되는 것은 `docs/limitations.md`, 각 층의 설계 이유·실험은 층별 문서(아래 표)에 있다.
 숫자는 2026-10-19 코드 기준 실제 설정값이다 (`config.yaml`, `src/core/config.py`).
 카메라 2대·실시간·선반 센서 구조는 §6 (2026-11-03 1단계 구현, **2026-11-10 에 그 뒤 바뀐 기본 설정까지 반영**), 설계는 `docs/multiview-design.md`, 근거 논문은 `docs/multiview-papers.md`, 구현 중 생긴 일은 `docs/multiview-progress.md`.
-(2026-11-13) §6 은 11-10 기준이다 — 그 뒤 3차 촬영에서 더한 것(두 화면 짝을 바닥 위 거리로 `fusion.position_mode: floor`, 영상 끝 출구 규칙 `risk.exit_end_at_edge_only`, 실제 장면 시각 `src/inputs/frame_times.py`, 실제 센서 입력)은 아직 여기 없다 — `docs/multiview-progress.md` 후속 14~26 · 37~39.
+(2026-11-13) §6 은 11-10 기준이다 — 그 뒤 3차 촬영에서 더한 것(두 화면 짝을 바닥 위 거리로 `fusion.position_mode: floor`, 영상 끝 출구 규칙 `risk.exit_end_at_edge_only`, 실제 장면 시각 `src/inputs/frame_times.py`, 실제 센서 입력)은 아직 여기 없다 — `docs/multiview-progress.md` 후속 14~26 · 39~41.
 §1~§4 는 카메라 1대 실행 기준이다. 카메라 2대에서 달라지는 규칙(발 점·손님 조건·신원)은 §6 에 따로 적었다.
 
 ---

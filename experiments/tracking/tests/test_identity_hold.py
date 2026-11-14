@@ -1,8 +1,8 @@
-"""신원 보류 두 가지 (후속 43, docs/multiview-progress.md).
+"""신원 보류 두 가지 (후속 45, docs/multiview-progress.md).
 
 - identity.nested_hold_overlap: 새 신원을 만들려는 상자가 이미 신원이 있는 상자와 포개져 있으면 만들지 않고 보류.
   3차 C03: 한 사람 위에 상자가 둘(머리 상자 + 큰 상자, 윗몸 상자 + 온몸 상자) 나와 두 번째 상자가 새 신원이 됐다.
-- identity.nested_pose_gap (후속 44): 포개져 있어도 두 상자의 관절이 멀면 서로 다른 사람 — 보류하지 않는다.
+- identity.nested_pose_gap (후속 46): 포개져 있어도 두 상자의 관절이 멀면 서로 다른 사람 — 보류하지 않는다.
   2차 C15: 문으로 함께 들어온 두 사람의 상자가 0.81 포개져, 포개짐만 보면 한 신원으로 합쳐졌다.
 - identity.min_identity_score: 탐지 점수가 낮은 상자로는 신원을 만들지도, 되살아난 번호를 다시 판정하지도 않고 보류.
   3차 C03: 놓친 손님 번호가 사람 없는 창가 상자(0.26)에 되살아나 그 손님 신원이 됐다.
@@ -175,7 +175,7 @@ def test_a_short_gap_is_not_a_revival():
     assert show(reg, 0.5, [(1, A_BODY, 0.3)])[1] == a
 
 
-# ---------------------------------------------------------------- 관절로 가르기 (후속 44)
+# ---------------------------------------------------------------- 관절로 가르기 (후속 46)
 
 BEHIND = (410.0, 200.0, 510.0, 600.0)     # A 와 거의 포개 선 다른 사람 (A_BODY 와 0.9 포개짐)
 
@@ -223,7 +223,7 @@ def test_nested_box_with_joints_elsewhere_is_another_person():
     out = show(reg, 0.1, [(1, A_BODY, 0.9, pose((450.0, 220.0))), (2, BEHIND, 0.9, pose((530.0, 215.0)))])
     assert out[1] == a and out[2] not in (a, -1), "포개 선 다른 사람이 보류됐다"
     assert not reg.holds
-    # 관절을 안 보면(포개짐만) 보류된다 — 후속 43 의 약점 그대로
+    # 관절을 안 보면(포개짐만) 보류된다 — 후속 45 의 약점 그대로
     blind = pose_registry(nested_pose_gap=0.0)
     a = show(blind, 0.0, [(1, A_BODY, 0.9, pose((450.0, 220.0)))])[1]
     assert show(blind, 0.1, [(1, A_BODY, 0.9, pose((450.0, 220.0))), (2, BEHIND, 0.9, pose((530.0, 215.0)))])[2] == -1

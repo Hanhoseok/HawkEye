@@ -1,4 +1,4 @@
-"""신원 보류 두 가지(후속 43)와 관절로 가르기(후속 44)를 저장분으로 켜고 끄며 견준다.
+"""신원 보류 두 가지(후속 45)와 관절로 가르기(후속 46)를 저장분으로 켜고 끄며 견준다.
 
     python scripts/identity_hold.py --shoot 3 grid                      # 기준 후보들을 한 번에 (정상 N 짝 / 전체 따로 집계)
     python scripts/identity_hold.py --shoot 3 try nested=0.7 score=0.4   # 한 조합을 짝별로 자세히 (전체 카메라에만)
@@ -7,7 +7,7 @@
     python scripts/identity_hold.py --shoot 3 links nested=0.7           # 두 화면 짝이 달라지나 (짝 있음 · 끊김 · 짝 바뀜 · 손님 아닌 번호와 맺힘)
     python scripts/identity_hold.py --shoot 3 held nested=0.7            # 포개져 보류된 상자마다: 얼마나 보류됐고 그 뒤 무엇이 됐나
     python scripts/identity_hold.py --shoot 3 gaps                       # 포개진 두 상자의 관절이 얼마나 떨어져 있나 (관절 기준의 근거)
-    python scripts/identity_hold.py --shoot 3 posegrid                   # 포개짐 × 관절 기준 후보를 한 번에 (후속 44)
+    python scripts/identity_hold.py --shoot 3 posegrid                   # 포개짐 × 관절 기준 후보를 한 번에 (후속 46)
     python scripts/identity_hold.py --shoot 3 try nested=0.7 pose=0.5    # 포개짐 보류 + 관절이 0.5 넘게 떨어지면 다른 사람
 
 - nested = identity.nested_hold_overlap (이미 신원이 있는 상자와 포개진 상자에는 새 신원을 만들지 않고 보류)
@@ -41,7 +41,7 @@ VALUES = [{"nested": 0.5}, {"nested": 0.7}, {"nested": 0.9}, {"score": 0.3}, {"s
 GRID = [{}] + VALUES + [{**v, "both": 1.0} for v in VALUES]
 """both 가 없으면 전체 카메라에만, 있으면 두 카메라 모두에 건다."""
 POSE_GRID = [{}] + [{"nested": n} for n in (0.5, 0.7, 0.9)] + [{"nested": n, "pose": g} for n in (0.5, 0.7, 0.9) for g in (0.3, 0.5, 0.8)]
-"""포개짐만 / 포개짐 + 관절 기준 (후속 44)."""
+"""포개짐만 / 포개짐 + 관절 기준 (후속 46)."""
 
 
 def name_of(combo: dict) -> str:

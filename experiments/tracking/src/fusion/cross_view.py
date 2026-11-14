@@ -119,7 +119,7 @@ class CrossViewLinker:
 
         candidate=False 인 표본도 위치·외형에는 그대로 쓰지만, **그 조각에 candidate=True 표본이 하나도 없는 전체 카메라 신원은
         짝 후보에서 빠진다** (overview_candidates). 표본을 아예 안 넣으면 남은 몇 장만으로 위치 점수가 높게 나와
-        오히려 짝을 가로챘다 (3차 C19 17.7초, 후속 41)."""
+        오히려 짝을 가로챘다 (3차 C19 17.7초, 후속 43)."""
         if person_id <= 0:
             return
         tracks = self._detail if view == "detail" else self._overview
