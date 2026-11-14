@@ -164,6 +164,8 @@ class IdentityRegistry:
         self._min_bbox_px: float | None = None
         self.promotions: list[dict] = []
         """임시 → 정식으로 올린 기록. {"person": 신원, "ms": 시각, "since_ms": 조건을 채우기 시작한 시각}"""
+        self.holds: list[dict] = []
+        """신원을 주지 않고 보류한 기록. {"track", "ms", "why": "score"(탐지 점수 낮음) | "nested"(신원 있는 상자와 포개짐)}"""
 
     def set_promote_check(self, check) -> None:
         """임시 신원을 정식으로 올리는 조건 `check(bbox) -> bool` (예: 발이 매장 안 바닥). None 이면 시간만 본다."""
@@ -237,6 +239,20 @@ class IdentityRegistry:
         height = obs.bbox[3] - obs.bbox[1]
         return height >= (self._min_bbox_px or 0.0)
 
+    def _confident(self, obs: TrackObservation) -> bool:
+        """탐지 점수가 신원을 정할 만큼 높은가 (identity.min_identity_score, 0 이면 늘 참)."""
+        return obs.score >= self.config.min_identity_score
+
+    @staticmethod
+    def _nested(a, b) -> float:
+        """두 상자가 포개진 정도 = 겹친 넓이 ÷ 작은 상자의 넓이 (0~1)."""
+        w = min(a[2], b[2]) - max(a[0], b[0])
+        h = min(a[3], b[3]) - max(a[1], b[1])
+        if w <= 0 or h <= 0:
+            return 0.0
+        small = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+        return w * h / small if small > 0 else 0.0
+
     def _update_tentative(self, person: _Person, obs: TrackObservation, now_ms: float) -> None:
         """임시 신원이 정식 조건을 연속으로 tentative_seconds 동안 채웠으면 정식으로 올린다."""
         ok = self._usable(obs) and (self._promote_check is None or bool(self._promote_check(obs.bbox)))
@@ -301,6 +317,12 @@ class IdentityRegistry:
                     self._recheck[obs.track_id] = person_id
                 if obs.track_id in self._recheck:
                     at_edge = self._at_edge(obs, frame)
+                    if not self._confident(obs):
+                        # 탐지 점수가 낮은 상자 — 사람이 아닐 수 있다. 원래 주인 가산점으로 신원을 되살리지 않고 보류한다.
+                        self._track_to_person.pop(obs.track_id, None)
+                        self.holds.append({"track": obs.track_id, "ms": frame.pts_ms, "why": "score"})
+                        waiting.append(obs)
+                        continue
                     if self._usable(obs) and not at_edge:
                         self._track_to_person.pop(obs.track_id, None)
                         revived[obs.track_id] = self._recheck.pop(obs.track_id)
@@ -334,7 +356,11 @@ class IdentityRegistry:
         results = [self._observation(obs, pid) for obs, pid in known]
         results += [self._observation(obs, -1) for obs in waiting]
 
-        usable_pending = [o for o in pending if self._usable(o)]
+        for obs in pending:
+            if self._usable(obs) and not self._confident(obs):
+                self.holds.append({"track": obs.track_id, "ms": frame.pts_ms, "why": "score"})
+        usable_pending = [o for o in pending if self._usable(o) and self._confident(o)]
+        visible = [obs.bbox for obs, _ in known]  # 이번 장면에 신원이 있는 상자 (포개짐 확인용)
         embeddings = self._embed(frame, refresh + usable_pending)
         cursor = 0
 
@@ -354,8 +380,8 @@ class IdentityRegistry:
 
         # 2) 새로 생긴 track 에 신원을 배정
         for obs in pending:
-            if not self._usable(obs):
-                # 너무 작아 신원을 판단할 수 없다. 배정을 보류하고 다음 프레임에 다시 시도한다.
+            if not self._usable(obs) or not self._confident(obs):
+                # 너무 작거나 탐지 점수가 낮아 신원을 판단할 수 없다. 배정을 보류하고 다음 프레임에 다시 시도한다.
                 results.append(self._observation(obs, -1))
                 continue
 
@@ -370,6 +396,17 @@ class IdentityRegistry:
                 person_id, similarity, stitched = self._match(
                     emb, obs.bbox, frame.pts_ms, occupied, favored=revived.get(obs.track_id)
                 )
+
+            if person_id is None and cfg.nested_hold_overlap > 0 and any(
+                self._nested(obs.bbox, box) >= cfg.nested_hold_overlap for box in visible
+            ):
+                # 이미 신원이 있는 상자와 포개진 상자 — 한 사람 위에 상자가 둘 나온 것일 수 있다.
+                # 새 신원을 만들지 않고 보류한다 (되살아난 번호였다면 다음 장면에도 원래 주인을 우대해 다시 본다).
+                if obs.track_id in revived:
+                    self._recheck[obs.track_id] = revived[obs.track_id]
+                self.holds.append({"track": obs.track_id, "ms": frame.pts_ms, "why": "nested"})
+                results.append(self._observation(obs, -1))
+                continue
 
             if person_id is None:
                 person_id = self._next_person_id
@@ -399,6 +436,7 @@ class IdentityRegistry:
 
             self._track_to_person[obs.track_id] = person_id
             occupied.add(person_id)
+            visible.append(obs.bbox)
 
             results.append(
                 self._observation(

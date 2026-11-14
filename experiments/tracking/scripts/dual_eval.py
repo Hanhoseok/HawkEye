@@ -58,6 +58,9 @@ JUDGE_FILE: Path | None = ROOT / "configs" / JUDGE_FILES[2]
 """분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다.
 촬영 회차마다 파일이 다르다 (set_profile)."""
 OVERRIDES: list[str] = []
+OVERVIEW_IDENTITY: dict = {}
+"""전체 카메라의 신원 계층만 바꿀 값 (IdentityConfig 칸 이름 → 값). `--set identity.*` 는 두 카메라 모두에 들어가므로,
+전체 카메라에만 시험할 때 쓴다 (scripts/identity_hold.py)."""
 OVERVIEW_POSE = False
 OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
 SHOOT = 2
@@ -242,7 +245,7 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     cfg.cameras = [
         CameraConfig("angle1", str(ref), "overview", str(zdir / "floor.yaml"), 0.0, STRIDE["angle1"],
                      OVERVIEW_DETECTOR,
-                     {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE}),
+                     {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE, **OVERVIEW_IDENTITY}),
         CameraConfig("angle0", str(video), "detail", str(zdir / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
                      {"edge_sides": EDGE_SIDES["angle0"]}),
     ]
