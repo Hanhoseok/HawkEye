@@ -1,4 +1,4 @@
-"""3차 촬영: 두 카메라의 바닥 좌표가 같은 좌표인지 검증한다 (docs/multiview-progress.md 후속 27).
+"""3차 촬영: 두 카메라의 바닥 좌표가 같은 좌표인지 검증한다 (docs/multiview-progress.md 후속 37).
 
     python scripts/floor_check.py tiles     # area_setting: 두 화면을 위에서 본 그림으로 펴서 타일 줄눈이 얼마나 어긋나나
     python scripts/floor_check.py feet      # 영상마다: 두 카메라에 발목이 같이 보인 순간, 같은 사람의 발이 바닥 위에서 얼마나 떨어져 나오나

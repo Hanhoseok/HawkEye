@@ -3,13 +3,13 @@
     python scripts/link_diagnose.py why     # 0.5초 조각마다 짝이 안 맺힌 이유를 나눠 센다
     python scripts/link_diagnose.py fit     # 선반 카메라의 어떤 값이 '선반 앞 띠 위치'를 잘 맞히나 (정상 영상, 짝 하나씩 빼고 시험)
     python scripts/link_diagnose.py try     # 해결 후보를 실행 중에만 바꿔 끼워 38쌍을 다시 판정해 견준다
-    python scripts/link_diagnose.py --shoot 3 why|fit|try|check   # 3차 촬영 (선반 카메라에도 바닥 지도 — 후속 27)
+    python scripts/link_diagnose.py --shoot 3 why|fit|try|check   # 3차 촬영 (선반 카메라에도 바닥 지도 — 후속 37)
         why   = 3차 기본(바닥 위 거리)의 끊김. 예전 방식은 --set fusion.position_mode=band
         fit   = 같은 사람의 두 카메라 발이 바닥 위에서 얼마나 떨어져 나오나 (정상 영상) → fusion.max_floor_gap_cm·ray_slack_cm 의 근거
         try   = 띠 위치(한 줄) / 바닥 위 거리 / 짝 유지를 견준다 (연결·끊김·채점)
         check = 두 명 이상 장면에서 맺은 짝이 '맞는 사람'인가 (발목이 두 화면 모두 보인 조각을 기준으로)
-    python scripts/link_diagnose.py [--shoot 3] gate   # 손님으로 센 신원만 짝 후보로 삼으면(fusion.link_customers_only) 무엇이 달라지나 (후속 31)
-    python scripts/link_diagnose.py [--shoot 3] keep|hidden   # 같은 표로 fusion.keep_bonus_recent_only / fusion.ankle_hidden_behind 끔·켬 (후속 32)
+    python scripts/link_diagnose.py [--shoot 3] gate   # 손님으로 센 신원만 짝 후보로 삼으면(fusion.link_customers_only) 무엇이 달라지나 (후속 41)
+    python scripts/link_diagnose.py [--shoot 3] keep|hidden   # 같은 표로 fusion.keep_bonus_recent_only / fusion.ankle_hidden_behind 끔·켬 (후속 42)
 
 아무것도 고치지 않는다 — 설정·기록·코드를 그대로 두고, `try` 의 후보(위치식 바꾸기·짝 유지)는 이 실행 안에서만 바꿔 끼운다.
 영상·모델이 필요 없다. 기록(`outputs/dual_eval_pose3`)만 있으면 된다. `why` 약 1분, `fit` 수 초, `try` 는 후보마다 약 1분.
@@ -646,7 +646,7 @@ def check3() -> None:
 
 
 def gate(flag: str = "link_customers_only", name: str = "손님만 후보") -> None:
-    """손님으로 센 신원만 짝 후보로 삼으면(`fusion.link_customers_only`) 무엇이 달라지나 — 끔/켬을 같은 기록으로 견준다 (후속 31).
+    """손님으로 센 신원만 짝 후보로 삼으면(`fusion.link_customers_only`) 무엇이 달라지나 — 끔/켬을 같은 기록으로 견준다 (후속 41).
 
     손님 여부는 그 쌍을 끝까지 판정한 뒤의 손님 장부(seen_inside)로 센다. 2·3차 모두 된다."""
     seen: dict[str, dict[str, set[int]]] = {}
@@ -710,7 +710,7 @@ def gate(flag: str = "link_customers_only", name: str = "손님만 후보") -> N
 
 AB = {"keep": lambda: gate("keep_bonus_recent_only", "가산점은 바로 앞 짝만"),
       "hidden": lambda: gate("ankle_hidden_behind", "앞사람에 가린 발목 안 믿음")}
-"""끔/켬 견주기 (gate 와 같은 표) — 후속 32."""
+"""끔/켬 견주기 (gate 와 같은 표) — 후속 42."""
 
 
 def main() -> int:

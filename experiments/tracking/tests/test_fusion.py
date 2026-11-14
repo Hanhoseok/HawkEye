@@ -405,7 +405,7 @@ def test_detail_floor_map_reads_calibration_from_zone_file():
     assert abs(fx - 64) < 1e-6 and abs(fy - 74) < 1e-6
 
 
-# ---------------------------------------------------------------- 매장 안 바닥을 밟은 신원만 짝 후보 (link_customers_only, 후속 31)
+# ---------------------------------------------------------------- 매장 안 바닥을 밟은 신원만 짝 후보 (link_customers_only, 후속 41)
 
 
 def test_linker_skips_overview_identities_without_a_candidate_sample():
@@ -494,7 +494,7 @@ def test_dual_judge_marks_only_customers_and_people_standing_on_the_store_floor(
     assert off.linker.overview_candidates(0.0) == [1, 4, 5]
 
 
-# ---------------------------------------------------------------- 남은 짝 문제 (후속 32)
+# ---------------------------------------------------------------- 남은 짝 문제 (후속 42)
 
 
 def test_keep_bonus_goes_only_to_the_partner_of_the_previous_window():
