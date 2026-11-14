@@ -53,6 +53,8 @@ class SensorEvent:
     slot: str
     delta_g: float
     confidence: float = 1.0
+    unit: str = "g"
+    """delta_g 의 단위. "g" = 무게(칸 무게 sensor_unit_g 로 개수 환산), "count" = 개수 그대로 (3차 레인 거리 센서)."""
 
 
 def load_sensor_events(path: str | Path) -> list[SensorEvent]:
@@ -151,8 +153,12 @@ class ShelfEventFuser:
     def detail_visit(self, visit: ShelfVisit, start_ms: float, end_ms: float) -> ShelfVisit:
         """선반 카메라의 선반 방문 → 전체 카메라 손님의 방문 (센서가 있으면 함께 묶음)."""
         owner, how = None, ""
+        sensor = self._sensor_between(start_ms, end_ms, visit.shelf)
+        lane_owner, lane_how = self._lane_owner(sensor, start_ms, end_ms, visit.shelf)
+        if lane_owner is not None and self.config.sensor_lane_first:
+            owner, how = lane_owner, lane_how
         reach = self._reach_owners(start_ms, end_ms)
-        if len(reach) == 1:
+        if owner is None and len(reach) == 1:
             # 전체 카메라에서 그 시각 선반으로 팔을 뻗은 사람이 한 명 — 카메라 사이 짝(선반 앞 띠 한 줄 좌표, B-14)을
             # 거치지 않는 직접 근거라 먼저 쓴다 (C2: 비슷한 옷 2명이 앞뒤로 서면 띠 위치로는 못 가름)
             owner, how = next(iter(reach)), "전체 카메라 팔 뻗기"
@@ -166,18 +172,21 @@ class ShelfEventFuser:
                 both = owners & reach
                 if len(both) == 1:
                     owner, how = both.pop(), "손 접촉 여럿 중 전체 카메라 팔 뻗기"
+                elif lane_owner is not None:
+                    owner, how = lane_owner, f"손 접촉 {len(owners)}명 중 {lane_how}"
                 else:
                     how = f"손 접촉 {len(owners)}명 — 모름"
         if owner is None and not how:
             owner = self._band_owner(start_ms, end_ms)
             how = "선반 앞 한 명" if owner is not None else "선반 앞 여러 명 또는 없음 — 모름"
+        if owner is None and lane_owner is not None:
+            owner, how = lane_owner, lane_how
         removed, added, source, extra = visit.removed, visit.added, visit.source, ""
         slot_change, slot_text = visit.slot_change, ""
         if slot_change is None:
             slot_change, slot_text = self._slot_change_for(start_ms, end_ms, visit.shelf)
             if slot_text:
                 extra += f" / 칸 그림: {slot_text}"
-        sensor = self._sensor_between(start_ms, end_ms, visit.shelf)
         if sensor:
             s_removed, s_added = self._sensor_counts(sensor)
             if (s_removed, s_added) != (removed, added):
@@ -198,8 +207,11 @@ class ShelfEventFuser:
             if i in self._sensor_used or s.time_ms > now_ms - 3 * tol:
                 continue
             self._sensor_used.add(i)
-            owners = self._touch_owners(s.time_ms - tol, s.time_ms + tol, self.slot_shelf.get(s.slot, s.slot))
-            owner, how = (owners.pop(), "손-칸 접촉") if len(owners) == 1 else (self._band_owner(s.time_ms - tol, s.time_ms + tol), "선반 앞 한 명")
+            shelf = self.slot_shelf.get(s.slot, s.slot)
+            owner, how = self._lane_owner([s], s.time_ms - tol, s.time_ms + tol, shelf)
+            if owner is None:
+                owners = self._touch_owners(s.time_ms - tol, s.time_ms + tol, shelf)
+                owner, how = (owners.pop(), "손-칸 접촉") if len(owners) == 1 else (self._band_owner(s.time_ms - tol, s.time_ms + tol), "선반 앞 한 명")
             removed, added = self._sensor_counts([s])
             visit = ShelfVisit(person_id=owner if owner is not None else -1, shelf=self.slot_shelf.get(s.slot, s.slot),
                                start_frame=self.overview_axis.to_frame(s.time_ms - tol),
@@ -213,17 +225,32 @@ class ShelfEventFuser:
 
     # ------------------------------------------------------------------ 내부
 
-    def _touch_owners(self, start: float, end: float, shelf: str) -> set[int]:
+    def _touch_owners(self, start: float, end: float, shelf: str, slots: set[str] | None = None) -> set[int]:
+        """그 시간 그 선반에 손이 닿은 전체 카메라 손님들. slots 를 주면 그 칸(레인)에 닿은 손님만."""
         tol = self.config.event_tolerance_seconds * 1000.0
         owners = set()
         for s, e, pid, slot in self._touches:
             if self.slot_shelf.get(slot, shelf) != shelf:
+                continue
+            if slots is not None and slot not in slots:
                 continue
             if e >= start - tol and s <= end + tol:
                 o = self.linker.owner(pid, s, e)
                 if o is not None:
                     owners.add(o)
         return owners
+
+    def _lane_owner(self, sensors: list[SensorEvent], start: float, end: float, shelf: str) -> tuple[int | None, str]:
+        """센서가 바뀐 칸(레인)에 그 시간 손이 닿은 손님이 한 명이면 그 사람. (주인, 이유)
+
+        선반 카메라 손-칸 접촉의 칸 이름이 센서 칸 이름과 같아야 한다 (3차: 둘 다 L1·L2·L3)."""
+        if not self.config.sensor_lane_match or not sensors:
+            return None, ""
+        lanes = {s.slot for s in sensors}
+        owners = self._touch_owners(start, end, shelf, slots=lanes)
+        if len(owners) == 1:
+            return owners.pop(), f"센서 레인 {','.join(sorted(lanes))} 손 접촉"
+        return None, ""
 
     def _reach_owners(self, start: float, end: float) -> set[int]:
         tol = self.config.event_tolerance_seconds * 1000.0
@@ -250,15 +277,18 @@ class ShelfEventFuser:
 
     def _delta_text(self, s: SensorEvent) -> str:
         """칸 무게(sensor_unit_g)가 있으면 g(무게 변화), 없으면 개수 변화 — 3차 실제 레인 센서는 개수를 delta_g 칸에 넣는다."""
-        if self.config.sensor_unit_g.get(s.slot):
+        if s.unit != "count" and self.config.sensor_unit_g.get(s.slot):
             return f"{s.delta_g:+.0f}g"
         return f"{s.delta_g:+.0f}개"
 
     def _sensor_counts(self, events: list[SensorEvent]) -> tuple[int, int]:
         removed = added = 0
         for s in events:
-            unit = float(self.config.sensor_unit_g.get(s.slot, 0) or 0)
-            n = max(1, int(round(abs(s.delta_g) / unit))) if unit > 0 else 1
+            if s.unit == "count":
+                n = max(1, int(round(abs(s.delta_g))))      # 레인 센서: 한 번에 2개 꺼냄(REMOVE 2) = 2개
+            else:
+                unit = float(self.config.sensor_unit_g.get(s.slot, 0) or 0)
+                n = max(1, int(round(abs(s.delta_g) / unit))) if unit > 0 else 1
             if s.delta_g < 0:
                 removed += n
             elif s.delta_g > 0:

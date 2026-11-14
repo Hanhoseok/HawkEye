@@ -554,6 +554,12 @@ class FusionConfig:
     """선반 센서 기록 (CSV: time_sec, slot, delta_g, confidence). 없으면 센서 없이."""
     sensor_unit_g: dict = field(default_factory=dict)
     """칸별 물건 하나 무게(g). 무게 변화를 개수로 바꾼다."""
+    sensor_lane_match: bool = True
+    """센서 기록의 칸(3차 레인 L1·L2·L3)과 선반 카메라 손-칸 접촉의 칸이 같은 사람으로 주인을 가린다.
+    기본은 '다른 근거로 못 정할 때만' 쓴다 — 손 접촉 여럿·선반 앞 여럿·모름일 때 그 레인을 만진 사람이 한 명이면 그 사람.
+    레인 폭이 화면에서 약 27px 라 손목 위치가 옆 레인에 찍힐 수 있어 우선순위는 낮게 둔다 (2026-11-14)."""
+    sensor_lane_first: bool = False
+    """켜면 센서 레인을 만진 사람이 한 명일 때 그 사람을 다른 근거(팔 뻗기·짝)보다 먼저 쓴다. 비교 실험용."""
     overview_reach_seconds: float = 0.0
     """전체 카메라 팔 뻗기: 손목이 전체 카메라 화면의 선반 영역(floor.yaml `shelf_image`)에 이 시간 이상 들어가면 한 번.
     0 이면 끔. 전체 카메라를 yolo-pose 로 돌려야 손목이 있다 (2026-11-04 사용자 제안 — 위에서 보면 팔 뻗기가 잘 보인다).

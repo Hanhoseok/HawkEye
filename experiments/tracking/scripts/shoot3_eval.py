@@ -135,7 +135,8 @@ def load_sensor(path: Path, offset_ms: float, lanes: tuple[str, ...] | None = No
 
     - 영상 안(in_video=1) 기록만 — 영상 끝 뒤의 채워 넣기(ADD)가 마지막 손님에게 '놓음'으로 붙지 않게.
     - REMOVE·ADD 만 (RESYNC 는 개수 변화 0).
-    - delta_g 에 개수 변화를 그대로 넣는다 (칸 무게 sensor_unit_g 가 없는 칸은 기록 하나 = 1개로 셈).
+    - delta_g 에 개수 변화를 그대로 넣고 unit="count" 로 표시한다 (REMOVE 2 = 2개, 칸 무게와 무관).
+    - 레인 이름(L1·L2·L3)이 선반 카메라 구역 이름과 같아 손-칸 접촉의 레인으로 주인을 가릴 수 있다 (sensor_lane_match).
     - lanes 를 주면 그 레인만 (예: L3 센서는 못 믿어서 L1·L2 만).
     """
     import csv
@@ -151,5 +152,6 @@ def load_sensor(path: Path, offset_ms: float, lanes: tuple[str, ...] | None = No
                 continue
             if lanes and r["lane"] not in lanes:
                 continue
-            out.append(SensorEvent(float(r["time_sec"]) * 1000.0 + offset_ms, r["lane"], float(r["delta"]), 1.0))
+            out.append(SensorEvent(float(r["time_sec"]) * 1000.0 + offset_ms, r["lane"], float(r["delta"]), 1.0,
+                                   unit="count"))
     return out

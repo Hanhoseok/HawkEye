@@ -134,6 +134,79 @@ def test_sensor_only_event_becomes_visit_after_waiting():
     assert len(out) == 1 and out[0].person_id == 8 and out[0].source == "sensor" and out[0].removed == 1
 
 
+# ---------------------------------------------------------------- 센서 레인 ↔ 손-칸 접촉 레인 (3차 L1·L2·L3)
+
+LANE_SHELF = {"L1": "shelf", "L2": "shelf", "L3": "shelf"}
+
+
+def lane_fuser(cfg: FusionConfig, sensors, touches):
+    """선반 카메라 4번 ↔ 전체 11번, 6번 ↔ 12번으로 짝지은 뒤 touches=[(선반 카메라 신원, 레인), ...] 손 접촉."""
+    linker = CrossViewLinker(cfg)
+    feed(linker, {("detail", 4): lambda t: 0.3, ("detail", 6): lambda t: 0.7,
+                  ("overview", 11): lambda t: 0.3, ("overview", 12): lambda t: 0.7}, 0, 6000)
+    fuser = ShelfEventFuser(cfg, linker, TimeAxis(30.0), TimeAxis(60.0), LANE_SHELF, sensors)
+    for pid, lane in touches:
+        fuser.detail_take(TakeCandidate(pid, lane, 85, 100, "", "", 0.5, 8, 0.0, 0.0))   # 2.8~3.3초
+    for t in (2800.0, 3000.0, 3200.0):
+        fuser.note_band(t, 11)
+        fuser.note_band(t, 12)
+    return fuser
+
+
+def two_person_visit(fuser):
+    return fuser.detail_visit(ShelfVisit(-1, "shelf", 60, 120, 0, 0, "shelf", "[shelf] 두 사람이 가림"), 2500.0, 3800.0)
+
+
+def test_sensor_lane_picks_the_person_who_touched_that_lane():
+    # 두 사람이 다른 레인을 만졌고 센서는 L2 에서 1개 꺼냄 → L2 를 만진 사람(12)
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L2", -1.0, unit="count")], [(4, "L1"), (6, "L2")])
+    fused = two_person_visit(fuser)
+    assert fused.person_id == 12 and fused.removed == 1
+    assert "센서 레인 L2" in fuser.records[-1].how
+
+
+def test_sensor_lane_match_off_keeps_old_unknown():
+    cfg = FusionConfig(sensor_lane_match=False)
+    fuser = lane_fuser(cfg, [SensorEvent(3000.0, "L2", -1.0, unit="count")], [(4, "L1"), (6, "L2")])
+    fused = two_person_visit(fuser)
+    assert fused.person_id == -1 and "모름" in fuser.records[-1].how
+
+
+def test_same_lane_touched_by_two_people_stays_unknown():
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L2", -1.0, unit="count")], [(4, "L2"), (6, "L2")])
+    assert two_person_visit(fuser).person_id == -1
+
+
+def test_two_lanes_at_once_need_one_person():
+    # 센서가 L1·L2 둘 다 바뀌었는데 각 레인을 다른 사람이 만짐 → 한 방문의 주인으로는 못 정함
+    sensors = [SensorEvent(3000.0, "L1", -1.0, unit="count"), SensorEvent(3100.0, "L2", -1.0, unit="count")]
+    fuser = lane_fuser(FusionConfig(), sensors, [(4, "L1"), (6, "L2")])
+    assert two_person_visit(fuser).person_id == -1
+
+
+def test_sensor_only_event_uses_lane_touch():
+    # 카메라 방문과 안 묶인 센서 기록도 그 레인을 만진 사람에게 (선반 앞 2명이라 예전엔 모름)
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L1", -1.0, unit="count")], [(4, "L1"), (6, "L2")])
+    out = fuser.sensor_only(20000.0)
+    assert len(out) == 1 and out[0].person_id == 11 and out[0].source == "sensor"
+    assert "센서 레인 L1" in fuser.records[-1].how
+
+
+def test_lane_sensor_counts_multiple_items():
+    # 레인 센서는 개수를 보낸다: REMOVE 2 = 2개 (예전엔 칸 무게가 없으면 기록 하나 = 1개로 셈)
+    fuser = lane_fuser(FusionConfig(), [SensorEvent(3000.0, "L2", -2.0, unit="count")], [(6, "L2")])
+    fused = two_person_visit(fuser)
+    assert (fused.person_id, fused.removed) == (12, 2)
+
+
+def test_lane_first_overrides_single_reach_only_when_enabled():
+    sensors = [SensorEvent(3000.0, "L2", -1.0, unit="count")]
+    for first, expect in ((False, 11), (True, 12)):
+        fuser = lane_fuser(FusionConfig(sensor_lane_first=first), sensors, [(4, "L1"), (6, "L2")])
+        fuser.note_reach(2700.0, 3300.0, 11)                    # 전체 카메라에선 11 만 팔을 뻗음
+        assert two_person_visit(fuser).person_id == expect
+
+
 def test_slot_change_keeps_take_when_detector_sees_nothing():
     # 물건 탐지 '변화 없음' + 칸 줄어듦 → 집음 1개 / 칸 바뀜(방향 모름) + 손 뻗기 → 확인 못 함(+1) / 칸 그대로 → 만지기만
     take = TakeCandidate(1, "shelf", 10, 40, "", "", 1.0, 5, 0.0, 0.0)
