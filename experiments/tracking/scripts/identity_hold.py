@@ -1,4 +1,4 @@
-"""신원 보류 두 가지(후속 43)를 저장분으로 켜고 끄며 견준다.
+"""신원 보류 두 가지(후속 43)와 관절로 가르기(후속 44)를 저장분으로 켜고 끄며 견준다.
 
     python scripts/identity_hold.py --shoot 3 grid                      # 기준 후보들을 한 번에 (정상 N 짝 / 전체 따로 집계)
     python scripts/identity_hold.py --shoot 3 try nested=0.7 score=0.4   # 한 조합을 짝별로 자세히 (전체 카메라에만)
@@ -6,9 +6,13 @@
     python scripts/identity_hold.py --shoot 3 who C03                    # 그 짝 전체 카메라의 신원 흐름 (끔 → 켬)
     python scripts/identity_hold.py --shoot 3 links nested=0.7           # 두 화면 짝이 달라지나 (짝 있음 · 끊김 · 짝 바뀜 · 손님 아닌 번호와 맺힘)
     python scripts/identity_hold.py --shoot 3 held nested=0.7            # 포개져 보류된 상자마다: 얼마나 보류됐고 그 뒤 무엇이 됐나
+    python scripts/identity_hold.py --shoot 3 gaps                       # 포개진 두 상자의 관절이 얼마나 떨어져 있나 (관절 기준의 근거)
+    python scripts/identity_hold.py --shoot 3 posegrid                   # 포개짐 × 관절 기준 후보를 한 번에 (후속 44)
+    python scripts/identity_hold.py --shoot 3 try nested=0.7 pose=0.5    # 포개짐 보류 + 관절이 0.5 넘게 떨어지면 다른 사람
 
 - nested = identity.nested_hold_overlap (이미 신원이 있는 상자와 포개진 상자에는 새 신원을 만들지 않고 보류)
 - score  = identity.min_identity_score (탐지 점수가 낮은 상자로는 신원을 만들지도 되살리지도 않고 보류)
+- pose   = identity.nested_pose_gap (포개져 있어도 두 상자의 공통 관절이 이만큼 넘게 떨어져 있으면 다른 사람 — 보류하지 않음)
 - 저장분(`dual_eval.py run --record-cache`)이 기본 실행 폴더에 있어야 한다. 다시 계산한 기록은 outputs/hold_<이름>_shoot<N>.
 - 견주는 것: 판정(영상만·센서·결제 방식 모두) · 손님 수 · 전체 카메라 신원 수 · 보류한 줄 수(이유별) · 신원이 붙은 줄 수.
 - 기준은 정상(N) 짝만 보고 고른다 (한계 A-15). grid 는 N 짝과 전체를 따로 적는다.
@@ -32,10 +36,12 @@ import dual_eval  # noqa: E402
 import regress  # noqa: E402
 from src.identity.registry import IdentityRegistry  # noqa: E402
 
-KEYS = {"nested": "nested_hold_overlap", "score": "min_identity_score"}
+KEYS = {"nested": "nested_hold_overlap", "score": "min_identity_score", "pose": "nested_pose_gap"}
 VALUES = [{"nested": 0.5}, {"nested": 0.7}, {"nested": 0.9}, {"score": 0.3}, {"score": 0.35}, {"score": 0.4}, {"score": 0.5}]
 GRID = [{}] + VALUES + [{**v, "both": 1.0} for v in VALUES]
 """both 가 없으면 전체 카메라에만, 있으면 두 카메라 모두에 건다."""
+POSE_GRID = [{}] + [{"nested": n} for n in (0.5, 0.7, 0.9)] + [{"nested": n, "pose": g} for n in (0.5, 0.7, 0.9) for g in (0.3, 0.5, 0.8)]
+"""포개짐만 / 포개짐 + 관절 기준 (후속 44)."""
 
 
 def name_of(combo: dict) -> str:
@@ -89,7 +95,7 @@ def identity_stats(out: Path, pair: str, combo: dict) -> dict:
                 rows += 1
             elif score and r["score"] < score:
                 held["score"] += 1
-            elif nested and any(IdentityRegistry._nested(r["bbox"], b) >= nested for b in named):
+            elif nested and any(IdentityRegistry._nested(r["bbox"], b) >= nested for b in named):   # 관절 기준은 안 봄 (어림)
                 held["nested"] += 1
             else:
                 held["other"] += 1
@@ -148,8 +154,8 @@ def diff_pairs(base: dict, now: dict) -> list[str]:
     return out
 
 
-def grid(shoot: int) -> None:
-    results = [(combo, measure(shoot, combo)) for combo in GRID]
+def grid(shoot: int, combos: list[dict] = GRID) -> None:
+    results = [(combo, measure(shoot, combo)) for combo in combos]
     base = results[0][1]
     normal = [p for p in base["pairs"] if p.startswith("N")]
     for title, pairs in (("정상(N) 짝 — 기준은 여기서 고른다", normal), ("전체", base["pairs"])):
@@ -294,6 +300,60 @@ def held(shoot: int, combo: dict) -> None:
               " (그 사이 추적이 끊기거나 상자가 작아 못 정한 시간 포함)")
 
 
+def _row_gap(a: dict, b: dict) -> tuple[float | None, int]:
+    """기록 두 줄의 관절 거리(장부와 같은 셈)와 공통 관절 수."""
+    from src.core.types import TrackObservation
+    from src.identity.registry import POSE_CONF
+
+    def obs(r):
+        kp = r.get("keypoints")
+        return TrackObservation(r["track_id"], tuple(r["bbox"]), r["frame"], "", keypoints=tuple(map(tuple, kp)) if kp else None)
+
+    shared = sum(1 for ka, kb in zip(a.get("keypoints") or [], b.get("keypoints") or []) if ka[2] >= POSE_CONF and kb[2] >= POSE_CONF)
+    return IdentityRegistry._pose_gap(obs(a), obs(b)), shared
+
+
+def gaps(shoot: int, nested: float = 0.5) -> None:
+    """포개짐 보류(관절 안 봄)로 보류된 줄마다, 그 상자와 포개진 신원 상자의 관절 거리. 관절 기준(pose)의 근거.
+
+    정상(N) 영상은 거의 한 명이라 거기서 보류된 줄은 '한 사람 위의 두 상자'(또는 가짜 상자)다 → 같은 사람일 때 거리가 얼마까지 나오나를 N 으로 본다.
+    다른 사람일 때의 거리는 두 명 영상(T · C)에서만 나온다 — 그 줄들은 기준을 고르는 데 쓰지 않고 확인에만 쓴다."""
+    out = replay(shoot, {"nested": nested})
+    rows_out: list[dict] = []
+    for pair in dual_eval.pairs(None):
+        path = out / pair / "angle1" / "identities.jsonl"
+        if not path.exists():
+            continue
+        fps = json.loads((out / pair / "meta.json").read_text(encoding="utf-8"))["angle1"]["fps"]
+        by_frame = defaultdict(list)
+        for text in path.read_text(encoding="utf-8").splitlines():
+            r = json.loads(text)
+            by_frame[r["frame"]].append(r)
+        for f in sorted(by_frame):
+            named = [r for r in by_frame[f] if r["person_id"] > 0]
+            for r in by_frame[f]:
+                host = next((h for h in named if IdentityRegistry._nested(r["bbox"], h["bbox"]) >= nested), None)
+                if r["person_id"] > 0 or host is None:
+                    continue
+                gap, shared = _row_gap(r, host)
+                after = next((x for g in sorted(by_frame) if g > f for x in by_frame[g]
+                              if x["track_id"] == r["track_id"] and x["person_id"] > 0), None)
+                kind = ("신원 없음" if after is None else "그 신원으로" if after["person_id"] == host["person_id"]
+                        else "새 신원" if after.get("is_new") else "다른 신원")
+                rows_out.append({"pair": pair, "gap": gap, "shared": shared, "kind": kind})
+                text = "관절 없음" if gap is None else f"거리 {gap:4.2f} (공통 관절 {shared})"
+                print(f"  {pair:6s} {f / fps:6.2f}초 추적 {r['track_id']:<3d} ↔ 신원 {host['person_id']}  포개짐 "
+                      f"{IdentityRegistry._nested(r['bbox'], host['bbox']):.2f}  {text}  → {kind}")
+    for title, keep in (("정상(N)", lambda p: p.startswith("N")), ("그 밖(T · C)", lambda p: not p.startswith("N"))):
+        part = [r for r in rows_out if keep(r["pair"])]
+        vals = sorted(r["gap"] for r in part if r["gap"] is not None)
+        if not part:
+            continue
+        cuts = " · ".join(f"{c} 이하 {sum(v <= c for v in vals)}" for c in (0.3, 0.5, 0.8))
+        print(f"{shoot}차 {title}: 보류된 줄 {len(part)} · 공통 관절 없음 {len(part) - len(vals)} · 거리 {cuts} · 0.8 초과 {sum(v > 0.8 for v in vals)}"
+              + (f" · 최대 {vals[-1]:.2f}" if vals else ""))
+
+
 def parse_combo(items: list[str]) -> dict:
     combo = {}
     for item in items:
@@ -306,7 +366,7 @@ def parse_combo(items: list[str]) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["grid", "try", "who", "links", "held"])
+    ap.add_argument("action", choices=["grid", "try", "who", "links", "held", "gaps", "posegrid"])
     ap.add_argument("args", nargs="*")
     ap.add_argument("--shoot", type=int, choices=[2, 3], default=3)
     a = ap.parse_args()
@@ -320,6 +380,10 @@ def main() -> int:
         links(a.shoot, parse_combo(a.args))
     elif a.action == "held":
         held(a.shoot, parse_combo(a.args))
+    elif a.action == "gaps":
+        gaps(a.shoot)
+    elif a.action == "posegrid":
+        grid(a.shoot, POSE_GRID)
     else:
         if not a.args:
             ap.error("who <짝> [nested=.. score=..]")

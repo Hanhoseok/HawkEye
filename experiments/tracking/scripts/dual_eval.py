@@ -236,9 +236,14 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     # 3차: 매장 안 바닥을 밟은 근거가 있는 신원만 짝 후보 (후속 41, 2026-11-13) — 창가 겉옷·가방의 가짜 사람 상자가 손님의 짝을
     # 가로채던 3조각이 0 으로, 짝 바뀜 13 → 7번, 판정은 그대로. --set fusion.link_customers_only=false 로 끈다.
     # 2차에서는 안 켠다: 띠 위치로 잇는 2차는 막 들어온 손님의 짝 6조각을 잃었다 (판정은 그대로 31/38).
+    # 3차: 이미 신원이 있는 상자와 포개진 상자에는 새 신원을 만들지 않고 보류하되, 두 상자의 관절이 멀면(다른 사람) 보류하지 않는다
+    # (후속 43·44, 2026-11-14). 한 사람이 가려지며 상자가 둘로 나오는 3차 자리에서 손님 수 38 → 39/39(C03), 손님 아닌 번호와 맺힌 짝 3 → 0,
+    # 판정 점수 그대로. 관절 기준 0.5 는 정상 영상에서 고름(같은 사람 0.17 이하 · 다른 상자 0.91 이상).
+    # 2차에서는 안 켠다: 해는 없지만(관절을 보면 C15 가 안 틀려진다) 이득도 없다. --set identity.nested_hold_overlap=0 으로 끈다.
     if SHOOT == 3:
         cfg.fusion.position_mode = "floor"
         cfg.fusion.link_customers_only = True
+        cfg.identity.nested_hold_overlap, cfg.identity.nested_pose_gap = 0.7, 0.5
     _apply_set(cfg, overrides, early=True)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair, SHOOT)
     zdir = zones_dir(pair)

@@ -28,8 +28,8 @@
    "CLEAR"
   ],
   "correct": true,
-  "people": 3,
-  "people_ok": false,
+  "people": 2,
+  "people_ok": true,
   "no_verdict": false
  },
  {
@@ -110,7 +110,6 @@
  {
   "pair": "C14",
   "verdicts": [
-   "CLEAR",
    "CLEAR",
    "CLEAR",
    "CLEAR"

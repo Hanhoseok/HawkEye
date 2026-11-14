@@ -59,6 +59,9 @@ import numpy as np
 from ..core.config import IdentityConfig
 from ..core.types import Frame, IdentityObservation, TrackObservation
 
+POSE_CONF = 0.5
+"""관절을 '보인다'고 치는 신뢰도 하한 (포개진 두 상자의 관절 견주기). 자세 모델은 이보다 낮은 관절의 좌표를 (0, 0) 으로 낸다."""
+
 
 def _unit(vector: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
@@ -253,6 +256,34 @@ class IdentityRegistry:
         small = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
         return w * h / small if small > 0 else 0.0
 
+    @staticmethod
+    def _pose_gap(a: TrackObservation, b: TrackObservation) -> float | None:
+        """두 상자에 모두 보이는 관절 사이 거리의 중앙값 ÷ 작은 상자의 폭. 공통 관절이 없으면 None."""
+        if not a.keypoints or not b.keypoints:
+            return None
+        gaps = sorted(
+            ((ka[0] - kb[0]) ** 2 + (ka[1] - kb[1]) ** 2) ** 0.5
+            for ka, kb in zip(a.keypoints, b.keypoints)
+            if ka[2] >= POSE_CONF and kb[2] >= POSE_CONF
+        )
+        width = min(a.bbox[2] - a.bbox[0], b.bbox[2] - b.bbox[0])
+        if not gaps or width <= 0:
+            return None
+        mid = len(gaps) // 2
+        median = gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2
+        return median / width
+
+    def _one_person_two_boxes(self, obs: TrackObservation, other: TrackObservation) -> bool:
+        """obs 가 other 와 '한 사람 위의 두 상자'일 수 있는가 — 포개져 있고, 관절이 다른 사람이라고 말하지 않는다."""
+        cfg = self.config
+        if self._nested(obs.bbox, other.bbox) < cfg.nested_hold_overlap:
+            return False
+        if cfg.nested_pose_gap > 0:
+            gap = self._pose_gap(obs, other)
+            if gap is not None and gap > cfg.nested_pose_gap:
+                return False
+        return True
+
     def _update_tentative(self, person: _Person, obs: TrackObservation, now_ms: float) -> None:
         """임시 신원이 정식 조건을 연속으로 tentative_seconds 동안 채웠으면 정식으로 올린다."""
         ok = self._usable(obs) and (self._promote_check is None or bool(self._promote_check(obs.bbox)))
@@ -360,7 +391,7 @@ class IdentityRegistry:
             if self._usable(obs) and not self._confident(obs):
                 self.holds.append({"track": obs.track_id, "ms": frame.pts_ms, "why": "score"})
         usable_pending = [o for o in pending if self._usable(o) and self._confident(o)]
-        visible = [obs.bbox for obs, _ in known]  # 이번 장면에 신원이 있는 상자 (포개짐 확인용)
+        visible = [obs for obs, _ in known]  # 이번 장면에 신원이 있는 상자 (포개짐 확인용)
         embeddings = self._embed(frame, refresh + usable_pending)
         cursor = 0
 
@@ -398,9 +429,10 @@ class IdentityRegistry:
                 )
 
             if person_id is None and cfg.nested_hold_overlap > 0 and any(
-                self._nested(obs.bbox, box) >= cfg.nested_hold_overlap for box in visible
+                self._one_person_two_boxes(obs, other) for other in visible
             ):
                 # 이미 신원이 있는 상자와 포개진 상자 — 한 사람 위에 상자가 둘 나온 것일 수 있다.
+                # (관절이 서로 멀면 포개 선 두 사람이므로 여기로 오지 않는다 — identity.nested_pose_gap)
                 # 새 신원을 만들지 않고 보류한다 (되살아난 번호였다면 다음 장면에도 원래 주인을 우대해 다시 본다).
                 if obs.track_id in revived:
                     self._recheck[obs.track_id] = revived[obs.track_id]
@@ -436,7 +468,7 @@ class IdentityRegistry:
 
             self._track_to_person[obs.track_id] = person_id
             occupied.add(person_id)
-            visible.append(obs.bbox)
+            visible.append(obs)
 
             results.append(
                 self._observation(
