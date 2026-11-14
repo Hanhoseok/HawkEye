@@ -30,9 +30,13 @@ risk:
   payment_mode: dwell       # 결제 기록 없음: 계산대 체류 = 결제
   inside_zones: [shelf, counter, aisle]   # 이 바닥 구역에 1초 이상 들어온 사람만 손님 (문 앞·창밖 행인 제외)
   inside_seconds: 1.0
+  inside_excludes_exit: true   # 문 구역 안은 매장 안이 아님 (3차 통로가 문을 덮음, 후속 29)
+  exit_hold_seconds: 5.0      # 나감 HIGH_RISK 5초 보류, 그 안에 돌아오면 버림 (후속 33)
   exit_end_at_edge_only: false   # 영상 끝에 출구 구역 안이면 나가는 중 (2차 출구는 위쪽 끝에만 걸림, 후속 25)
 zones:
   foot_point: ankle         # 바닥 구역 판단 = 발목 (B-15, 2026-11-09). 구역은 실제 바닥 자리에 맞춰 그림 — 상자 발 점(bbox)과 함께 쓰면 28/38
 identity:
   track_gap_recheck_seconds: 1.0   # 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정 (C-22) — 가장자리 변과 함께 손님 수 38/38
+  late_merge_overlap_seconds: 1.0   # 나중에 합치기: 옛 신원과 1초 미만 함께 보인 것은 봐줌 (3차 C14, 후속 31)
+  late_merge_threshold: 0.8         # 나중에 합치기 기준 (3차 C14 0.825, 2차 최고 0.787 — 2차 신원 변화 0)
 fusion: {}                  # 기본값 (src/core/config.py FusionConfig). 전체 카메라 팔 뻗기는 끔 (D-19, 3차 비교)

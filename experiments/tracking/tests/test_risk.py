@@ -463,3 +463,87 @@ def test_default_inside_rule_is_unchanged():
     eng = engine()
     walk(eng, 1, EXIT, 0.0, 1.0)
     assert eng.book.customers[1].seen_inside
+
+
+def test_door_inside_aisle_is_not_inside_when_exit_is_excluded():
+    """3차: 통로(aisle)가 문(door)을 덮은 바닥 지도 — 입구에 서 있기만 한 사람은 손님이 아니다 (후속 29)."""
+    zones = [Zone("aisle", ZoneType.OTHER, ((0, 100), (400, 100), (400, 400), (0, 400))),
+             Zone("door", ZoneType.EXIT, ((0, 340), (400, 340), (400, 400), (0, 400)))]
+    for exclude, expect in ((False, True), (True, False)):
+        zm = ZoneMap(zones)
+        zm.resolve(400, 400)
+        eng = RiskEngine(RiskConfig(inside_zones=["aisle"], inside_seconds=1.0, inside_excludes_exit=exclude),
+                         zm, PaymentFeed([]))
+        walk(eng, 1, EXIT, 0.0, 3.0)                  # 문 구역(= 통로와 겹침)에 3초
+        walk(eng, 2, AISLE, 3.0, 1.5)                 # 통로(문 밖 쪽 아님)에 1.5초 — 손님
+        assert eng.book.customers[1].seen_inside is expect
+        assert eng.book.customers[2].seen_inside
+
+
+# ---------------------------------------------------------------- 나감 판정 보류 (risk.exit_hold_seconds, 후속 33)
+
+def test_hold_zero_keeps_old_behaviour():
+    eng = engine(exit_hold_seconds=0.0)
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    assert levels(leave(eng, 1, 5.0)) == [W, H]
+
+
+def test_held_exit_released_as_high_risk_when_not_back():
+    """보류 3초: 사라짐 확정(3초) 때는 WARNING, 3초 더 안 돌아오면 HIGH_RISK."""
+    eng = engine(exit_hold_seconds=3.0)
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    events = walk(eng, 1, EXIT, 5.0, 1.0) + nobody(eng, 6.0, 8.0)
+    assert levels(events) == [W, W, H]
+    assert "돌아오지 않으면" in events[1].reason
+    assert events[2].time_sec >= events[1].time_sec + 3.0 - 1e-6 and "출구 쪽에서 사라짐" in events[2].reason
+
+
+def test_back_within_hold_and_pays_is_clear_only():
+    """나갔다(확정) 보류 중 돌아와 결제하고 나가면 HIGH_RISK 없이 CLEAR — 3차 C12·C15, 2차 C12."""
+    eng = engine(payments=[PaymentEvent(time_sec=12.0, items=1)], exit_hold_seconds=3.0)
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    first = walk(eng, 1, EXIT, 5.0, 1.0) + nobody(eng, 6.0, 4.0)   # 9초쯤 사라짐 확정 → 보류
+    assert levels(first) == [W, W]
+    walk(eng, 1, CHECKOUT, 10.0, 3.0)                                 # 10초에 돌아와 12초 결제
+    final = leave(eng, 1, 14.0) + nobody(eng, 19.0, 4.0)
+    assert H not in levels(first + final) and levels(final)[-1] == C
+
+
+def test_video_end_releases_hold_immediately():
+    eng = engine(exit_hold_seconds=5.0)
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    first = walk(eng, 1, EXIT, 5.0, 1.0) + nobody(eng, 6.0, 4.0)
+    assert levels(first) == [W, W]
+    end = eng.finish(at(10.0))
+    assert levels(end) == [H] and "(영상 끝)" in end[0].reason
+
+
+def test_seen_outside_departure_is_held_too():
+    """문 밖으로 나감(6-a)도 보류. 문 밖에 계속 보여도 시간이 지나면 확정."""
+    eng = engine(exit_hold_seconds=2.0)
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    events = walk(eng, 1, EXIT, 2.0, 1.0) + outside(eng, 1, 3.0, 4.0)
+    assert levels(events) == [W, W, H]
+    assert "문 밖으로 나감" in events[-1].reason
+
+
+def test_hold_survives_merge_with_newer_cleared_fragment():
+    """보류 중인 손님(1)과, 그 뒤 출구에서 CLEAR 로 확정된 조각 신원(2)이 합쳐져도 보류는 남아 HIGH_RISK (코드 리뷰 R1)."""
+    eng = engine(exit_hold_seconds=8.0)
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    walk(eng, 1, EXIT, 5.0, 1.0); nobody(eng, 6.0, 3.5)          # 1: 9초쯤 사라짐 확정 → 17초까지 보류
+    mid = walk(eng, 2, AISLE, 9.5, 1.5) + walk(eng, 2, EXIT, 11.0, 1.0) + nobody(eng, 12.0, 3.5)   # 조각 2 는 15초쯤 CLEAR 로 나감
+    assert H not in levels(mid) and C in levels(mid)
+    events, _ = eng.update(at(15.6), [], merges=[{"from": 2, "into": 1}])
+    later = nobody(eng, 15.7, 2.0)                                 # 17초에 보류가 풀려 HIGH_RISK
+    assert H in levels(events + later)
+
+
+def test_hold_dropped_when_merged_fragment_is_back_inside():
+    """보류 중인 손님과 합쳐진 조각이 매장 안에 보이면(돌아옴) 보류를 버린다."""
+    eng = engine(exit_hold_seconds=5.0)
+    eng.update(at(1.0), [person(1, AISLE)], takes=[take(1)])
+    walk(eng, 1, EXIT, 5.0, 1.0); nobody(eng, 6.0, 3.5)
+    eng.update(at(9.6), [person(2, AISLE)], merges=[{"from": 2, "into": 1}])
+    later = walk(eng, 1, AISLE, 9.7, 6.0)
+    assert H not in levels(later) and eng.book.customers[1].held_since_ms is None
