@@ -492,3 +492,55 @@ def test_dual_judge_marks_only_customers_and_people_standing_on_the_store_floor(
     off, _ = judge_with(False)                                                         # 기본(꺼짐): 보인 신원 전부
     off.overview_step(frame, people, [], [])
     assert off.linker.overview_candidates(0.0) == [1, 4, 5]
+
+
+# ---------------------------------------------------------------- 남은 짝 문제 (후속 32)
+
+
+def test_keep_bonus_goes_only_to_the_partner_of_the_previous_window():
+    # 3차 C15: 선반 카메라 1번이 14초에 전체 2번과 맺힌 뒤 4초 동안 화면에 없었다. 돌아왔을 때 진짜 짝(전체 1번)은 점수가 조금 높은데
+    # 예전 짝(전체 2번)이 가산점 0.1 로 이겼다. 가산점은 '한 조각의 흔들림'을 견디라고 준 것 — 몇 초 전 짝에게는 주지 않는다.
+    def run(recent_only):
+        linker = CrossViewLinker(FusionConfig(position_mode="floor", keep_bonus_recent_only=recent_only))
+        for t in range(0, 1500, 66):                       # 처음: 전체 2번과 같은 자리
+            linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.observe("overview", 2, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.update(float(t))
+        assert linker.current(1) == 2
+        for t in range(1500, 5500, 66):                    # 4초: 선반 카메라에는 아무도 없다
+            linker.observe("overview", 2, float(t), 0.5, None, (300.0, 100.0), None)
+            linker.update(float(t))
+        for t in range(5500, 6500, 66):                    # 돌아옴: 전체 1번이 3cm, 전체 2번이 6cm — 가산점 없이는 1번
+            linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.observe("overview", 1, float(t), 0.5, None, (33.0, 100.0), None)
+            linker.observe("overview", 2, float(t), 0.5, None, (36.0, 100.0), None)
+            linker.update(float(t))
+        return linker
+
+    assert [l.overview_id for l in run(False).links if l.start_ms >= 5500][0] == 2      # 기본: 4초 전 짝이 가산점으로 이긴다
+    fixed = run(True)
+    assert {l.overview_id for l in fixed.links if l.start_ms >= 5500} == {1}
+    # 이어진 짝에게는 그대로 준다: 한 조각만 다른 사람이 조금 더 가까워도 안 바뀐다
+    steady = CrossViewLinker(FusionConfig(position_mode="floor", keep_bonus_recent_only=True))
+    for t in range(0, 3000, 66):
+        near = (33.0, 100.0) if 1500 <= t < 2000 else (60.0, 100.0)
+        steady.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+        steady.observe("overview", 2, float(t), 0.5, None, (36.0, 100.0), None)
+        steady.observe("overview", 5, float(t), 0.5, None, near, None)
+        steady.update(float(t))
+    assert {l.overview_id for l in steady.links} == {2}
+    assert any(l.score > 0.95 for l in steady.links)      # 가산점이 붙은 조각이 있다 (6cm 의 위치 점수는 0.90)
+
+
+def test_hidden_behind_means_the_box_bottom_sits_inside_a_nearer_persons_box():
+    from src.fusion.judge import DualJudge
+
+    behind = (900.0, 105.0, 1257.0, 549.0)                # 3차 C15 9.3초: 허리께에서 잘린 상자
+    front = (953.0, 347.0, 1505.0, 1070.0)                # 그 앞에 선 사람
+    assert DualJudge.hidden_behind(behind, [front])
+    assert not DualJudge.hidden_behind(front, [behind])   # 앞사람은 가리지 않았다
+    assert not DualJudge.hidden_behind(behind, [])
+    beside = (1300.0, 100.0, 1600.0, 560.0)               # 옆에 나란히 — 아래 가운데가 그 상자 밖
+    assert not DualJudge.hidden_behind(behind, [beside])
+    level = (950.0, 120.0, 1300.0, 560.0)                 # 겹치지만 아래 변이 비슷한 높이 (상자 높이의 5% 안) — 앞뒤를 모른다
+    assert not DualJudge.hidden_behind(behind, [level])

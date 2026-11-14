@@ -103,6 +103,8 @@ class CrossViewLinker:
         self.links: list[Link] = []
         self._current: dict[int, int] = {}
         """선반 카메라 신원 → 지금 짝인 전체 카메라 신원."""
+        self._current_end: dict[int, float] = {}
+        """선반 카메라 신원 → 그 짝이 마지막으로 맺힌 조각의 끝 시각 (keep_bonus_recent_only)."""
         self._history: dict[int, list[tuple[float, float, int]]] = {}
         """선반 카메라 신원 → [(시작, 끝, 전체 카메라 신원)]. 짝이 이어지면 구간을 늘린다."""
         self._last_window_ms: float | None = None
@@ -164,7 +166,8 @@ class CrossViewLinker:
                     continue
                 if solo and self._solo_rescue(app):
                     score = max(score, self.config.min_score)   # 비교할 상대가 한 명뿐 — 외형이 높으면 위치가 어긋나도 잇는다
-                if self._current.get(d) == o:
+                if self._current.get(d) == o and (not self.config.keep_bonus_recent_only
+                                                  or start - self._current_end.get(d, -1e18) <= window * 1.5):
                     score += self.config.keep_bonus   # 한 조각의 흔들림으로 짝을 바꾸지 않는다
                 scores[i, j] = score
                 parts[(d, o)] = (pos, app)
@@ -238,6 +241,7 @@ class CrossViewLinker:
 
     def _remember(self, d: int, o: int, start: float, end: float) -> None:
         self._current[d] = o
+        self._current_end[d] = end
         spans = self._history.setdefault(d, [])
         if spans and spans[-1][2] == o and start - spans[-1][1] <= self.config.window_seconds * 1000.0 * 1.5:
             spans[-1] = (spans[-1][0], end, o)

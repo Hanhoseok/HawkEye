@@ -107,6 +107,21 @@ class DualJudge:
             return a * self.detail_point(bbox, self.detail_width) + b
         return a * ((bbox[0] + bbox[2]) / 2.0 / self.detail_width) + b
 
+    @staticmethod
+    def hidden_behind(bbox, others) -> bool:
+        """상자 아래 가운데가 더 앞에 선 다른 사람 상자 안인가 (`fusion.ankle_hidden_behind`). others = 같은 장면의 다른 사람 상자들.
+        '더 앞' = 그 상자의 아래 변이 이 상자 아래 변보다 이 상자 높이의 5% 넘게 아래 (foot_pixel 이 발목을 상자 안으로 치는 여유와 같다)."""
+        x1, y1, x2, y2 = bbox[:4]
+        cx, pad = (x1 + x2) / 2.0, 0.05 * (y2 - y1)
+        return any(o[0] <= cx <= o[2] and o[1] <= y2 and o[3] > y2 + pad for o in others)
+
+    def _link_keypoints(self, obs, identities):
+        """두 화면 짝의 발 자리를 잴 때 쓸 관절 — 앞사람에게 아래가 가린 상자면 None (발목을 안 믿고 반직선으로)."""
+        keypoints = getattr(obs, "keypoints", None)
+        if keypoints is None or not self.config.ankle_hidden_behind:
+            return keypoints
+        return None if self.hidden_behind(obs.bbox, [o.bbox for o in identities if o is not obs]) else keypoints
+
     RAY_STEP = 0.02
     """발목이 안 보일 때 반직선 방향을 잴 화면 세로 간격 (화면 높이 비율)."""
 
@@ -147,7 +162,7 @@ class DualJudge:
             if obs.person_id <= 0:
                 continue
             pid = resolve(obs.person_id) if resolve else obs.person_id
-            floor, ray = (self.floor_point(self.detail_floor, obs.bbox, getattr(obs, "keypoints", None),
+            floor, ray = (self.floor_point(self.detail_floor, obs.bbox, self._link_keypoints(obs, identities),
                                            self.detail_width, self.detail_height)
                           if self.detail_floor is not None else (None, None))
             self.linker.observe("detail", pid, pts_ms, self.detail_band(obs.bbox),
@@ -178,7 +193,7 @@ class DualJudge:
             in_band = any(z.name == self.config.shelf_zone for z in self.floor.zones_at(foot))
             if band is not None and not (-0.3 <= band <= 1.3):
                 band = None
-            floor_cm, ray = (self.floor_point(self.floor, obs.bbox, getattr(obs, "keypoints", None), w, h)
+            floor_cm, ray = (self.floor_point(self.floor, obs.bbox, self._link_keypoints(obs, identities), w, h)
                              if self.config.position_mode == "floor" else (None, None))
             # 짝 후보 표시만 다르다 — 표본은 그대로 넣고, 선반 앞에 누가 있었나(note_band)·손님 장부·위험 판정도 그대로 본다
             candidate = not self.config.link_customers_only or self._link_candidate(pid, obs, w, h)
