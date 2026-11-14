@@ -39,4 +39,5 @@ identity:
   track_gap_recheck_seconds: 1.0   # 1초 넘게 끊겼다 되살아난 추적 번호는 신원 다시 판정 (C-22) — 가장자리 변과 함께 손님 수 38/38
   late_merge_overlap_seconds: 1.0   # 나중에 합치기: 옛 신원과 1초 미만 함께 보인 것은 봐줌 (3차 C14, 후속 31)
   late_merge_threshold: 0.8         # 나중에 합치기 기준 (3차 C14 0.825, 2차 최고 0.787 — 2차 신원 변화 0)
-fusion: {}                  # 기본값 (src/core/config.py FusionConfig). 전체 카메라 팔 뻗기는 끔 (D-19, 3차 비교)
+fusion:                     # 나머지는 기본값 (src/core/config.py FusionConfig). 전체 카메라 팔 뻗기는 끔 (D-19, 3차 비교)
+  keep_bonus_recent_only: true   # 직전 짝 가산점은 바로 앞 조각의 짝에게만 (후속 42) — dual_eval 2·3차와 같게
