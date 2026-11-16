@@ -381,6 +381,7 @@
  {
   "pair": "T09",
   "verdicts": [
+   "CLEAR",
    "HIGH_RISK"
   ],
   "correct": true,

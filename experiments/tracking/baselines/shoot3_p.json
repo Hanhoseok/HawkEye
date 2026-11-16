@@ -381,6 +381,7 @@
  {
   "pair": "T09",
   "verdicts": [
+   "CLEAR",
    "CLEAR"
   ],
   "correct": false,

@@ -244,6 +244,10 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
         cfg.fusion.position_mode = "floor"
         cfg.fusion.link_customers_only = True
         cfg.identity.nested_hold_overlap, cfg.identity.nested_pose_gap = 0.7, 0.5
+    # 한 장면에 같은 신원은 상자 하나만 — 둘이 겹치면 그 신원의 평균 외형과 더 닮은 상자가 지키고 나머지는 다시 판정 (후속 48, 2026-11-16).
+    # 3차 T09: 창가 그림 상자의 신원을 문 앞 손님이 받아 가 창가 상자가 손님으로 그려지던 것 — 0.27초 뒤 창가 상자가 신원을 되찾고 손님은 새 신원.
+    # 같은 신원 두 상자 장면 3차 92 → 0 · 2차 1 → 0, 판정 점수·손님 수 그대로. 기준값 없는 규칙. --set identity.one_box_per_identity=false 로 끈다.
+    cfg.identity.one_box_per_identity = True
     _apply_set(cfg, overrides, early=True)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair, SHOOT)
     zdir = zones_dir(pair)

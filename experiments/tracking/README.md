@@ -228,7 +228,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | | `review_swapcheck.py` | 두 손님이 겹친 전후로 신원이 뒤바뀌었는지 몸통 색으로 점검 |
 | | `link_diagnose.py` | 두 화면 짝이 왜 끊기나 — 조각마다 이유(`why`) · 위치값 견주기(`fit`) · 해결 후보 견주기(`try`). `--shoot 3` 은 바닥 위 거리 방식: 허용 거리의 근거(`fit`) · 띠/바닥 견주기(`try`) · 두 명 장면에서 맺은 짝이 맞는 사람인가(`check`). `gate` = 매장 안 바닥을 밟은 신원만 짝 후보로 삼기를 끔/켬으로 견줌(2·3차), `keep` · `hidden` = 같은 표로 직전 짝 가산점 · 가린 발목 규칙. 기록만 다시 돌리고 아무것도 고치지 않음 |
 | | `floor_check.py` | 3차: 두 카메라의 바닥 지도가 같은 좌표인가 — 타일 줄눈 어긋남(`tiles`) · 같은 사람의 두 카메라 발목 거리(`feet`) |
-| | `identity_hold.py` | 신원 보류(포개진 상자 · 낮은 탐지 점수)와 관절로 가르기를 저장분으로 켜고 끄며 견줌 — 기준 후보 한꺼번에(`grid` · `posegrid`) · 한 조합(`try`) · 한 짝의 신원 흐름(`who`) · 두 화면 짝(`links`) · 보류된 상자가 그 뒤 무엇이 됐나(`held`) · 포개진 두 상자의 관절 거리(`gaps`). 저장분(`dual_eval.py run --record-cache`) 필요 |
+| | `identity_hold.py` | 신원 보류(포개진 상자 · 낮은 탐지 점수) · 관절로 가르기 · 건너뛴 번호 다시 판정 · 한 신원 한 상자를 저장분으로 켜고 끄며 견줌 — 기준 후보 한꺼번에(`grid` · `posegrid`) · 한 조합(`try`) · 한 짝의 신원 흐름(`who`) · 두 화면 짝(`links`) · 보류된 상자가 그 뒤 무엇이 됐나(`held`) · 포개진 두 상자의 관절 거리(`gaps`). 저장분(`dual_eval.py run --record-cache`) 필요 |
 | **1차 매장 영상 (카메라 1대)** | `store_eval.py` | 1차 촬영 40편 일괄 평가: `run` · `judge` |
 | | `transfer_zones.py` · `screen_videos.py` | 카메라가 조금 움직였을 때 구역 옮기기 · 검증 영상 고르기(사람·물건이 얼마나 보이나) |
 | **기록으로 다시 돌리기 (영상 없이)** | `replay_identity.py` · `replay_risk.py` | 저장된 추적 기록으로 신원만 · 신원 기록으로 판정만 다시 |

@@ -324,7 +324,9 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
                  for pid, c in risk.book.customers.items()}
     payments = [{"ms": round(p.time_sec * 1000.0), "items": p.items, "pid": p.person_id,
                  "method": getattr(p, "method", "")} for p in risk.book.payments]
-    links = [{"start": round(l.start_ms), "end": round(l.end_ms), "detail": l.detail_id, "overview": l.overview_id,
+    # 짝은 맺을 때의 번호로 적힌다. 화면의 상자·띠는 나중에 합친 뒤 번호(r0·r1)로 그리므로 짝도 그 번호로 내보낸다 —
+    # 안 그러면 합쳐지기 전 구간이 '짝 없음'으로 보인다 (A-19: 3차 C15 선반 화면 3 → 2, 24~28.8초).
+    links = [{"start": round(l.start_ms), "end": round(l.end_ms), "detail": r0(l.detail_id), "overview": r1(l.overview_id),
               "score": round(l.score, 2), "pos": None if l.position is None else round(l.position, 2),
               "app": None if l.appearance is None else round(l.appearance, 2)} for l in judge.linker.links]
     takes0 = [{"pid": t.person_id, "zone": t.zone, "start": detail_ms(t.start_frame), "end": detail_ms(t.end_frame)}

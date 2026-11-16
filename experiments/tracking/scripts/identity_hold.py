@@ -1,4 +1,4 @@
-"""신원 보류 두 가지(후속 45)와 관절로 가르기(후속 46)를 저장분으로 켜고 끄며 견준다.
+"""신원 보류 두 가지(후속 45) · 관절로 가르기(후속 46) · 건너뛴 번호 다시 판정과 한 신원 한 상자(후속 48)를 저장분으로 켜고 끄며 견준다.
 
     python scripts/identity_hold.py --shoot 3 grid                      # 기준 후보들을 한 번에 (정상 N 짝 / 전체 따로 집계)
     python scripts/identity_hold.py --shoot 3 try nested=0.7 score=0.4   # 한 조합을 짝별로 자세히 (전체 카메라에만)
@@ -9,10 +9,14 @@
     python scripts/identity_hold.py --shoot 3 gaps                       # 포개진 두 상자의 관절이 얼마나 떨어져 있나 (관절 기준의 근거)
     python scripts/identity_hold.py --shoot 3 posegrid                   # 포개짐 × 관절 기준 후보를 한 번에 (후속 46)
     python scripts/identity_hold.py --shoot 3 try nested=0.7 pose=0.5    # 포개짐 보류 + 관절이 0.5 넘게 떨어지면 다른 사람
+    python scripts/identity_hold.py --shoot 3 --base nested=0.7,pose=0.5 try nested=0.7 pose=0.5 jump=1 single=1   # 지금 기본 위에 새 규칙을 얹어 견줌
 
 - nested = identity.nested_hold_overlap (이미 신원이 있는 상자와 포개진 상자에는 새 신원을 만들지 않고 보류)
 - score  = identity.min_identity_score (탐지 점수가 낮은 상자로는 신원을 만들지도 되살리지도 않고 보류)
 - pose   = identity.nested_pose_gap (포개져 있어도 두 상자의 공통 관절이 이만큼 넘게 떨어져 있으면 다른 사람 — 보류하지 않음)
+- jump   = identity.track_jump_recheck (짧게 끊겼다 돌아온 번호의 상자가 끊기기 전 상자와 안 겹치면 다시 판정, 1 = 켬)
+- single = identity.one_box_per_identity (한 장면에 같은 신원은 상자 하나만, 1 = 켬)
+- --base 를 주면 '끔' 대신 그 조합과 견준다 (try · links).
 - 저장분(`dual_eval.py run --record-cache`)이 기본 실행 폴더에 있어야 한다. 다시 계산한 기록은 outputs/hold_<이름>_shoot<N>.
 - 견주는 것: 판정(영상만·센서·결제 방식 모두) · 손님 수 · 전체 카메라 신원 수 · 보류한 줄 수(이유별) · 신원이 붙은 줄 수.
 - 기준은 정상(N) 짝만 보고 고른다 (한계 A-15). grid 는 N 짝과 전체를 따로 적는다.
@@ -36,7 +40,15 @@ import dual_eval  # noqa: E402
 import regress  # noqa: E402
 from src.identity.registry import IdentityRegistry  # noqa: E402
 
-KEYS = {"nested": "nested_hold_overlap", "score": "min_identity_score", "pose": "nested_pose_gap"}
+KEYS = {"nested": "nested_hold_overlap", "score": "min_identity_score", "pose": "nested_pose_gap",
+        "jump": "track_jump_recheck", "single": "one_box_per_identity"}
+FLAGS = ("jump", "single")
+"""켜고 끄는 값 (1 = 켬)."""
+
+
+def _value(k: str, combo: dict):
+    v = combo.get(k, 0.0)
+    return bool(v) if k in FLAGS else v
 VALUES = [{"nested": 0.5}, {"nested": 0.7}, {"nested": 0.9}, {"score": 0.3}, {"score": 0.35}, {"score": 0.4}, {"score": 0.5}]
 GRID = [{}] + VALUES + [{**v, "both": 1.0} for v in VALUES]
 """both 가 없으면 전체 카메라에만, 있으면 두 카메라 모두에 건다."""
@@ -53,12 +65,12 @@ def sets_of(combo: dict) -> list[str]:
     """--set 목록. 두 값을 늘 적는다 — dual_eval 의 기본이 무엇이든 '끔'은 끔이고, 조합에 없는 값은 0 이다.
     전체 카메라에만 걸 때는 여기서는 둘 다 0 으로 두고(선반 카메라 몫) 값은 dual_eval.OVERVIEW_IDENTITY 로 건다."""
     both = bool(combo.get("both"))
-    return [f"identity.{key}={combo.get(k, 0.0) if both else 0.0}" for k, key in KEYS.items()]
+    return [f"identity.{key}={str(_value(k, combo if both else {})).lower()}" for k, key in KEYS.items()]
 
 
 def overview_of(combo: dict) -> dict:
     """전체 카메라의 신원 설정에 덮어쓸 값 (카메라별 값이 --set 보다 나중에 먹는다)."""
-    return {key: combo.get(k, 0.0) for k, key in KEYS.items()}
+    return {key: _value(k, combo) for k, key in KEYS.items()}
 
 
 def replay(shoot: int, combo: dict, only: str | None = None) -> Path:
@@ -168,12 +180,13 @@ def grid(shoot: int, combos: list[dict] = GRID) -> None:
         print("\n".join(changed) if changed else "    없음")
 
 
-def try_one(shoot: int, combo: dict) -> None:
-    base, now = measure(shoot, {}), measure(shoot, combo)
+def try_one(shoot: int, combo: dict, base_combo: dict | None = None) -> None:
+    base_combo = base_combo or {}
+    base, now = measure(shoot, base_combo), measure(shoot, combo)
     normal = [p for p in base["pairs"] if p.startswith("N")]
     for title, pairs in (("정상(N)", normal), ("전체", base["pairs"])):
         print(f"{shoot}차 {title} ({len(pairs)}짝)")
-        print(line("끔", total(base, pairs), len(pairs)))
+        print(line(name_of(base_combo) if base_combo else "끔", total(base, pairs), len(pairs)))
         print(line(name_of(combo), total(now, pairs), len(pairs)))
     changed = diff_pairs(base, now)
     print(f"\n달라진 짝 ({len(changed)})")
@@ -201,7 +214,7 @@ def who(shoot: int, pair: str, combo: dict) -> None:
             last[t] = p
 
 
-def links(shoot: int, combo: dict) -> None:
+def links(shoot: int, combo: dict, base_combo: dict | None = None) -> None:
     """두 화면 짝(선반 카메라 사람 × 0.5초 조각)이 그 조합에서 달라지나. link_diagnose.py gate 와 같은 셈."""
     import link_diagnose as ld
     from src.core.config import AppConfig
@@ -212,7 +225,8 @@ def links(shoot: int, combo: dict) -> None:
     print(f"  {'':24s} {'조각':>5s} {'짝 있음':>7s} {'끊김':>4s} {'짝 바뀜':>6s} {'손님 아닌 번호와 맺힘':>12s}")
     kept: dict[str, dict] = {}
     # 다시 계산을 먼저 다 해 둔다 — 기록기를 단 채로 다시 계산하면 그 판정의 조각까지 앞 기록기에 섞여 들어간다
-    runs = [(label, replay(shoot, c)) for label, c in (("끔", {}), (name_of(combo), combo))]
+    base_combo = base_combo or {}
+    runs = [(label, replay(shoot, c)) for label, c in ((name_of(base_combo) if base_combo else "끔", base_combo), (name_of(combo), combo))]
     orig_update = ld.cv.CrossViewLinker.update
     for label, out in runs:
         dual_eval.set_profile(shoot)
@@ -359,7 +373,7 @@ def parse_combo(items: list[str]) -> dict:
     for item in items:
         k, v = item.split("=", 1)
         if k not in (*KEYS, "both"):
-            raise SystemExit(f"{k}: nested · score · both")
+            raise SystemExit(f"{k}: nested · score · pose · jump · single · both")
         combo[k] = float(v)
     return combo
 
@@ -369,15 +383,17 @@ def main() -> int:
     ap.add_argument("action", choices=["grid", "try", "who", "links", "held", "gaps", "posegrid"])
     ap.add_argument("args", nargs="*")
     ap.add_argument("--shoot", type=int, choices=[2, 3], default=3)
+    ap.add_argument("--base", default="", help="견줄 기준 조합 (쉼표로 이음, 예: nested=0.7,pose=0.5). 없으면 모두 끔")
     a = ap.parse_args()
+    base = parse_combo([x for x in a.base.split(",") if x])
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if a.action == "grid":
         grid(a.shoot)
     elif a.action == "try":
-        try_one(a.shoot, parse_combo(a.args))
+        try_one(a.shoot, parse_combo(a.args), base)
     elif a.action == "links":
-        links(a.shoot, parse_combo(a.args))
+        links(a.shoot, parse_combo(a.args), base)
     elif a.action == "held":
         held(a.shoot, parse_combo(a.args))
     elif a.action == "gaps":
