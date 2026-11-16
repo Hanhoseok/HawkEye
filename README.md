@@ -13,7 +13,7 @@ CCTV 영상으로 고객이 상품을 집고 돌려놓는 과정을 기록하고
 
 | 폴더 | 담당 | 내용 |
 |---|---|---|
-| [`experiments/tracking/`](experiments/tracking/) | 왕규원 | 사람 추적(YOLO + BoT-SORT + 매장 단위 신원) · 손 뻗기 · 선반 지도(물건 사라짐) · 집음/놓음 · 결제 대조 · 출구 위험 판정 — [구현 설명](experiments/tracking/docs/architecture.md) · [결과 종합](experiments/tracking/docs/results-summary.md) |
+| [`experiments/tracking/`](experiments/tracking/) | 왕규원 | 사람 추적(YOLO + BoT-SORT + 매장 단위 신원) · 손 뻗기 · 선반 지도(물건 사라짐) · 집음/놓음 · 결제 대조 · 출구 위험 판정 · 평가용 정답 라벨(촬영 영상별 집음·놓음, 결제 시각, 두 카메라 시차) — [구현 설명](experiments/tracking/docs/architecture.md) · [결과 종합](experiments/tracking/docs/results-summary.md) |
 | [`experiments/behavior-model/`](experiments/behavior-model/) | 정준우 | AI-Hub 무인매장 정상·이상 행동 데이터로 모델 학습·테스트 |
 | [`experiments/arduino/`](experiments/arduino/) | 정준우 | 선반 재고 센서 — 스프링 푸셔 레인마다 ESP32 + 거리 센서(VL53L0X)로 밀판 거리를 재고, PC의 Python이 레인별 수량과 넣음/뺌 이벤트를 추정 (Wi-Fi 수신, 모니터 화면) — [시스템 설명](experiments/arduino/docs/SYSTEM_OVERVIEW.md) |
 | [`experiments/phone-scan-checkout/`](experiments/phone-scan-checkout/) | 정준우 | 휴대폰 바코드 셀프 계산대 — 노트북이 계산대 화면, 휴대폰이 바코드 리더기가 되는 웹앱 (Node.js + SQLite, 모의 결제 기록) |
