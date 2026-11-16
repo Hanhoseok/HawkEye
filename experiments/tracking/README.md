@@ -236,7 +236,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | **공개 데이터 평가** | `merl_to_labels.py` · `merl_batch.py` · `merl_eval.py` · `merl_feature_check.py` | MERL: 라벨 변환 · 묶어 돌리기 · train/test 평가 · 자세 특징 판별력 |
 | | `retailaction_eval.py` · `retailaction_hands.py` · `eval_takes.py` | RetailAction: 자세만으로 집기 · 손 사진으로 집음/놓음 · 손 뻗기 후보를 라벨과 대조 |
 | **라벨·구역 준비** | `label_actions.py` · `export_frame.py` · `zone_report.py` | 행동 구간 라벨링 · 격자 입힌 장면 저장 · 신원별 구역 체류 집계 |
-| **상품 탐지 데이터 (3차)** | `product_frames.py` | 학습용 장면 고르기(`plan`) · 그림으로 뽑기(`extract`) · 모아보기(`sheet`) — 표는 `labels/products_shoot3/`, 그림은 `outputs/` 에만 |
+| **상품 탐지 데이터 (3차)** | `product_frames.py` | 학습용 장면 고르기(`plan`) · 그림으로 뽑기(`extract`) · 모아보기(`sheet`) · 찍은 라벨을 YOLO 학습용으로 내보내기(`export`) — 표 · 라벨은 `labels/products_shoot3/`, 그림은 `outputs/` 에만. 라벨은 분석 도구의 '상품 라벨' 화면에서 찍는다 |
 | **추적 분석 (초기 단계)** | `analyze_observations.py` · `detect_id_jumps.py` · `find_crossings.py` | 추적 번호 단위 요약 · 번호가 남에게 옮겨 간 지점 · 두 사람이 겹친 구간 |
 | **시연·시험용** | `shelf_demo.py` · `make_sample_video.py` | 선반 지도 1단계 시연 · 영상 입출력만 확인하는 합성 영상 |
 

@@ -69,6 +69,7 @@ async function route() {
   clearInterval(app.poll);
   if (app.player) { app.player.destroy(); app.player = null; }
   tipBox.hidden = true;
+  view.classList.remove("wide");
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   const query = Object.fromEntries(new URLSearchParams(qs || ""));
@@ -81,13 +82,14 @@ async function route() {
   if (app.shoot == null) {     // 처음 연 것: 서버가 기록이 있는 가장 최근 촬영을 고른다
     try { await loadIndex(); } catch (e) { return showError(e); }
   }
-  const tab = parts[0] === "tune" ? "tune" : "gallery";
+  const tab = ["tune", "products"].includes(parts[0]) ? parts[0] : "gallery";
   for (const a of document.querySelectorAll(".tabs a")) {
     a.setAttribute("aria-current", String(a.dataset.tab === tab));
-    a.setAttribute("href", at(a.dataset.tab === "tune" ? "/tune" : ""));
+    a.setAttribute("href", at(a.dataset.tab === "gallery" ? "" : "/" + a.dataset.tab));
   }
   if (parts[0] === "pair" && parts[1]) showPair(parts[1], parts[2], query.draft);
   else if (parts[0] === "tune") showTune(query);
+  else if (parts[0] === "products") showProducts(parts[1]);
   else showGallery();
 }
 window.addEventListener("hashchange", route);

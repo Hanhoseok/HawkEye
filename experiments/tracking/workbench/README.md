@@ -1,7 +1,7 @@
 # 분석 도구 (workbench)
 
 저장된 기록을 원본 영상 위에 그려, **프로그램이 무엇을 어떻게 판단했는지를 질문별로** 보는 도구다.
-그때그때 만들던 확인용 페이지(오판 장면 보기, 구역 편집, 결제 라벨 도구)를 하나로 모으는 자리이고, 갤러리, 한 쌍 분석, 수치 조정, 정답 적기, 새 영상 추가까지 있다.
+그때그때 만들던 확인용 페이지(오판 장면 보기, 구역 편집, 결제 라벨 도구)를 하나로 모으는 자리이고, 갤러리, 한 쌍 분석, 수치 조정, 정답 적기, 새 영상 추가, 상품 라벨 찍기까지 있다.
 
 ```bash
 cd experiments/tracking
@@ -92,6 +92,14 @@ python workbench/server.py          # http://127.0.0.1:8770/  (내 컴퓨터에�
 - 갤러리는 '2차 촬영'과 '추가한 영상'을 묶음으로 나눠 보여 주고 위쪽 숫자도 묶음별이다. `dual_eval.py judge` 는 추가한 영상도 함께 채점하므로, 2차 촬영만 보려면 `--only "N1,N2,…"` 처럼 고른다.
 - **지우는 기능은 없다.** 잘못 넣었으면 위에 적은 다섯 곳(영상 두 개, 표 세 줄, 기록 폴더)을 손으로 지운다.
 
+**상품 라벨** — 위쪽 탭. 3차 촬영에서 뽑아 둔 장면(`labels/products_shoot3/frames.csv` 의 묶음 1, 677장)에 상품 상자를 찍는다 (종류 3개). 어느 촬영 탭에서 열어도 같은 것이다.
+
+- 목록은 칸 하나가 한 장이다 (안 찍음 · 찍는 중 · 끝). 한 장을 열면 그림 위에서 끌어 상자를 그린다 — 1 · 2 · 3 종류, Del 지우기, H 손에 든 상품, 휠 확대, 오른쪽 단추 끌기로 이동.
+- 고칠 때마다 저절로 저장되고 (찍는 중), **Enter 를 눌러야 '끝'** 이다. 학습에는 끝난 장면만 들어간다.
+- 안 찍은 장면을 열면 같은 카메라에서 끝낸 가장 가까운 장면의 상자가 초안(점선)으로 깔린다. 초안은 확인하고 Enter 를 눌러야 라벨이 된다.
+- 라벨은 `labels/products_shoot3/boxes/<그림 이름>.json` (저장소에 올림). 그림은 `outputs/products_shoot3/images/` 에 있어야 한다 — 없으면 `python scripts/product_frames.py extract`.
+- 학습용으로 내보내기는 `python scripts/product_frames.py export`. 찍는 기준 · 파일 모양 · 한계는 `labels/products_shoot3/README.md`.
+
 ## 구성
 
 | 파일 | 하는 일 |
@@ -102,6 +110,7 @@ python workbench/server.py          # http://127.0.0.1:8770/  (내 컴퓨터에�
 | `labels.py` | 정답 적기 — 정답 파일 읽고 쓰기·값 확인 (`tests/test_workbench_labels.py`). 채점은 `analyze.py` 의 `score_labels` |
 | `intake.py` | 새 영상 추가 — 파일 받기·영상 확인·정답표에 등록·처리 대기열·시차 추정과 저장 (`tests/test_workbench_intake.py`) |
 | `tune.py` | 수치 조정 — 바꿀 수 있는 값 목록(`KNOBS`, 회차별로 거르는 `knobs_for`), 초안 판정(`outputs/workbench/drafts/`), 잠금과 기록, 적용 (`tests/test_workbench_tune.py`) |
+| `products.py` | 상품 라벨 찍기 — 라벨 파일 읽고 쓰기 · 값 확인 · 초안 고르기 (`tests/test_workbench_products.py`). 화면은 `static/products.js` |
 | `static/` | 화면 (설치·빌드 없이 도는 HTML·CSS·JS) |
 
 판정은 `scripts/dual_eval.py` 의 것 그대로다 — 이 도구가 따로 판정하지 않는다. 결제는 지금 기본인 '계산대에 서 있으면 결제'.

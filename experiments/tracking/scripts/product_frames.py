@@ -4,6 +4,9 @@
     python scripts/product_frames.py extract            # 묶음 1 의 장면을 그림으로 → outputs/products_shoot3/images/
     python scripts/product_frames.py extract --batch 0  # 후보 전부 (약 6천 장 — 용량 큼)
     python scripts/product_frames.py sheet              # 묶음 1 을 한눈에 보는 모아보기 → outputs/products_shoot3/sheets/
+    python scripts/product_frames.py export             # 다 찍은 라벨을 YOLO 학습용으로 → outputs/products_shoot3/ (data.yaml · labels/ · 목록)
+
+라벨은 분석 도구의 '상품 라벨' 화면에서 찍는다 (workbench/products.py → labels/products_shoot3/boxes/<그림 이름>.json).
 
 고르는 방법 (전부 표와 장면 시각으로 정해져 다시 돌려도 같다):
   - base : 영상마다 1초에 한 장.
@@ -309,9 +312,77 @@ def sheets(rows: list[dict], batch: int, cols: int = 6, per: int = 36, width: in
     return made
 
 
+# ---------------------------------------------------------------------- 라벨 → YOLO
+
+def yolo_lines(boxes: list[dict], width: float, height: float) -> list[str]:
+    """상자(그림 픽셀) → YOLO 라벨 줄 'cls cx cy w h' (0~1). 손에 든 표시(held)는 YOLO 형식에 자리가 없어 안 실린다."""
+    out = []
+    for b in boxes:
+        x1, x2 = sorted((float(b["x1"]), float(b["x2"])))
+        y1, y2 = sorted((float(b["y1"]), float(b["y2"])))
+        out.append(f"{int(b['cls'])} {(x1 + x2) / 2 / width:.6f} {(y1 + y2) / 2 / height:.6f} "
+                   f"{(x2 - x1) / width:.6f} {(y2 - y1) / height:.6f}")
+    return out
+
+
+def read_names(path: Path | None = None) -> dict[int, str]:
+    import yaml
+
+    raw = yaml.safe_load((path or DATASET / "classes.yaml").read_text(encoding="utf-8")) or {}
+    return {int(i): name for i, name in (raw.get("names") or {}).items()}
+
+
+def export(rows: list[dict], dataset: Path | None = None, out: Path | None = None) -> dict:
+    """다 찍은(done) 장면만 YOLO 학습용으로 낸다. 찍는 중 · 뺀(skip) 장면 · 그림이 없는 장면은 안 들어간다.
+
+    그림은 복사하지 않는다 — out/images/ 의 그림 옆 out/labels/ 에 라벨을 쓰고, 나눔별 목록(train.txt …)에 그림 경로를 적는다.
+    (YOLO 는 그림 경로의 /images/ 를 /labels/ 로 바꿔 라벨을 찾는다.)
+    """
+    dataset, out = dataset or DATASET, out or OUT
+    names = read_names(dataset / "classes.yaml")
+    labels = out / "labels"
+    labels.mkdir(parents=True, exist_ok=True)
+    for old in labels.glob("*.txt"):          # 지난번에 낸 것 — 그 뒤 라벨을 지웠을 수 있다
+        old.unlink()
+    lists: dict[str, list[str]] = {"train": [], "val": [], "test": []}
+    stats = {"frames": 0, "boxes": 0, "held": 0, "empty": 0, "doing": 0, "skip": 0, "no_image": 0,
+             "by_class": {name: 0 for name in names.values()}, "by_split": {}}
+    for r in rows:
+        path = dataset / "boxes" / (Path(r["image"]).stem + ".json")
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not data.get("done"):
+            stats["doing"] += 1
+            continue
+        if data.get("skip"):
+            stats["skip"] += 1
+            continue
+        if not (out / "images" / r["image"]).exists():
+            stats["no_image"] += 1
+            continue
+        boxes = data.get("boxes") or []
+        (labels / (Path(r["image"]).stem + ".txt")).write_text(
+            "".join(line + "\n" for line in yolo_lines(boxes, data["width"], data["height"])), encoding="utf-8", newline="\n")
+        lists[r["split"]].append(f"./images/{r['image']}")
+        stats["frames"] += 1
+        stats["boxes"] += len(boxes)
+        stats["held"] += sum(1 for b in boxes if b.get("held"))
+        stats["empty"] += not boxes
+        for b in boxes:
+            stats["by_class"][names[int(b["cls"])]] += 1
+    for split, items in lists.items():
+        (out / f"{split}.txt").write_text("".join(i + "\n" for i in items), encoding="utf-8", newline="\n")
+        stats["by_split"][split] = len(items)
+    yaml_lines = [f"path: {out.as_posix()}", "train: train.txt", "val: val.txt", "test: test.txt", "names:"]
+    yaml_lines += [f"  {i}: {name}" for i, name in sorted(names.items())]
+    (out / "data.yaml").write_text("\n".join(yaml_lines) + "\n", encoding="utf-8", newline="\n")
+    return stats
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("what", choices=("plan", "extract", "sheet"))
+    ap.add_argument("what", choices=("plan", "extract", "sheet", "export"))
     ap.add_argument("--only", help="짝 이름 (쉼표)")
     ap.add_argument("--batch", type=int, default=1, help="extract · sheet: 묶음 번호 (0 = 후보 전부)")
     args = ap.parse_args()
@@ -325,7 +396,17 @@ def main() -> int:
         print(summary(rows))
         return 0
     rows = read_plan()
-    if args.what == "extract":
+    if args.what == "export":
+        st = export(rows)
+        print(f"낸 장면 {st['frames']}장 (학습 {st['by_split']['train']} · 검증 {st['by_split']['val']} · 시험 {st['by_split']['test']}), "
+              f"상자 {st['boxes']}개 (손에 든 것 {st['held']}), 상품 없는 장면 {st['empty']}장")
+        print("  종류별: " + " · ".join(f"{k} {v}" for k, v in st["by_class"].items()))
+        print(f"  안 낸 것: 찍는 중 {st['doing']}장 · 뺀 것 {st['skip']}장 · 그림 없음 {st['no_image']}장")
+        for split in ("train", "val"):
+            if not st["by_split"][split]:
+                print(f"  ! {split} 이 비었다 — 이대로는 학습이 안 돈다")
+        print(f"→ {(OUT / 'data.yaml').relative_to(ROOT)}")
+    elif args.what == "extract":
         print(f"새로 뽑은 그림 {extract(rows, args.batch, only)}장 → {(OUT / 'images').relative_to(ROOT)}")
     else:
         made = sheets(rows, args.batch)

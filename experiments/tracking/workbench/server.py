@@ -17,6 +17,8 @@
 /api/wb/add     올린 두 영상을 등록하고 처리 대기열에 넣는다. /api/wb/add/retry 는 다시 처리.
 /api/wb/sync    두 영상의 시차를 사람이 맞춘 값으로 적는다.
 /api/wb/tune    수치 조정 (workbench/tune.py): GET 칸 목록·기록, POST run(초안 판정) / result(전후 비교) / apply(적용).
+/api/wb/products  상품 라벨 찍기 (workbench/products.py, 3차 촬영만): GET 장면 목록, GET frame?image= 한 장의 라벨·초안,
+                  POST save {image, boxes, width, height, skip, done} / clear {image}.
 """
 
 from __future__ import annotations
@@ -38,12 +40,14 @@ from urllib.parse import parse_qs, urlsplit  # noqa: E402
 
 from workbench import intake  # noqa: E402
 from workbench import labels as label_store  # noqa: E402
+from workbench import products as product_store  # noqa: E402
 from workbench.data import PROFILES, Builder  # noqa: E402
 from workbench.tune import Tuner  # noqa: E402
 
 STATIC = "/" + (ROOT / "workbench" / "static").relative_to(REPO).as_posix() + "/"
 BUILDERS = {shoot: Builder(shoot) for shoot in PROFILES}
 TUNERS = {shoot: Tuner(builder) for shoot, builder in BUILDERS.items()}
+PRODUCTS = product_store.Store()
 RUNNER = intake.Runner(BUILDERS[2])
 """새 영상 추가는 2차 촬영 자리에서 찍은 영상만 받는다 (PROFILES[..].can_add)."""
 
@@ -130,6 +134,22 @@ def save_sync(body: dict) -> dict:
     return {"pair": pair, "offset_ms": offset}
 
 
+def products_api(method: str, path: str, query: dict, body: dict) -> dict | None:
+    """상품 라벨 찍기. 판정을 돌리지 않으므로 다른 일이 도는 중에도 받는다. 모르는 주소면 None."""
+    if method == "GET" and path == "/api/wb/products":
+        return {"images": "/" + PRODUCTS.images.relative_to(REPO).as_posix() + "/",
+                "labels_dir": PRODUCTS.boxes_dir.relative_to(ROOT).as_posix(), **PRODUCTS.listing()}
+    if method == "GET" and path == "/api/wb/products/frame":
+        return PRODUCTS.frame(str(query.get("image") or ""))
+    if method == "POST" and path == "/api/wb/products/save":
+        saved = PRODUCTS.save(str(body.get("image") or ""), body.get("boxes"), body.get("width"), body.get("height"),
+                              bool(body.get("skip")), bool(body.get("done")))
+        return {"saved": saved, **PRODUCTS.state(saved)}
+    if method == "POST" and path == "/api/wb/products/clear":
+        return {"cleared": PRODUCTS.clear(str(body.get("image") or ""))}
+    return None
+
+
 def tune_guard(tuner: Tuner) -> None:
     """수치 조정은 그 회차의 Tuner 가 제 판정만 살핀다 — 다른 회차가 도는 중이면 여기서 막는다."""
     if any(b.state["running"] for b in BUILDERS.values() if b is not tuner.builder) or \
@@ -173,6 +193,9 @@ class Handler(RangeHandler):
         try:
             if method == "GET" and path == "/api/wb/index":
                 return self._json(200, index_payload(shoot_of(query.get("shoot"), None)))
+            if path.startswith("/api/wb/products"):
+                out = products_api(method, path, query, body)
+                return self._json(200, out) if out is not None else self.send_error(404)
             shoot = shoot_of(query.get("shoot") if method == "GET" else body.get("shoot"))
             builder, tuner = BUILDERS[shoot], TUNERS[shoot]
             if method == "GET" and path == "/api/wb/status":
