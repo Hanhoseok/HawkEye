@@ -248,6 +248,10 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     # 3차 T09: 창가 그림 상자의 신원을 문 앞 손님이 받아 가 창가 상자가 손님으로 그려지던 것 — 0.27초 뒤 창가 상자가 신원을 되찾고 손님은 새 신원.
     # 같은 신원 두 상자 장면 3차 92 → 0 · 2차 1 → 0, 판정 점수·손님 수 그대로. 기준값 없는 규칙. --set identity.one_box_per_identity=false 로 끈다.
     cfg.identity.one_box_per_identity = True
+    # 전체 카메라가 두 사람의 번호를 뒤바꿔 붙인 것을 선반 카메라로 알아채 되돌린다 (후속 49, 2026-11-16, C-26).
+    # 선반 카메라 두 사람의 짝이 서로 맞바뀌고 · 그 무렵 전체 카메라 두 상자는 겹쳤고 · 선반 카메라 두 상자는 떨어져 있었을 때만.
+    # 3차 39쌍·2차 38쌍에서 걸린 곳은 3차 C20 16.1초 한 곳. --set fusion.swap_repair=false 로 끈다.
+    cfg.fusion.swap_repair = True
     _apply_set(cfg, overrides, early=True)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair, SHOOT)
     zdir = zones_dir(pair)
@@ -581,13 +585,13 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     levels = [e.level.value for e in finals]
     people = sum(1 for c in risk.book.customers.values() if c.seen_inside)
     # 손님별 마지막 판정은 나중에 합쳐진 신원을 한 사람으로 본다
-    scored = score(pair, [(resolve_end(e.person_id), e.level.value) for e in finals], people, truth)
+    scored = score(pair, [(judge.final_id(e.person_id, resolve_end), e.level.value) for e in finals], people, truth)
     return {
         "pair": pair, "kind": kind(pair), "verdicts": levels, **scored,
         "reasons": [f"P{e.person_id} {e.level.value}: {e.reason}" for e in finals],
         "people": people,
         "identities": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
-        "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes,
+        "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes, "swaps": judge.swaps,
         "actions": [a.describe() for a in risk.all_actions() if a.kind != "LOOK"],
         "payments": sum(1 for p in risk.book.payments if p.method in ("dwell", "checkout", "given")),
         "unmatched_payments": sum(1 for p in risk.book.payments if p.method == "unmatched"),

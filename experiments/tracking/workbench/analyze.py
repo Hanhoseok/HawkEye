@@ -125,6 +125,15 @@ def lens_track(data: dict, result: dict, customers: set[int]) -> dict:
         log.append({"ms": m["ms"], "level": "info", "text": tip})
     if data["merges"]["angle1"]:
         facts.append({"level": "info", "text": f"한 사람이 여러 신원으로 쪼개졌다가 나중에 합쳐진 것 {len(data['merges']['angle1'])}건"})
+    for s in data.get("swaps", []):
+        a, b = s["store"]
+        text = (f"전체 카메라가 {_who(a, customers)}·{_who(b, customers)} 의 번호를 서로 바꿔 붙임 (화면 번호 #{s['screen'][0]}⇄#{s['screen'][1]}) — "
+                f"선반 카메라로 알아채 {s['ms'] / 1000:.1f}초부터 되돌려 읽음 "
+                f"(상자 겹침: 전체 카메라 {s['overview_overlap']:.2f} · 선반 카메라 {s['detail_overlap']:.2f})")
+        facts.append({"level": "warn", "text": text, "ms": s["ms"]})
+        log.append({"ms": s["ms"], "level": "warn", "text": text})
+        for pid in (a, b):
+            marks.setdefault(pid, []).append({"ms": s["ms"], "tone": "warn", "tip": "전체 카메라 번호 맞바뀜 — 되돌려 읽기 시작"})
     for r in data["revivals"]["angle1"]:
         if r["before_pid"] > 0 and r["after_pid"] > 0 and r["before_pid"] != r["after_pid"]:
             text = (f"추적 번호 t{r['track']} 가 {r['gap_ms'] / 1000:.1f}초 끊겼다 되살아나 "

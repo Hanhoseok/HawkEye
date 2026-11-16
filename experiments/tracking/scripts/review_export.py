@@ -119,8 +119,9 @@ def _floor_row(found) -> list | None:
     return out + [round(ray[0], 3), round(ray[1], 3)] if ray is not None else out
 
 
-def _tracks(log, cam: str, resolve, floor_of=None) -> dict:
-    """floor_of(관찰) → (바닥 점 cm, 발목이 안 보일 때의 방향). 주면 줄 끝([10])에 발의 바닥 좌표를 싣는다 (3차 — 바닥 위 짝 그림)."""
+def _tracks(log, cam: str, resolve, floor_of=None, resolve_at=None) -> dict:
+    """floor_of(관찰) → (바닥 점 cm, 발목이 안 보일 때의 방향). 주면 줄 끝([10])에 발의 바닥 좌표를 싣는다 (3차 — 바닥 위 짝 그림).
+    resolve_at(장면 번호, 신원) → 그 장면에 그릴 번호. 주면 resolve 대신 쓴다 (번호 맞바뀜을 되돌린 짝 — _store_ids)."""
     m = log.meta[cam]
     frames = {}
     for idx, obs in sorted(log.ids[cam].items()):
@@ -133,7 +134,9 @@ def _tracks(log, cam: str, resolve, floor_of=None) -> dict:
                     x, y, c = o.keypoints[j]
                     kp += [round(x), round(y), round(c * 100)]
             rows.append([
-                o.person_id, resolve(o.person_id) if o.person_id > 0 else o.person_id, o.track_id,
+                o.person_id,
+                o.person_id if o.person_id <= 0 else (resolve_at(idx, o.person_id) if resolve_at else resolve(o.person_id)),
+                o.track_id,
                 x1, y1, x2, y2,
                 int(bool(o.is_new)) | (int(bool(o.stitched)) << 1),
                 None if o.matched_similarity is None else round(o.matched_similarity, 3),
@@ -149,6 +152,27 @@ def _tracks(log, cam: str, resolve, floor_of=None) -> dict:
         # 3차: 장면을 빠뜨린 영상이라 번호 ÷ fps 가 실제 시각이 아니다 — 기록이 있는 장면의 실제 시각(ms, 시차 전)을 함께 싣는다
         out["ms"] = {idx: round(log.ms(cam, idx), 1) for idx in frames}
     return out
+
+
+def _store_ids(log, judge, resolve_end):
+    """전체 카메라가 번호를 뒤바꿔 붙인 것을 판정이 되돌린 짝(fusion.swap_repair)에서: (장면 번호, 화면 신원) → 그 장면에 그릴 매장 신원.
+    되돌린 적이 없으면 None — 화면 신원을 끝까지 합친 번호(resolve_end) 그대로 그린다.
+    바꿔 읽기는 판정이 알아챈 때(found_ms)가 아니라 번호가 바뀐 때(ms)부터 그린다 — 화면에서 사람과 번호가 계속 맞게."""
+    if not judge.swaps:
+        return None
+    swaps = sorted(judge.swaps, key=lambda s: s["ms"])
+    book = judge.risk.book
+
+    def at(idx: int, pid: int) -> int:
+        ms = log.ms("angle1", idx)
+        store = {}
+        for s in swaps:
+            if s["ms"] <= ms + 1e-6:
+                (screen_a, screen_b), (a, b) = s["screen"], s["store"]
+                store[screen_a], store[screen_b] = b, a
+        renamed = store.get(log.resolver("angle1", idx)(pid))
+        return resolve_end(pid) if renamed is None else book.resolve(renamed)
+    return at
 
 
 def _births(log, cam: str) -> list[dict]:
@@ -326,7 +350,9 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
                  "method": getattr(p, "method", "")} for p in risk.book.payments]
     # 짝은 맺을 때의 번호로 적힌다. 화면의 상자·띠는 나중에 합친 뒤 번호(r0·r1)로 그리므로 짝도 그 번호로 내보낸다 —
     # 안 그러면 합쳐지기 전 구간이 '짝 없음'으로 보인다 (A-19: 3차 C15 선반 화면 3 → 2, 24~28.8초).
-    links = [{"start": round(l.start_ms), "end": round(l.end_ms), "detail": r0(l.detail_id), "overview": r1(l.overview_id),
+    # 전체 카메라 번호 맞바뀜을 되돌린 짝이면 짝·상자 모두 매장 신원으로 (final_id · _store_ids)
+    links = [{"start": round(l.start_ms), "end": round(l.end_ms), "detail": r0(l.detail_id),
+              "overview": judge.final_id(l.overview_id, r1),
               "score": round(l.score, 2), "pos": None if l.position is None else round(l.position, 2),
               "app": None if l.appearance is None else round(l.appearance, 2)} for l in judge.linker.links]
     takes0 = [{"pid": t.person_id, "zone": t.zone, "start": detail_ms(t.start_frame), "end": detail_ms(t.end_frame)}
@@ -349,7 +375,8 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
         def floor0(o):
             return judge.floor_point(judge.detail_floor, o.bbox, getattr(o, "keypoints", None),
                                      judge.detail_width, judge.detail_height)
-    tracks = {"angle1": _tracks(log, "angle1", r1, floor1), "angle0": _tracks(log, "angle0", r0, floor0)}
+    tracks = {"angle1": _tracks(log, "angle1", r1, floor1, _store_ids(log, judge, r1)),
+              "angle0": _tracks(log, "angle0", r0, floor0)}
     if on_floor:
         _link_gaps(links, tracks, offset, judge.config.pair_tolerance_seconds * 1000.0)
     data = {
@@ -364,6 +391,7 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
         "revivals": {"angle1": _revivals(log, "angle1"), "angle0": _revivals(log, "angle0")},
         "events": events, "actions": actions, "customers": customers, "payments": payments, "links": links,
         "takes0": takes0, "takes1": takes1, "visits": visits, "merges": merges,
+        "swaps": [{**s, "ms": round(s["ms"]), "found_ms": round(s["found_ms"])} for s in judge.swaps],
         "shelf_events": result["shelf_events"],
         "shelf_items": _shelf_items(run_dir, pair, m0["width"], m0["height"], f0, offset, lambda f: log.ms("angle0", f)),
         "slot_changes": [{"slot": r["slot"], "start": round(r["start_ms"] + offset), "end": round(r["end_ms"] + offset),

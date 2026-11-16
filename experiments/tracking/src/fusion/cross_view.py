@@ -108,6 +108,10 @@ class CrossViewLinker:
         self._history: dict[int, list[tuple[float, float, int]]] = {}
         """선반 카메라 신원 → [(시작, 끝, 전체 카메라 신원)]. 짝이 이어지면 구간을 늘린다."""
         self._last_window_ms: float | None = None
+        self.windows: deque = deque(maxlen=8)
+        """닫힌 조각들 (시작, 끝, {선반 카메라 신원: 전체 카메라 신원}) — 짝이 없던 조각은 빈 사전. 번호 맞바뀜 확인(swap_repair)이 본다."""
+        self.closed = 0
+        """지금까지 닫힌 조각 수."""
 
     # ------------------------------------------------------------------ 입력
 
@@ -147,6 +151,9 @@ class CrossViewLinker:
             return []
         start, end = self._last_window_ms, now_ms
         self._last_window_ms = now_ms
+        pairs: dict[int, int] = {}
+        self.windows.append((start, end, pairs))
+        self.closed += 1
 
         detail = [pid for pid, t in self._detail.items() if t.last_ms >= start]
         overview = self.overview_candidates(start)
@@ -181,6 +188,7 @@ class CrossViewLinker:
             pos, app = parts[(d, o)]
             link = Link(start, end, d, o, float(scores[i, j]), pos, app)
             made.append(link)
+            pairs[d] = o
             self._remember(d, o, start, end)
         for d in detail:
             if d not in {l.detail_id for l in made}:
@@ -247,6 +255,66 @@ class CrossViewLinker:
             spans[-1] = (spans[-1][0], end, o)
         else:
             spans.append((start, end, o))
+
+    # ------------------------------------------------------------------ 번호 맞바뀜
+
+    def mutual_swaps(self) -> list[tuple[int, int, int, int]]:
+        """방금 닫힌 조각에서 짝이 서로 맞바뀐 선반 카메라 두 사람: [(가, 나, A, B)].
+        앞 두 조각은 (가⇄A, 나⇄B) 그대로였고 이번 조각은 (가⇄B, 나⇄A)."""
+        if len(self.windows) < 3:
+            return []
+        (_, _, first), (_, _, prev), (_, _, now) = list(self.windows)[-3:]
+        ids = sorted(set(first) & set(prev) & set(now))
+        out = []
+        for i, d1 in enumerate(ids):
+            for d2 in ids[i + 1:]:
+                a, b = prev[d1], prev[d2]
+                if a != b and first[d1] == a and first[d2] == b and now[d1] == b and now[d2] == a:
+                    out.append((d1, d2, a, b))
+        return out
+
+    def swap_overview(self, a: int, b: int, since_ms: float) -> None:
+        """since_ms 부터의 기록에서 전체 카메라 신원 a·b 를 서로 바꾼다 — 그때부터 전체 카메라가 두 사람의 번호를 뒤바꿔 붙였다.
+        짝 기록(links·구간), 지금 짝, 닫힌 조각, 두 신원의 위치 표본·외형."""
+        flip = {a: b, b: a}
+        since = since_ms - 1e-6
+        gap = self.config.window_seconds * 1000.0 * 1.5
+        for link in self.links:
+            if link.start_ms >= since and link.overview_id in flip:
+                link.overview_id = flip[link.overview_id]
+        for d, spans in self._history.items():
+            fixed: list[tuple[float, float, int]] = []
+            for s, e, o in spans:
+                if s >= since and o in flip:
+                    o = flip[o]
+                if fixed and fixed[-1][2] == o and s - fixed[-1][1] <= gap:
+                    fixed[-1] = (fixed[-1][0], e, o)
+                else:
+                    fixed.append((s, e, o))
+            self._history[d] = fixed
+        for d, o in list(self._current.items()):
+            if o in flip and self._current_end.get(d, -1e18) > since:
+                self._current[d] = flip[o]
+        for s, _, pairs in self.windows:
+            if s >= since:
+                for d, o in list(pairs.items()):
+                    pairs[d] = flip.get(o, o)
+        ta, tb = self._overview.setdefault(a, _Track()), self._overview.setdefault(b, _Track())
+        old_a, new_a = [x for x in ta.samples if x.pts_ms < since], [x for x in ta.samples if x.pts_ms >= since]
+        old_b, new_b = [x for x in tb.samples if x.pts_ms < since], [x for x in tb.samples if x.pts_ms >= since]
+
+        def marked(mine: float, other: float) -> float:
+            return other if other >= since else (mine if mine < since else -1e18)
+
+        ta.candidate_ms, tb.candidate_ms = marked(ta.candidate_ms, tb.candidate_ms), marked(tb.candidate_ms, ta.candidate_ms)
+        for t, samples in ((ta, old_a + new_b), (tb, old_b + new_a)):
+            t.samples = deque(samples, maxlen=t.samples.maxlen)
+            t.last_ms = samples[-1].pts_ms if samples else -1e18
+        if new_a or new_b:
+            ta.appearance, tb.appearance = tb.appearance, ta.appearance
+        for pid, t in ((a, ta), (b, tb)):
+            if not t.samples:
+                self._overview.pop(pid, None)
 
     # ------------------------------------------------------------------ 조회
 

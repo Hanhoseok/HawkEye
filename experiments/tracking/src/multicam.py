@@ -246,6 +246,10 @@ class MultiCameraPipeline:
         pay_log.close()
         with ObservationLog(out / "cross_view_links.jsonl") as f:
             f.write_many(self.judge.linker.links)
+        # 전체 카메라 번호 맞바뀜을 되돌린 기록 (fusion.swap_repair). 없어도 빈 파일 — 이전 실행의 것이 남지 않게.
+        # 위 짝 기록의 전체 카메라 번호는 되돌려 읽은 뒤의 매장 신원이다.
+        (out / "overview_swaps.jsonl").write_text(
+            "".join(json.dumps(s, ensure_ascii=False) + "\n" for s in self.judge.swaps), encoding="utf-8")
         with ObservationLog(out / "shelf_events.jsonl") as f:
             f.write_many(self.judge.fuser.records)
         with ObservationLog(out / self.config.output.actions_name) as f:

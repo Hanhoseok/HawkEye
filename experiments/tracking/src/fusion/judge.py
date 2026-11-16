@@ -6,10 +6,14 @@
 
 판단(⑤⑥)은 전체 카메라의 장면 시계로 돈다. 선반 카메라의 사건은 짝이 그 시간을 덮을 때까지(조각 2개) 기다렸다 넘긴다.
 영상·모델 라이브러리를 모른다 — 저장된 기록만으로 다시 돌릴 수 있다 (scripts/dual_eval.py judge).
+
+매장 신원은 전체 카메라의 화면 신원 그대로다. 단 전체 카메라가 두 사람의 번호를 뒤바꿔 붙인 것을 선반 카메라로 알아챘을 때
+(fusion.swap_repair)는 그때부터 두 번호를 서로 바꿔 읽는다 — 짝·손님 장부·판정에는 바꿔 읽은 번호(매장 신원)가 들어간다.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import replace
 from typing import Callable
 
@@ -65,6 +69,10 @@ class DualJudge:
             self.reach = InteractionDetector(
                 InteractionConfig(signal="hand", dwell_seconds=config.overview_reach_seconds,
                                   hand_conf=config.overview_reach_conf), shelf_image)
+        if getattr(risk, "consistency", None) is not None:
+            # 신원 확인 값은 화면 신원으로 재 둔 것이다 — 손님 장부가 매장 신원으로 물으면 화면 신원으로 바꿔 묻는다
+            check = risk.consistency
+            risk.consistency = lambda pid: check(self.screen_id(pid))
         self.reset()
 
     def reset(self) -> None:
@@ -77,6 +85,97 @@ class DualJudge:
         self._pending_visits: list[tuple[float, ShelfVisit, float, float]] = []
         self.events: list[RiskEvent] = []
         self.unowned_takes = 0
+        self._store: dict[int, int] = {}
+        """전체 카메라 화면 신원 → 매장 신원. 번호 맞바뀜을 되돌린 신원만 들어 있다 (fusion.swap_repair). 없는 신원은 화면 신원 그대로."""
+        self.swaps: list[dict] = []
+        """되돌린 번호 맞바뀜: ms(이때부터 바꿔 읽음) · screen(화면 신원 둘) · store(그 둘이 그 전까지 가리키던 매장 신원) · 근거."""
+        self._merges: list[dict] = []
+        """손님 장부에 넘긴 합침 기록 (매장 신원으로 바꿔 적은 것). 받은 합침 기록과 길이가 같다."""
+        self._boxes: dict[str, deque] = {"detail": deque(), "overview": deque()}
+        """최근 장면의 사람 상자 (ms, {신원: 상자}) — 번호 맞바뀜 확인에 쓴다."""
+        self._closed_seen = 0
+
+    # ------------------------------------------------------------------ 번호 맞바뀜 되돌리기 (fusion.swap_repair)
+
+    def store_id(self, screen_id: int) -> int:
+        """전체 카메라 화면 신원(합친 뒤 번호) → 매장 신원."""
+        return self._store.get(screen_id, screen_id)
+
+    def screen_id(self, store_id: int) -> int:
+        """매장 신원 → 지금 그 사람에게 붙어 있는 전체 카메라 화면 신원."""
+        for screen, store in self._store.items():
+            if store == store_id:
+                return screen
+        return store_id
+
+    def final_id(self, person_id: int, resolve: Callable[[int], int] | None = None) -> int:
+        """판정에 적힌 번호 → 끝까지 합친 뒤의 매장 신원. resolve = 전체 카메라의 마지막 합침 풀이.
+        번호를 바꿔 읽은 적이 있으면 화면 신원의 합침 풀이를 그대로 쓸 수 없어 손님 장부의 합침 기록을 따른다."""
+        if self.swaps:
+            return self.risk.book.resolve(person_id)
+        return resolve(person_id) if resolve else person_id
+
+    def _renamed(self, item, resolve):
+        """화면 신원으로 적힌 관찰·집기 후보를 매장 신원으로. 바꿔 읽는 신원이 아니면 그대로 돌려준다."""
+        if item.person_id <= 0:
+            return item
+        store = self._store.get(resolve(item.person_id) if resolve else item.person_id)
+        return item if store is None else replace(item, person_id=store)
+
+    def _note_merges(self, merges: list[dict]) -> list[dict]:
+        for m in merges[len(self._merges):]:
+            if m["from"] in self._store or m["into"] in self._store:
+                gone = m["from"]
+                m = {**m, "from": self.store_id(m["from"]), "into": self.store_id(m["into"])}
+                self._store.pop(gone, None)   # 합쳐져 없어진 화면 신원
+            self._merges.append(m)
+        return self._merges
+
+    def _note_boxes(self, view: str, pts_ms: float, boxes: dict) -> None:
+        if not self.config.swap_repair:
+            return
+        seen = self._boxes[view]
+        seen.append((pts_ms, boxes))
+        horizon = pts_ms - self.config.window_seconds * 1000.0 * 4.0
+        while seen and seen[0][0] < horizon:
+            seen.popleft()
+
+    @staticmethod
+    def box_overlap(a, b) -> float:
+        """두 상자가 겹친 넓이 ÷ 작은 상자 넓이."""
+        w = min(a[2], b[2]) - max(a[0], b[0])
+        h = min(a[3], b[3]) - max(a[1], b[1])
+        if w <= 0 or h <= 0:
+            return 0.0
+        small = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+        return w * h / small if small > 0 else 0.0
+
+    def _most_overlap(self, view: str, x: int, y: int, start: float, end: float) -> float | None:
+        """그 시간 동안 두 사람이 한 장면에 함께 나온 것 중 가장 많이 겹친 정도. 함께 나온 장면이 없으면 None."""
+        found = [self.box_overlap(boxes[x], boxes[y]) for ms, boxes in self._boxes[view]
+                 if start <= ms <= end and x in boxes and y in boxes]
+        return max(found) if found else None
+
+    def _repair_swaps(self, now_ms: float) -> None:
+        """방금 닫힌 조각에서 선반 카메라 두 사람의 짝이 서로 맞바뀌었고, 그 무렵 전체 카메라의 두 상자는 겹쳤는데
+        선반 카메라의 두 상자는 떨어져 있었으면 — 전체 카메라가 번호를 뒤바꿔 붙인 것이다. 이번 조각 시작부터 두 번호를 바꿔 읽는다."""
+        limit = self.config.swap_overlap
+        for d1, d2, a, b in self.linker.mutual_swaps():
+            (start, _, _), (since, end, _) = list(self.linker.windows)[-2:]
+            over = self._most_overlap("overview", a, b, start, end)
+            shelf = self._most_overlap("detail", d1, d2, start, end)
+            if over is None or shelf is None or over < limit or shelf >= limit:
+                continue
+            screen_a, screen_b = self.screen_id(a), self.screen_id(b)
+            self.linker.swap_overview(a, b, since)
+            self.fuser.swap_overview(a, b, since)
+            for screen, store in ((screen_a, b), (screen_b, a)):
+                if screen == store:
+                    self._store.pop(screen, None)
+                else:
+                    self._store[screen] = store
+            self.swaps.append({"ms": since, "found_ms": now_ms, "screen": [screen_a, screen_b], "store": [a, b],
+                               "detail": [d1, d2], "overview_overlap": round(over, 3), "detail_overlap": round(shelf, 3)})
 
     # ------------------------------------------------------------------
 
@@ -158,6 +257,7 @@ class DualJudge:
     ) -> None:
         for sc in slot_changes or []:
             self.fuser.note_slot_change(sc)
+        boxes = {}
         for obs in identities:
             if obs.person_id <= 0:
                 continue
@@ -167,6 +267,8 @@ class DualJudge:
                           if self.detail_floor is not None else (None, None))
             self.linker.observe("detail", pid, pts_ms, self.detail_band(obs.bbox),
                                 appearance(pid) if appearance else None, floor, ray)
+            boxes[pid] = obs.bbox
+        self._note_boxes("detail", pts_ms, boxes)
         for t in takes:
             pid = resolve(t.person_id) if resolve and t.person_id > 0 else t.person_id
             self._pending_takes.append((self.fuser.detail_axis.to_ms(t.end_frame), replace(t, person_id=pid)))
@@ -183,10 +285,13 @@ class DualJudge:
         resolve: Callable[[int], int] | None = None,
     ):
         w, h = self.overview_size
+        boxes = {}
         for obs in identities:
             if obs.person_id <= 0:
                 continue
-            pid = resolve(obs.person_id) if resolve else obs.person_id
+            screen = resolve(obs.person_id) if resolve else obs.person_id
+            pid = self._store.get(screen, screen)   # 매장 신원 — 번호 맞바뀜을 되돌린 신원만 화면 신원과 다르다
+            boxes[pid] = obs.bbox
             point = self.floor.foot_on_floor(obs.bbox, w, h)
             band = self.floor.band_position(point)   # 띠는 band_map 을 맞춘 상자 기준 그대로
             foot = self.floor.foot_on_floor(obs.bbox, w, h, obs.keypoints) if self.floor.foot_mode != "bbox" else point
@@ -197,11 +302,15 @@ class DualJudge:
                              if self.config.position_mode == "floor" else (None, None))
             # 짝 후보 표시만 다르다 — 표본은 그대로 넣고, 선반 앞에 누가 있었나(note_band)·손님 장부·위험 판정도 그대로 본다
             candidate = not self.config.link_customers_only or self._link_candidate(pid, obs, w, h)
-            self.linker.observe("overview", pid, frame.pts_ms, band, appearance(pid) if appearance else None, floor_cm, ray,
+            self.linker.observe("overview", pid, frame.pts_ms, band, appearance(screen) if appearance else None, floor_cm, ray,
                                 candidate)
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
+        self._note_boxes("overview", frame.pts_ms, boxes)
         self.linker.update(frame.pts_ms)
+        if self.config.swap_repair and self.linker.closed != self._closed_seen:
+            self._closed_seen = self.linker.closed
+            self._repair_swaps(frame.pts_ms)
         reach_takes = (self._reach_takes(self.reach.update(frame, self._standing(identities)), resolve)
                        if self.reach else [])
         # 손 접촉도 방문과 같이 기다렸다 넘긴다 — 그 시간을 덮는 짝 기록이 쌓인 뒤에 주인을 정해야
@@ -211,8 +320,13 @@ class DualJudge:
         fused_visits += self.fuser.sensor_only(frame.pts_ms)
         if not self.config.overview_reach_takes:
             reach_takes = []   # 주인 정하기 근거로만 (note_reach 는 위에서 이미 적음)
-        events, records = self.risk.update(frame, identities, list(takes) + reach_takes + fused_takes, merges,
-                                           fused_visits)
+        merges = self._note_merges(merges)
+        takes = list(takes)
+        if self._store:
+            # 손님 장부에는 매장 신원으로 (팔 뻗기 감지기는 위에서 화면 신원 그대로 봤다 — 그쪽은 _reach_takes 가 바꾼다)
+            identities = [self._renamed(o, resolve) for o in identities]
+            takes = [self._renamed(t, resolve) for t in takes]
+        events, records = self.risk.update(frame, identities, takes + reach_takes + fused_takes, merges, fused_visits)
         self.events.extend(events)
         return events, records
 
@@ -247,7 +361,7 @@ class DualJudge:
         out = []
         axis = self.fuser.overview_axis
         for t in reaches:
-            pid = resolve(t.person_id) if resolve else t.person_id
+            pid = self.store_id(resolve(t.person_id) if resolve else t.person_id)
             self.fuser.note_reach(axis.to_ms(t.start_frame), axis.to_ms(t.end_frame), pid)
             out.append(replace(t, person_id=pid, zone=self.config.shelf_zone))
         return out
