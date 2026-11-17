@@ -1,0 +1,4 @@
+{"image": "C13_angle0_00147.jpg", "width": 1920, "height": 1080, "done": true, "skip": false, "boxes": [
+ {"cls": 0, "x1": 1138.6, "y1": 370.4, "x2": 1166.6, "y2": 431.5, "held": false},
+ {"cls": 0, "x1": 1169.6, "y1": 368.8, "x2": 1227.2, "y2": 405.1, "held": false}
+]}

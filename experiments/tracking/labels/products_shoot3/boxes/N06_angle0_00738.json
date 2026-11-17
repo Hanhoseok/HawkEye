@@ -1,0 +1,4 @@
+{"image": "N06_angle0_00738.jpg", "width": 1920, "height": 1080, "done": true, "skip": false, "boxes": [
+ {"cls": 2, "x1": 1093.7, "y1": 379.6, "x2": 1120.7, "y2": 431.6, "held": false},
+ {"cls": 1, "x1": 1102.9, "y1": 354.8, "x2": 1129.4, "y2": 379.7, "held": false}
+]}
