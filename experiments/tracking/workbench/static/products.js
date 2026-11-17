@@ -449,8 +449,12 @@ async function prodForget() {
 document.addEventListener("keydown", e => {
   if (!prod.cv || !prod.cv.isConnected || !prod.cur) return;
   if (e.target.closest && e.target.closest("input, select, textarea")) return;
-  const k = e.key, cmd = e.ctrlKey || e.metaKey;
-  if (cmd && k.toLowerCase() === "z") { e.preventDefault(); return prodUndo(); }
+  // 글쇠는 자리(e.code)로 읽는다 — 한글 입력 상태에서는 e.key 가 'ㅗ' · 'Process' 로 와서 H · X · A · D · F 가 안 먹는다
+  const code = e.code || "";
+  const k = /^Key[A-Z]$/.test(code) ? code.slice(3).toLowerCase() : /^(Digit|Numpad)[1-9]$/.test(code) ? code.slice(-1)
+    : code === "Space" ? " " : e.key;
+  const cmd = e.ctrlKey || e.metaKey;
+  if (cmd && k === "z") { e.preventDefault(); return prodUndo(); }
   if (cmd || e.altKey) return;
   if (k === " ") { e.preventDefault(); prod.space = true; return; }
   if (/^[1-9]$/.test(k)) {
@@ -474,7 +478,7 @@ document.addEventListener("keydown", e => {
   const run = keys[k] || keys[k.toLowerCase()];
   if (run) { e.preventDefault(); run(); }
 });
-document.addEventListener("keyup", e => { if (e.key === " ") prod.space = false; });
+document.addEventListener("keyup", e => { if (e.code === "Space" || e.key === " ") prod.space = false; });
 
 /* ------------------------------------------------------------------ 옆 칸 */
 function drawProdSide() {
