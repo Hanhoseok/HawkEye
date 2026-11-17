@@ -59,6 +59,9 @@ import numpy as np
 from ..core.config import IdentityConfig
 from ..core.types import Frame, IdentityObservation, TrackObservation
 
+POSE_CONF = 0.5
+"""관절을 '보인다'고 치는 신뢰도 하한 (포개진 두 상자의 관절 견주기). 자세 모델은 이보다 낮은 관절의 좌표를 (0, 0) 으로 낸다."""
+
 
 def _unit(vector: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
@@ -164,6 +167,18 @@ class IdentityRegistry:
         self._min_bbox_px: float | None = None
         self.promotions: list[dict] = []
         """임시 → 정식으로 올린 기록. {"person": 신원, "ms": 시각, "since_ms": 조건을 채우기 시작한 시각}"""
+        self.holds: list[dict] = []
+        """신원을 주지 않고 보류한 기록. {"track", "ms", "why": "score"(탐지 점수 낮음) | "nested"(신원 있는 상자와 포개짐)}"""
+        self._track_last_bbox: dict[int, tuple] = {}
+        self._prev_frame_ms: float | None = None
+        """바로 앞 장면의 시각. 어떤 track 이 그 장면에 없었으면 '끊겼다 돌아온' 것이다."""
+        self._denied: dict[int, int] = {}
+        """자리를 건너뛴 track -> 그 번호가 갖고 있던 신원. 신원이 다시 정해질 때까지 그 신원에는 번호·위치 가산점을 주지 않는다."""
+        self.jumps: list[dict] = []
+        """끊겼다 돌아오며 자리를 건너뛰어 다시 판정하게 된 기록. {"track", "ms", "person": 갖고 있던 신원, "gap_ms"}"""
+        self.duplicates: list[dict] = []
+        """한 장면에 같은 신원을 가진 상자가 둘 이상이라 신원을 내려놓게 한 기록.
+        {"track", "ms", "person", "kept": 신원을 지킨 track, "likeness"·"kept_likeness": 그 신원 평균 외형과의 유사도(못 뽑으면 None)}"""
 
     def set_promote_check(self, check) -> None:
         """임시 신원을 정식으로 올리는 조건 `check(bbox) -> bool` (예: 발이 매장 안 바닥). None 이면 시간만 본다."""
@@ -237,6 +252,48 @@ class IdentityRegistry:
         height = obs.bbox[3] - obs.bbox[1]
         return height >= (self._min_bbox_px or 0.0)
 
+    def _confident(self, obs: TrackObservation) -> bool:
+        """탐지 점수가 신원을 정할 만큼 높은가 (identity.min_identity_score, 0 이면 늘 참)."""
+        return obs.score >= self.config.min_identity_score
+
+    @staticmethod
+    def _nested(a, b) -> float:
+        """두 상자가 포개진 정도 = 겹친 넓이 ÷ 작은 상자의 넓이 (0~1)."""
+        w = min(a[2], b[2]) - max(a[0], b[0])
+        h = min(a[3], b[3]) - max(a[1], b[1])
+        if w <= 0 or h <= 0:
+            return 0.0
+        small = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+        return w * h / small if small > 0 else 0.0
+
+    @staticmethod
+    def _pose_gap(a: TrackObservation, b: TrackObservation) -> float | None:
+        """두 상자에 모두 보이는 관절 사이 거리의 중앙값 ÷ 작은 상자의 폭. 공통 관절이 없으면 None."""
+        if not a.keypoints or not b.keypoints:
+            return None
+        gaps = sorted(
+            ((ka[0] - kb[0]) ** 2 + (ka[1] - kb[1]) ** 2) ** 0.5
+            for ka, kb in zip(a.keypoints, b.keypoints)
+            if ka[2] >= POSE_CONF and kb[2] >= POSE_CONF
+        )
+        width = min(a.bbox[2] - a.bbox[0], b.bbox[2] - b.bbox[0])
+        if not gaps or width <= 0:
+            return None
+        mid = len(gaps) // 2
+        median = gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2
+        return median / width
+
+    def _one_person_two_boxes(self, obs: TrackObservation, other: TrackObservation) -> bool:
+        """obs 가 other 와 '한 사람 위의 두 상자'일 수 있는가 — 포개져 있고, 관절이 다른 사람이라고 말하지 않는다."""
+        cfg = self.config
+        if self._nested(obs.bbox, other.bbox) < cfg.nested_hold_overlap:
+            return False
+        if cfg.nested_pose_gap > 0:
+            gap = self._pose_gap(obs, other)
+            if gap is not None and gap > cfg.nested_pose_gap:
+                return False
+        return True
+
     def _update_tentative(self, person: _Person, obs: TrackObservation, now_ms: float) -> None:
         """임시 신원이 정식 조건을 연속으로 tentative_seconds 동안 채웠으면 정식으로 올린다."""
         ok = self._usable(obs) and (self._promote_check is None or bool(self._promote_check(obs.bbox)))
@@ -290,33 +347,60 @@ class IdentityRegistry:
         recheck_ms = cfg.track_gap_recheck_seconds * 1000.0
         revived: dict[int, int] = {}  # 이번 장면에서 다시 판정할 track -> 그 번호가 갖고 있던 신원
         waiting: list[TrackObservation] = []  # 다시 판정해야 하는데 아직 판단할 수 없는 관측 (신원 보류)
+        prev_ms, self._prev_frame_ms = self._prev_frame_ms, frame.pts_ms
+        seen_before: dict[int, float] = {}  # track -> 이 장면 전에 마지막으로 보인 시각
         for obs in observations:
             person_id = self._track_to_person.get(obs.track_id)
             last_ms = self._track_last_ms.get(obs.track_id)
+            last_bbox = self._track_last_bbox.get(obs.track_id)
             self._track_last_ms[obs.track_id] = frame.pts_ms
-            if recheck_ms > 0:
-                # 오래 끊겼다 되살아난 track 은 tracker 가 다른 사람에게 번호를 붙였을 수 있다.
-                # 번호의 신원을 그냥 물려주지 않고 새 track 처럼 다시 판정한다 (원래 주인은 우대).
-                if person_id is not None and last_ms is not None and frame.pts_ms - last_ms > recheck_ms:
-                    self._recheck[obs.track_id] = person_id
-                if obs.track_id in self._recheck:
-                    at_edge = self._at_edge(obs, frame)
-                    if self._usable(obs) and not at_edge:
-                        self._track_to_person.pop(obs.track_id, None)
-                        revived[obs.track_id] = self._recheck.pop(obs.track_id)
-                        person_id = None
-                    elif not (at_edge and person_id is not None):
-                        # 너무 작아 판단할 수 없다 — 확인 못 한 신원을 물려주지 않고 보류한다(새 track 과 같음).
-                        # 물려주면 그 신원이 '살아 있음'이 되어 진짜 주인이 돌아와도 그 신원을 못 받는다
-                        # (C12: 니트 손님의 번호가 창밖 행인에게 옮겨 붙어 니트 손님 신원을 붙잡음).
-                        self._track_to_person.pop(obs.track_id, None)
-                        waiting.append(obs)
-                        continue
-                    # 가장자리에 걸린 동안은 몸이 잘려 판정이 흔들리므로 원래 신원으로 두고 미룬다.
+            self._track_last_bbox[obs.track_id] = obs.bbox
+            if last_ms is not None:
+                seen_before[obs.track_id] = last_ms
+            long_gap = recheck_ms > 0 and last_ms is not None and frame.pts_ms - last_ms > recheck_ms
+            # 오래 끊겼다 되살아난 track 은 tracker 가 다른 사람에게 번호를 붙였을 수 있다.
+            # 번호의 신원을 그냥 물려주지 않고 새 track 처럼 다시 판정한다 (원래 주인은 우대).
+            if person_id is not None and long_gap:
+                self._recheck[obs.track_id] = person_id
+            elif (cfg.track_jump_recheck and person_id is not None and last_bbox is not None
+                    and prev_ms is not None and last_ms is not None and last_ms < prev_ms
+                    and self._nested(obs.bbox, last_bbox) <= 0.0):
+                # 짧게 끊겼다 돌아왔는데 끊기기 전 상자와 전혀 겹치지 않는다 — tracker 가 번호를 다른 것에 붙였을 수 있다.
+                # 다시 판정하되, 그 번호의 신원에는 가산점을 주지 않는다 (identity.track_jump_recheck).
+                self._recheck[obs.track_id] = person_id
+                self._denied[obs.track_id] = person_id
+                self.jumps.append({"track": obs.track_id, "ms": frame.pts_ms, "person": person_id, "gap_ms": frame.pts_ms - last_ms})
+            if obs.track_id in self._recheck:
+                at_edge = self._at_edge(obs, frame)
+                if not self._confident(obs):
+                    # 탐지 점수가 낮은 상자 — 사람이 아닐 수 있다. 원래 주인 가산점으로 신원을 되살리지 않고 보류한다.
+                    self._track_to_person.pop(obs.track_id, None)
+                    self.holds.append({"track": obs.track_id, "ms": frame.pts_ms, "why": "score"})
+                    waiting.append(obs)
+                    continue
+                if self._usable(obs) and not at_edge:
+                    self._track_to_person.pop(obs.track_id, None)
+                    owner = self._recheck.pop(obs.track_id)
+                    if self._denied.get(obs.track_id) != owner:
+                        revived[obs.track_id] = owner
+                    person_id = None
+                elif not (at_edge and person_id is not None):
+                    # 너무 작아 판단할 수 없다 — 확인 못 한 신원을 물려주지 않고 보류한다(새 track 과 같음).
+                    # 물려주면 그 신원이 '살아 있음'이 되어 진짜 주인이 돌아와도 그 신원을 못 받는다
+                    # (C12: 니트 손님의 번호가 창밖 행인에게 옮겨 붙어 니트 손님 신원을 붙잡음).
+                    self._track_to_person.pop(obs.track_id, None)
+                    waiting.append(obs)
+                    continue
+                # 가장자리에 걸린 동안은 몸이 잘려 판정이 흔들리므로 원래 신원으로 두고 미룬다.
             if person_id is None:
                 pending.append(obs)
                 continue
             known.append((obs, person_id))
+
+        if cfg.one_box_per_identity:
+            known = self._one_box_each(known, seen_before, pending, frame)
+
+        for obs, person_id in known:
             person = self._people[person_id]
             person.last_seen = frame.index
             person.last_seen_ms = frame.pts_ms
@@ -334,7 +418,11 @@ class IdentityRegistry:
         results = [self._observation(obs, pid) for obs, pid in known]
         results += [self._observation(obs, -1) for obs in waiting]
 
-        usable_pending = [o for o in pending if self._usable(o)]
+        for obs in pending:
+            if self._usable(obs) and not self._confident(obs):
+                self.holds.append({"track": obs.track_id, "ms": frame.pts_ms, "why": "score"})
+        usable_pending = [o for o in pending if self._usable(o) and self._confident(o)]
+        visible = [obs for obs, _ in known]  # 이번 장면에 신원이 있는 상자 (포개짐 확인용)
         embeddings = self._embed(frame, refresh + usable_pending)
         cursor = 0
 
@@ -354,8 +442,8 @@ class IdentityRegistry:
 
         # 2) 새로 생긴 track 에 신원을 배정
         for obs in pending:
-            if not self._usable(obs):
-                # 너무 작아 신원을 판단할 수 없다. 배정을 보류하고 다음 프레임에 다시 시도한다.
+            if not self._usable(obs) or not self._confident(obs):
+                # 너무 작거나 탐지 점수가 낮아 신원을 판단할 수 없다. 배정을 보류하고 다음 프레임에 다시 시도한다.
                 results.append(self._observation(obs, -1))
                 continue
 
@@ -368,8 +456,21 @@ class IdentityRegistry:
                 person_id, similarity, stitched = None, None, False
             else:
                 person_id, similarity, stitched = self._match(
-                    emb, obs.bbox, frame.pts_ms, occupied, favored=revived.get(obs.track_id)
+                    emb, obs.bbox, frame.pts_ms, occupied, favored=revived.get(obs.track_id),
+                    denied=self._denied.get(obs.track_id),
                 )
+
+            if person_id is None and cfg.nested_hold_overlap > 0 and any(
+                self._one_person_two_boxes(obs, other) for other in visible
+            ):
+                # 이미 신원이 있는 상자와 포개진 상자 — 한 사람 위에 상자가 둘 나온 것일 수 있다.
+                # (관절이 서로 멀면 포개 선 두 사람이므로 여기로 오지 않는다 — identity.nested_pose_gap)
+                # 새 신원을 만들지 않고 보류한다 (되살아난 번호였다면 다음 장면에도 원래 주인을 우대해 다시 본다).
+                if obs.track_id in revived:
+                    self._recheck[obs.track_id] = revived[obs.track_id]
+                self.holds.append({"track": obs.track_id, "ms": frame.pts_ms, "why": "nested"})
+                results.append(self._observation(obs, -1))
+                continue
 
             if person_id is None:
                 person_id = self._next_person_id
@@ -398,7 +499,9 @@ class IdentityRegistry:
                 grown.append(person)
 
             self._track_to_person[obs.track_id] = person_id
+            self._denied.pop(obs.track_id, None)
             occupied.add(person_id)
+            visible.append(obs)
 
             results.append(
                 self._observation(
@@ -423,6 +526,38 @@ class IdentityRegistry:
 
         results.sort(key=lambda o: o.track_id)
         return results
+
+    def _one_box_each(self, known, seen_before: dict[int, float], pending: list, frame: Frame):
+        """한 장면에 같은 신원을 가진 상자가 둘 이상이면 하나만 그 신원을 지킨다 (identity.one_box_per_identity).
+
+        지키는 쪽 = 그 신원의 평균 외형과 더 닮은 상자. 외형을 못 뽑으면(임베더 없음·상자가 너무 작음·사진 없음) 또는 같으면
+        그 신원을 가장 최근까지 이어 온 track, 그것도 같으면 탐지 점수가 높은 쪽.
+        나머지는 신원을 내려놓고 새 track 처럼 다시 판정한다 — 그 신원은 이 장면에 점유돼 있어 다시 받지 못한다.
+        """
+        groups: dict[int, list[TrackObservation]] = {}
+        for obs, pid in known:
+            groups.setdefault(pid, []).append(obs)
+        dropped: set[int] = set()
+        for pid, group in groups.items():
+            if len(group) < 2:
+                continue
+            likeness: dict[int, float] = {}
+            mean = self._people[pid].mean
+            if mean is not None and all(self._usable(o) for o in group):
+                embeddings = self._embed(frame, group)
+                if embeddings is not None:
+                    likeness = {o.track_id: round(float(mean @ e), 4) for o, e in zip(group, embeddings)}
+            keep = max(group, key=lambda o: (likeness.get(o.track_id, 0.0), seen_before.get(o.track_id, -1e18), o.score))
+            for obs in group:
+                if obs is keep:
+                    continue
+                dropped.add(obs.track_id)
+                self._track_to_person.pop(obs.track_id, None)
+                self._recheck.pop(obs.track_id, None)
+                self.duplicates.append({"track": obs.track_id, "ms": frame.pts_ms, "person": pid, "kept": keep.track_id,
+                                        "likeness": likeness.get(obs.track_id), "kept_likeness": likeness.get(keep.track_id)})
+                pending.append(obs)
+        return [(obs, pid) for obs, pid in known if obs.track_id not in dropped] if dropped else known
 
     def _late_merge(self, person: _Person, frame: Frame) -> int | None:
         """새로 등록됐던 신원이 사진을 충분히 모았으면, 직전에 사라진 사람과 다시 비교해 합친다.
@@ -502,7 +637,8 @@ class IdentityRegistry:
         return dist / body <= cfg.stitch_max_distance
 
     def _match(
-        self, query: np.ndarray | None, bbox, now_ms: float, occupied: set[int], favored: int | None = None
+        self, query: np.ndarray | None, bbox, now_ms: float, occupied: set[int], favored: int | None = None,
+        denied: int | None = None,
     ) -> tuple[int | None, float | None, bool]:
         """가장 그럴듯한 기존 신원을 찾는다. 없으면 (None, None, False).
 
@@ -517,6 +653,9 @@ class IdentityRegistry:
         favored 는 되살아난 track 이 원래 갖고 있던 신원이다. tracker 가 그 번호를 이어 붙인 것도
         근거이므로 '위치·시간이 맞는 쪽'과 같은 가산점을 준다. 사진 한 장 비교는 같은 사람도 자주 놓쳐서
         (57%) 가산점 없이 다시 판정하면 맞게 이어진 번호까지 새 손님으로 쪼갰다 (2차 촬영 C21).
+
+        denied 는 자리를 건너뛴 track 이 갖고 있던 신원이다(identity.track_jump_recheck). 번호도 위치도 근거가 못 되므로
+        그 신원에는 가산점을 주지 않는다 — 생김새만으로 기준을 넘어야 다시 그 신원이 된다.
         """
         if query is None:
             return None, None, False
@@ -529,7 +668,7 @@ class IdentityRegistry:
             if person.tentative and person.person_id != favored:
                 continue  # 임시 신원(가짜 사람일 수 있음)은 대조 상대가 아니다 — 되살아난 번호의 원래 주인만 예외
             sim = person.similarity(query)
-            near = person.person_id == favored or self._near(person, bbox, now_ms)
+            near = person.person_id == favored or (person.person_id != denied and self._near(person, bbox, now_ms))
             effective = sim + (bonus if near else 0.0)
             if effective < cfg.match_threshold:
                 continue

@@ -45,7 +45,7 @@ from src.risk.customers import ShelfVisit  # noqa: E402
 from src.risk.engine import RiskEngine  # noqa: E402
 from src.risk.payments import PaymentFeed  # noqa: E402
 from src.sinks.observation_log import read_identities  # noqa: E402
-from src.zones.floor import FloorMap, FloorZoneMap, shelf_image_zones  # noqa: E402
+from src.zones.floor import FloorMap, FloorZoneMap, detail_floor_map, shelf_image_zones  # noqa: E402
 import sync_pair  # noqa: E402
 
 OUT = ROOT / "outputs" / "dual_eval_pose3"
@@ -53,9 +53,14 @@ OUT = ROOT / "outputs" / "dual_eval_pose3"
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
-JUDGE_FILE: Path | None = ROOT / "configs" / "store01_dual_judge.yaml"
-"""분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다."""
+JUDGE_FILES = {2: "store01_dual_judge.yaml", 3: "store01_shoot3_judge.yaml"}
+JUDGE_FILE: Path | None = ROOT / "configs" / JUDGE_FILES[2]
+"""분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다.
+촬영 회차마다 파일이 다르다 (set_profile)."""
 OVERRIDES: list[str] = []
+OVERVIEW_IDENTITY: dict = {}
+"""전체 카메라의 신원 계층만 바꿀 값 (IdentityConfig 칸 이름 → 값). `--set identity.*` 는 두 카메라 모두에 들어가므로,
+전체 카메라에만 시험할 때 쓴다 (scripts/identity_hold.py)."""
 OVERVIEW_POSE = False
 OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
 SHOOT = 2
@@ -74,7 +79,7 @@ EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "
 
 def set_profile(shoot: int) -> None:
     """촬영 회차별 경로. 2 는 지금까지 그대로."""
-    global SHOOT, OUT, ZONES, LABELS
+    global SHOOT, OUT, ZONES, LABELS, JUDGE_FILE
     SHOOT = shoot
     _PAIR_ZONES.clear()
     if shoot == 3:
@@ -85,6 +90,8 @@ def set_profile(shoot: int) -> None:
         OUT = ROOT / "outputs" / "dual_eval_pose3"
         ZONES = ROOT / "zones" / "store01_dual"
         LABELS = ROOT / "labels" / "store01_dual"
+    # 수치 조정에서 적용한 값은 그 촬영의 카메라 자리에 맞춘 것 — 회차마다 따로 둔다 (2026-11-13)
+    JUDGE_FILE = ROOT / "configs" / JUDGE_FILES[3 if shoot == 3 else 2]
 
 
 def zones_dir(pair: str) -> Path:
@@ -221,13 +228,37 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     # 바닥 구역 판단의 발 점 = 발목 (B-15, 2026-11-09 채택) — 사용자가 실제 바닥 자리에 맞춰 그린 구역과 짝.
     # 관절이 없는 예전 기록은 상자 아래 가운데로 대신한다. --set zones.foot_point=bbox 로 예전 방식.
     cfg.zones.foot_point = "ankle"
+    # 직전 짝 가산점은 바로 앞 조각의 짝에게만 (후속 44, 2026-11-14) — 선반 카메라에서 몇 초 사라졌다 돌아온 번호가
+    # 사라지기 전의 짝을 붙들던 것. 3차 C15 1조각이 고쳐지고 2차 38쌍은 달라지는 조각 0.
+    cfg.fusion.keep_bonus_recent_only = True
+    # 3차: 선반 카메라에도 바닥 지도가 있다 → 두 화면 짝을 바닥 위 거리로 (후속 39, 2026-11-13).
+    # 39쌍에서 끊김 23 → 2번, 다른 사람과 맺힘은 그대로. --set fusion.position_mode=band 로 예전 방식(띠 한 줄).
+    # 3차: 매장 안 바닥을 밟은 근거가 있는 신원만 짝 후보 (후속 43, 2026-11-13) — 창가 겉옷·가방의 가짜 사람 상자가 손님의 짝을
+    # 가로채던 3조각이 0 으로, 짝 바뀜 13 → 7번, 판정은 그대로. --set fusion.link_customers_only=false 로 끈다.
+    # 2차에서는 안 켠다: 띠 위치로 잇는 2차는 막 들어온 손님의 짝 6조각을 잃었다 (판정은 그대로 31/38).
+    # 3차: 이미 신원이 있는 상자와 포개진 상자에는 새 신원을 만들지 않고 보류하되, 두 상자의 관절이 멀면(다른 사람) 보류하지 않는다
+    # (후속 45·46, 2026-11-14). 한 사람이 가려지며 상자가 둘로 나오는 3차 자리에서 손님 수 38 → 39/39(C03), 손님 아닌 번호와 맺힌 짝 3 → 0,
+    # 판정 점수 그대로. 관절 기준 0.5 는 정상 영상에서 고름(같은 사람 0.17 이하 · 다른 상자 0.91 이상).
+    # 2차에서는 안 켠다: 해는 없지만(관절을 보면 C15 가 안 틀려진다) 이득도 없다. --set identity.nested_hold_overlap=0 으로 끈다.
+    if SHOOT == 3:
+        cfg.fusion.position_mode = "floor"
+        cfg.fusion.link_customers_only = True
+        cfg.identity.nested_hold_overlap, cfg.identity.nested_pose_gap = 0.7, 0.5
+    # 한 장면에 같은 신원은 상자 하나만 — 둘이 겹치면 그 신원의 평균 외형과 더 닮은 상자가 지키고 나머지는 다시 판정 (후속 48, 2026-11-16).
+    # 3차 T09: 창가 그림 상자의 신원을 문 앞 손님이 받아 가 창가 상자가 손님으로 그려지던 것 — 0.27초 뒤 창가 상자가 신원을 되찾고 손님은 새 신원.
+    # 같은 신원 두 상자 장면 3차 92 → 0 · 2차 1 → 0, 판정 점수·손님 수 그대로. 기준값 없는 규칙. --set identity.one_box_per_identity=false 로 끈다.
+    cfg.identity.one_box_per_identity = True
+    # 전체 카메라가 두 사람의 번호를 뒤바꿔 붙인 것을 선반 카메라로 알아채 되돌린다 (후속 49, 2026-11-16, C-26).
+    # 선반 카메라 두 사람의 짝이 서로 맞바뀌고 · 그 무렵 전체 카메라 두 상자는 겹쳤고 · 선반 카메라 두 상자는 떨어져 있었을 때만.
+    # 3차 39쌍·2차 38쌍에서 걸린 곳은 3차 C20 16.1초 한 곳. --set fusion.swap_repair=false 로 끈다.
+    cfg.fusion.swap_repair = True
     _apply_set(cfg, overrides, early=True)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair, SHOOT)
     zdir = zones_dir(pair)
     cfg.cameras = [
         CameraConfig("angle1", str(ref), "overview", str(zdir / "floor.yaml"), 0.0, STRIDE["angle1"],
                      OVERVIEW_DETECTOR,
-                     {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE}),
+                     {"edge_sides": EDGE_SIDES["angle1"], "tentative_seconds": TENTATIVE, **OVERVIEW_IDENTITY}),
         CameraConfig("angle0", str(video), "detail", str(zdir / "angle0.yaml"), offset_ms, STRIDE["angle0"], "yolo-pose",
                      {"edge_sides": EDGE_SIDES["angle0"]}),
     ]
@@ -508,7 +539,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     judge = DualJudge(cfg.fusion, risk, floor, band_map,
                       TimeAxis(m0["fps"], offset_ms, tuple(t0) if t0 else None), TimeAxis(m1["fps"], 0.0, tuple(t1) if t1 else None),
                       m0["width"], (m1["width"], m1["height"]), slot_shelf, sensors, shelf_image_zones(floor_raw),
-                      detail_point=detail_point_for(pair))
+                      detail_point=detail_point_for(pair), detail_floor=detail_floor_map(detail_setup),
+                      detail_height=m0["height"])
     judge.reset()
     if use_detail:
         from src.shelf.slot_diff import SlotChange
@@ -553,13 +585,13 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     levels = [e.level.value for e in finals]
     people = sum(1 for c in risk.book.customers.values() if c.seen_inside)
     # 손님별 마지막 판정은 나중에 합쳐진 신원을 한 사람으로 본다
-    scored = score(pair, [(resolve_end(e.person_id), e.level.value) for e in finals], people, truth)
+    scored = score(pair, [(judge.final_id(e.person_id, resolve_end), e.level.value) for e in finals], people, truth)
     return {
         "pair": pair, "kind": kind(pair), "verdicts": levels, **scored,
         "reasons": [f"P{e.person_id} {e.level.value}: {e.reason}" for e in finals],
         "people": people,
         "identities": len({o.person_id for f in log.ids["angle1"].values() for o in f if o.person_id > 0}),
-        "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes,
+        "links": len(judge.linker.links), "unowned_takes": judge.unowned_takes, "swaps": judge.swaps,
         "actions": [a.describe() for a in risk.all_actions() if a.kind != "LOOK"],
         "payments": sum(1 for p in risk.book.payments if p.method in ("dwell", "checkout", "given")),
         "unmatched_payments": sum(1 for p in risk.book.payments if p.method == "unmatched"),

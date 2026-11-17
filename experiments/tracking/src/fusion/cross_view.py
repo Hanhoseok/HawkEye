@@ -9,6 +9,9 @@
 위치를 비교하는 공통 축 = '선반 앞 띠' 좌표 (0 = 선반의 카메라 쪽 끝, 1 = 계산대·문 쪽 끝).
   - 전체 카메라: 발의 바닥 좌표를 띠 축에 내린 값 (src/zones/floor.py)
   - 선반 카메라: 사람 상자의 가운데 x 를 띠 축으로 옮긴 값 (1차식, 정상 영상으로 맞춤 — scripts/dual_eval.py)
+
+선반 카메라에도 발과 바닥이 보이면(3차 촬영) `fusion.position_mode: floor` — 두 카메라의 발을 같은 바닥 좌표(cm)로 옮겨
+바닥 위 거리로 견준다. 한 줄 좌표로는 못 가르던 '같은 좌우 위치에 앞뒤로 선 두 사람'(B-14)을 가른다.
 """
 
 from __future__ import annotations
@@ -27,6 +30,37 @@ class _Sample:
     pts_ms: float
     band: float | None
     """선반 앞 띠 위치 0~1. 띠 축으로 옮길 수 없으면 None."""
+    floor: tuple[float, float] | None = None
+    """발의 바닥 좌표 (cm, 두 카메라 공통). 바닥 지도가 없거나 지평선 너머면 None."""
+    ray: tuple[float, float] | None = None
+    """발목이 안 보일 때(화면 아래로 잘림·가림): 실제 발은 floor 에서 이 방향(단위 벡터)으로 뻗는 반직선 위 어딘가. 발목이 보이면 None."""
+
+
+def _point_to_ray(p: tuple[float, float], origin: tuple[float, float], direction: tuple[float, float]) -> float:
+    vx, vy = p[0] - origin[0], p[1] - origin[1]
+    t = vx * direction[0] + vy * direction[1]
+    if t <= 0.0:
+        return float(np.hypot(vx, vy))
+    return float(abs(vx * direction[1] - vy * direction[0]))
+
+
+def floor_distance(a: _Sample, b: _Sample) -> float:
+    """두 표본의 바닥 위 거리 (cm). 발목이 안 보이는 쪽은 반직선 — 점과 반직선, 반직선과 반직선 사이의 가장 가까운 거리."""
+    if a.ray is None and b.ray is None:
+        return float(np.hypot(a.floor[0] - b.floor[0], a.floor[1] - b.floor[1]))
+    if a.ray is None:
+        return _point_to_ray(a.floor, b.floor, b.ray)
+    if b.ray is None:
+        return _point_to_ray(b.floor, a.floor, a.ray)
+    # 둘 다 반직선: 만나면 0, 아니면 한쪽 시작점에서 다른 반직선까지 가까운 쪽
+    (ax, ay), (adx, ady), (bx, by), (bdx, bdy) = a.floor, a.ray, b.floor, b.ray
+    det = adx * (-bdy) - ady * (-bdx)
+    if abs(det) > 1e-9:
+        t = ((bx - ax) * (-bdy) - (by - ay) * (-bdx)) / det
+        s = (adx * (by - ay) - ady * (bx - ax)) / det
+        if t >= 0.0 and s >= 0.0:
+            return 0.0
+    return min(_point_to_ray(a.floor, b.floor, b.ray), _point_to_ray(b.floor, a.floor, a.ray))
 
 
 @dataclass
@@ -36,6 +70,8 @@ class _Track:
     samples: deque = field(default_factory=lambda: deque(maxlen=200))
     appearance: np.ndarray | None = None
     last_ms: float = -1e18
+    candidate_ms: float = -1e18
+    """짝 후보로 삼아도 된다고 표시된 마지막 표본의 시각 (전체 카메라 — observe 의 candidate)."""
 
 
 @dataclass
@@ -67,21 +103,35 @@ class CrossViewLinker:
         self.links: list[Link] = []
         self._current: dict[int, int] = {}
         """선반 카메라 신원 → 지금 짝인 전체 카메라 신원."""
+        self._current_end: dict[int, float] = {}
+        """선반 카메라 신원 → 그 짝이 마지막으로 맺힌 조각의 끝 시각 (keep_bonus_recent_only)."""
         self._history: dict[int, list[tuple[float, float, int]]] = {}
         """선반 카메라 신원 → [(시작, 끝, 전체 카메라 신원)]. 짝이 이어지면 구간을 늘린다."""
         self._last_window_ms: float | None = None
+        self.windows: deque = deque(maxlen=8)
+        """닫힌 조각들 (시작, 끝, {선반 카메라 신원: 전체 카메라 신원}) — 짝이 없던 조각은 빈 사전. 번호 맞바뀜 확인(swap_repair)이 본다."""
+        self.closed = 0
+        """지금까지 닫힌 조각 수."""
 
     # ------------------------------------------------------------------ 입력
 
     def observe(self, view: str, person_id: int, pts_ms: float, band: float | None,
-                appearance: np.ndarray | None = None) -> None:
-        """view: 'detail'(선반 카메라) / 'overview'(전체 카메라)."""
+                appearance: np.ndarray | None = None, floor: tuple[float, float] | None = None,
+                ray: tuple[float, float] | None = None, candidate: bool = True) -> None:
+        """view: 'detail'(선반 카메라) / 'overview'(전체 카메라). floor·ray = 발의 바닥 좌표(cm)와, 발목이 안 보일 때의 방향
+        — position_mode "floor" 에서 쓴다.
+
+        candidate=False 인 표본도 위치·외형에는 그대로 쓰지만, **그 조각에 candidate=True 표본이 하나도 없는 전체 카메라 신원은
+        짝 후보에서 빠진다** (overview_candidates). 표본을 아예 안 넣으면 남은 몇 장만으로 위치 점수가 높게 나와
+        오히려 짝을 가로챘다 (3차 C19 17.7초, 후속 43)."""
         if person_id <= 0:
             return
         tracks = self._detail if view == "detail" else self._overview
         track = tracks.setdefault(person_id, _Track())
-        track.samples.append(_Sample(pts_ms, band))
+        track.samples.append(_Sample(pts_ms, band, floor, ray))
         track.last_ms = pts_ms
+        if candidate:
+            track.candidate_ms = pts_ms
         if appearance is not None:
             track.appearance = appearance
 
@@ -101,9 +151,12 @@ class CrossViewLinker:
             return []
         start, end = self._last_window_ms, now_ms
         self._last_window_ms = now_ms
+        pairs: dict[int, int] = {}
+        self.windows.append((start, end, pairs))
+        self.closed += 1
 
         detail = [pid for pid, t in self._detail.items() if t.last_ms >= start]
-        overview = [pid for pid, t in self._overview.items() if t.last_ms >= start]
+        overview = self.overview_candidates(start)
         if not detail or not overview:
             return []
 
@@ -120,7 +173,8 @@ class CrossViewLinker:
                     continue
                 if solo and self._solo_rescue(app):
                     score = max(score, self.config.min_score)   # 비교할 상대가 한 명뿐 — 외형이 높으면 위치가 어긋나도 잇는다
-                if self._current.get(d) == o:
+                if self._current.get(d) == o and (not self.config.keep_bonus_recent_only
+                                                  or start - self._current_end.get(d, -1e18) <= window * 1.5):
                     score += self.config.keep_bonus   # 한 조각의 흔들림으로 짝을 바꾸지 않는다
                 scores[i, j] = score
                 parts[(d, o)] = (pos, app)
@@ -134,12 +188,18 @@ class CrossViewLinker:
             pos, app = parts[(d, o)]
             link = Link(start, end, d, o, float(scores[i, j]), pos, app)
             made.append(link)
+            pairs[d] = o
             self._remember(d, o, start, end)
         for d in detail:
             if d not in {l.detail_id for l in made}:
                 self._current.pop(d, None)
         self.links.extend(made)
         return made
+
+    def overview_candidates(self, start: float) -> list[int]:
+        """이 조각(start 부터)에 보인 전체 카메라 신원 중 짝 후보 — 후보 표시(candidate)가 붙은 표본이 이 조각에 하나라도 있는 신원.
+        표시를 안 쓰면(기본) 보인 신원 전부다."""
+        return [pid for pid, t in self._overview.items() if t.last_ms >= start and t.candidate_ms >= start]
 
     def _combine(self, pos: float | None, app: float | None) -> float | None:
         if pos is None:
@@ -154,20 +214,31 @@ class CrossViewLinker:
         return floor > 0 and app is not None and app >= floor
 
     def _position_score(self, a: _Track, b: _Track, start: float, end: float) -> float | None:
-        """같은 때(±pair_tolerance) 두 화면의 띠 위치가 얼마나 가까운가. 0~1."""
+        """같은 때(±pair_tolerance) 두 화면의 위치가 얼마나 가까운가. 0~1.
+
+        position_mode "band": 띠 위치 차이. "floor": 바닥 위 거리(floor_distance) — 한쪽이라도 바닥 좌표가 없는 표본은 띠 위치로 대신한다.
+        """
         tol = self.config.pair_tolerance_seconds * 1000.0
-        bs = [s for s in b.samples if start - tol <= s.pts_ms <= end + tol and s.band is not None]
+        use_floor = self.config.position_mode == "floor"
+        bs = [s for s in b.samples if start - tol <= s.pts_ms <= end + tol
+              and (s.band is not None or (use_floor and s.floor is not None))]
         if not bs:
             return None
         sims = []
         for s in a.samples:
-            if not (start <= s.pts_ms <= end) or s.band is None:
+            if not (start <= s.pts_ms <= end) or (s.band is None and not (use_floor and s.floor is not None)):
                 continue
             nearest = min(bs, key=lambda x: abs(x.pts_ms - s.pts_ms))
             if abs(nearest.pts_ms - s.pts_ms) > tol:
                 continue
-            gap = abs(nearest.band - s.band)
-            sims.append(max(0.0, 1.0 - gap / self.config.max_band_gap))
+            if use_floor and s.floor is not None and nearest.floor is not None:
+                gap = floor_distance(s, nearest)
+                if s.ray is not None or nearest.ray is not None:
+                    gap = max(0.0, gap - self.config.ray_slack_cm)   # 가린 발은 이 정도 차이를 못 가른다
+                sims.append(max(0.0, 1.0 - gap / self.config.max_floor_gap_cm))
+            elif s.band is not None and nearest.band is not None:
+                gap = abs(nearest.band - s.band)
+                sims.append(max(0.0, 1.0 - gap / self.config.max_band_gap))
         return float(np.mean(sims)) if sims else None
 
     @staticmethod
@@ -178,11 +249,72 @@ class CrossViewLinker:
 
     def _remember(self, d: int, o: int, start: float, end: float) -> None:
         self._current[d] = o
+        self._current_end[d] = end
         spans = self._history.setdefault(d, [])
         if spans and spans[-1][2] == o and start - spans[-1][1] <= self.config.window_seconds * 1000.0 * 1.5:
             spans[-1] = (spans[-1][0], end, o)
         else:
             spans.append((start, end, o))
+
+    # ------------------------------------------------------------------ 번호 맞바뀜
+
+    def mutual_swaps(self) -> list[tuple[int, int, int, int]]:
+        """방금 닫힌 조각에서 짝이 서로 맞바뀐 선반 카메라 두 사람: [(가, 나, A, B)].
+        앞 두 조각은 (가⇄A, 나⇄B) 그대로였고 이번 조각은 (가⇄B, 나⇄A)."""
+        if len(self.windows) < 3:
+            return []
+        (_, _, first), (_, _, prev), (_, _, now) = list(self.windows)[-3:]
+        ids = sorted(set(first) & set(prev) & set(now))
+        out = []
+        for i, d1 in enumerate(ids):
+            for d2 in ids[i + 1:]:
+                a, b = prev[d1], prev[d2]
+                if a != b and first[d1] == a and first[d2] == b and now[d1] == b and now[d2] == a:
+                    out.append((d1, d2, a, b))
+        return out
+
+    def swap_overview(self, a: int, b: int, since_ms: float) -> None:
+        """since_ms 부터의 기록에서 전체 카메라 신원 a·b 를 서로 바꾼다 — 그때부터 전체 카메라가 두 사람의 번호를 뒤바꿔 붙였다.
+        짝 기록(links·구간), 지금 짝, 닫힌 조각, 두 신원의 위치 표본·외형."""
+        flip = {a: b, b: a}
+        since = since_ms - 1e-6
+        gap = self.config.window_seconds * 1000.0 * 1.5
+        for link in self.links:
+            if link.start_ms >= since and link.overview_id in flip:
+                link.overview_id = flip[link.overview_id]
+        for d, spans in self._history.items():
+            fixed: list[tuple[float, float, int]] = []
+            for s, e, o in spans:
+                if s >= since and o in flip:
+                    o = flip[o]
+                if fixed and fixed[-1][2] == o and s - fixed[-1][1] <= gap:
+                    fixed[-1] = (fixed[-1][0], e, o)
+                else:
+                    fixed.append((s, e, o))
+            self._history[d] = fixed
+        for d, o in list(self._current.items()):
+            if o in flip and self._current_end.get(d, -1e18) > since:
+                self._current[d] = flip[o]
+        for s, _, pairs in self.windows:
+            if s >= since:
+                for d, o in list(pairs.items()):
+                    pairs[d] = flip.get(o, o)
+        ta, tb = self._overview.setdefault(a, _Track()), self._overview.setdefault(b, _Track())
+        old_a, new_a = [x for x in ta.samples if x.pts_ms < since], [x for x in ta.samples if x.pts_ms >= since]
+        old_b, new_b = [x for x in tb.samples if x.pts_ms < since], [x for x in tb.samples if x.pts_ms >= since]
+
+        def marked(mine: float, other: float) -> float:
+            return other if other >= since else (mine if mine < since else -1e18)
+
+        ta.candidate_ms, tb.candidate_ms = marked(ta.candidate_ms, tb.candidate_ms), marked(tb.candidate_ms, ta.candidate_ms)
+        for t, samples in ((ta, old_a + new_b), (tb, old_b + new_a)):
+            t.samples = deque(samples, maxlen=t.samples.maxlen)
+            t.last_ms = samples[-1].pts_ms if samples else -1e18
+        if new_a or new_b:
+            ta.appearance, tb.appearance = tb.appearance, ta.appearance
+        for pid, t in ((a, ta), (b, tb)):
+            if not t.samples:
+                self._overview.pop(pid, None)
 
     # ------------------------------------------------------------------ 조회
 

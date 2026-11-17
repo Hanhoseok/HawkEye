@@ -299,3 +299,248 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
         last = frame
     judge.finish(last)
     assert risk.takes == [] and not any(r.kind == "reach" for r in judge.fuser.records)
+
+
+# ---------------------------------------------------------------- 바닥 위 거리로 잇기 (3차 촬영, position_mode "floor")
+
+
+def feed_floor(linker, moves, t0=0, t1=3000, step=66):
+    """moves: {(view, pid): (띠 위치, 바닥 cm 또는 None[, 발목이 안 보일 때의 방향])}."""
+    for t in range(t0, t1, step):
+        for (view, pid), (band, floor, *ray) in moves.items():
+            linker.observe(view, pid, float(t), band, None, floor, ray[0] if ray else None)
+        linker.update(float(t))
+
+
+def test_floor_mode_separates_two_people_at_the_same_band_position():
+    # 선반 앞 같은 좌우 위치(띠 0.5)에 앞뒤로 선 두 사람 — 한 줄 좌표로는 못 가르고(B-14), 바닥 위 거리로는 가른다.
+    people = {("detail", 7): (0.5, (10.0, 40.0)), ("detail", 9): (0.5, (70.0, 40.0)),
+              ("overview", 2): (0.5, (68.0, 42.0)), ("overview", 5): (0.5, (12.0, 38.0))}
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, people)
+    assert linker.current(7) == 5 and linker.current(9) == 2
+    scores = {l.detail_id: l.position for l in linker.links}
+    assert scores[7] > 0.9 and scores[9] > 0.9
+    band_only = CrossViewLinker(FusionConfig())            # 기본(band)은 바닥 좌표를 줘도 쓰지 않는다
+    feed_floor(band_only, people)
+    assert {l.position for l in band_only.links} == {1.0}  # 네 조합 모두 위치 점수 1 — 누가 누구인지 위치로는 모른다
+
+
+def test_floor_mode_refuses_a_far_person_even_with_the_same_band_position():
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, {("detail", 1): (0.5, (0.0, 40.0)), ("overview", 3): (0.5, (90.0, 40.0))})
+    assert linker.current(1) is None                       # 90cm 떨어짐 (기준 60cm 에서 점수 0)
+
+
+def test_floor_mode_falls_back_to_band_when_there_is_no_floor_point():
+    # 전체 카메라 사람이 지평선 너머라 바닥 좌표가 없다 — 그 표본은 띠 위치로 견준다.
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, {("detail", 1): (0.60, (20.0, 60.0)), ("overview", 3): (0.62, None)})
+    assert linker.current(1) == 3
+
+
+def test_floor_mode_treats_a_hidden_foot_as_a_ray_not_a_point():
+    # 전체 카메라에서 선반 앞 사람의 발이 화면 아래로 잘렸다: 상자 아래는 (20, 75) 인데 실제 발은 그 아래쪽(+y) 어딘가.
+    # 선반 카메라는 발목을 (22, 115) 로 본다 — 점으로 견주면 40cm 라 못 잇고, 반직선으로 견주면 2cm.
+    hidden = {("detail", 1): (0.9, (22.0, 115.0)), ("overview", 3): (0.85, (20.0, 75.0), (0.0, 1.0))}
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(linker, hidden)
+    assert linker.current(1) == 3 and linker.links[-1].position > 0.9
+    as_point = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(as_point, {k: v[:2] for k, v in hidden.items()})
+    assert as_point.current(1) is None
+    # 반직선의 반대쪽(화면 위쪽)에 있는 사람은 시작점까지의 거리 그대로 — 발이 상자 아래보다 위일 수는 없다
+    behind = CrossViewLinker(FusionConfig(position_mode="floor"))
+    feed_floor(behind, {("detail", 1): (0.4, (22.0, -15.0)), ("overview", 3): (0.85, (20.0, 75.0), (0.0, 1.0))})
+    assert behind.current(1) is None
+
+
+def test_floor_mode_does_not_rank_hidden_feet_by_a_few_centimetres():
+    # 선반 카메라 사람(발 보임)과 전체 카메라의 발 가린 두 사람. 진짜 짝(외형 닮음)의 반직선은 12cm 옆을 지나고,
+    # 다른 사람의 반직선은 우연히 정확히 지나간다(0cm). 가린 발은 그 차이를 가를 정밀도가 없다 → ray_slack_cm 안은 같은 자리, 외형이 가른다.
+    me, other = np.array([1.0, 0.0]), np.array([0.6, 0.8])
+
+    def run(slack):
+        linker = CrossViewLinker(FusionConfig(position_mode="floor", ray_slack_cm=slack))
+        for t in range(0, 3000, 66):
+            linker.observe("detail", 1, float(t), 0.5, me, (30.0, 100.0), None)
+            linker.observe("overview", 4, float(t), 0.5, me, (42.0, 60.0), (0.0, 1.0))       # 진짜 짝: 12cm 옆
+            linker.observe("overview", 6, float(t), 0.5, other, (30.0, 40.0), (0.0, 1.0))    # 다른 사람: 0cm
+            linker.update(float(t))
+        return linker.current(1)
+
+    assert run(25.0) == 4
+    assert run(0.0) == 6                                   # 여유가 없으면 우연히 겹친 사람이 이긴다
+
+
+def test_floor_distance_between_two_rays():
+    from src.fusion.cross_view import _Sample, floor_distance
+
+    crossing = floor_distance(_Sample(0, None, (0.0, 0.0), (1.0, 0.0)), _Sample(0, None, (30.0, -20.0), (0.0, 1.0)))
+    apart = floor_distance(_Sample(0, None, (0.0, 0.0), (1.0, 0.0)), _Sample(0, None, (-30.0, 20.0), (0.0, 1.0)))
+    assert crossing == 0.0 and abs(apart - (30.0 ** 2 + 20.0 ** 2) ** 0.5) < 1e-6
+
+
+def test_dual_judge_floor_point_is_a_point_with_ankles_and_a_ray_without():
+    from src.fusion.judge import DualJudge
+
+    fm = FloorMap("detail", [(0.2, 0.5), (0.8, 0.5), (0.2, 1.0), (0.8, 1.0)], [(0, 0), (100, 0), (0, 100), (100, 100)])
+    ankles = [[0.0, 0.0, 0.0]] * 15 + [[940.0, 800.0, 0.9], [980.0, 820.0, 0.9]]
+    (x, y), ray = DualJudge.floor_point(fm, (900.0, 300.0, 1020.0, 830.0), ankles, 1920, 1080)
+    ex, ey = fm.to_floor(960 / 1920, 810 / 1080)           # 두 발목의 가운데
+    assert abs(x - ex) < 1e-6 and abs(y - ey) < 1e-6 and ray is None
+    # 발목이 안 보이면 상자 아래 가운데에서 화면 아래쪽(이 지도에서는 바닥 +y)으로 뻗는 반직선
+    (bx, by), ray = DualJudge.floor_point(fm, (900.0, 300.0, 1020.0, 830.0), None, 1920, 1080)
+    assert (round(bx, 3), round(by, 3)) == tuple(round(v, 3) for v in fm.to_floor(960 / 1920, 830 / 1080))
+    assert abs(ray[0]) < 1e-6 and abs(ray[1] - 1.0) < 1e-6
+
+
+def test_detail_floor_map_reads_calibration_from_zone_file():
+    from src.zones.floor import detail_floor_map
+
+    assert detail_floor_map({}) is None and detail_floor_map(None) is None
+    fm = detail_floor_map({"floor_calibration": {"image": [[0.2, 0.7], [0.2, 0.9], [0.6, 0.7], [0.6, 0.9]],
+                                                 "floor": [[0, 0], [64, 0], [0, 74], [64, 74]]}})
+    fx, fy = fm.to_floor(0.6, 0.9)
+    assert abs(fx - 64) < 1e-6 and abs(fy - 74) < 1e-6
+
+
+# ---------------------------------------------------------------- 매장 안 바닥을 밟은 신원만 짝 후보 (link_customers_only, 후속 43)
+
+
+def test_linker_skips_overview_identities_without_a_candidate_sample():
+    # 3차 N09: 창가의 가짜 사람 상자(8번)는 발이 없어 반직선인데, 그 반직선이 손님 자리를 정확히 지나가 위치 점수 만점.
+    # 진짜 짝(3번)은 발목이 보이고 20cm 옆. 표시가 없으면 가짜가 이기고, 후보 표시가 없는 신원을 빼면 진짜가 맺힌다.
+    def run(ghost_is_candidate):
+        linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+        for t in range(0, 3000, 66):
+            linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.observe("overview", 3, float(t), 0.5, None, (50.0, 100.0), None)
+            linker.observe("overview", 8, float(t), 0.5, None, (30.0, 300.0), (0.0, -1.0), candidate=ghost_is_candidate)
+            linker.update(float(t))
+        return linker
+
+    assert run(True).current(1) == 8                       # 기본(표시 안 씀): 예전과 같다
+    skipped = run(False)
+    assert skipped.current(1) == 3 and {l.overview_id for l in skipped.links} == {3}
+    assert skipped.overview_candidates(2500.0) == [3]
+
+
+def test_linker_keeps_an_identity_with_one_candidate_sample_in_the_window():
+    # 막 들어온 손님: 조각(0.5초) 안에 발목이 보인 장면이 하나뿐이어도 후보다. 나머지 표본도 위치에는 그대로 쓴다 —
+    # 표본을 걸러 넣으면 남은 몇 장만으로 점수가 달라졌다 (3차 C19 17.7초).
+    linker = CrossViewLinker(FusionConfig(position_mode="floor"))
+    for i, t in enumerate(range(0, 3000, 66)):
+        linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+        linker.observe("overview", 3, float(t), 0.5, None, (32.0, 98.0), None, candidate=i % 6 == 0)
+        linker.update(float(t))
+    assert linker.current(1) == 3
+    never = CrossViewLinker(FusionConfig(position_mode="floor"))
+    for t in range(0, 3000, 66):
+        never.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+        never.observe("overview", 3, float(t), 0.5, None, (32.0, 98.0), None, candidate=False)
+        never.update(float(t))
+    assert never.current(1) is None and never.links == []
+
+
+def test_dual_judge_marks_only_customers_and_people_standing_on_the_store_floor():
+    from types import SimpleNamespace
+
+    from src.core.types import Frame, IdentityObservation
+    from src.fusion.judge import DualJudge
+
+    img = [(0.4, 1.0), (0.6, 1.0), (0.45, 0.4), (0.6, 0.4)]
+    flr = [(0, 0), (100, 0), (0, 200), (100, 200)]
+    shelf = FloorZone("shelf", ZoneType.SHELF, ((-50, -50), (150, -50), (150, 100), (-50, 100)))      # 화면 아래쪽 = 매장 안
+    street = FloorZone("street", ZoneType.CHECKOUT, ((-50, 100), (150, 100), (150, 250), (-50, 250)))  # 화면 위쪽 = 매장 밖
+    floor = FloorMap("angle1", img, flr, [shelf, street], (0.0, 200.0))
+    w = h = 1000
+
+    class BookRisk(RecordingRisk):
+        def __init__(self):
+            super().__init__()
+            self.book = SimpleNamespace(customers={}, config=SimpleNamespace(inside_zones=["shelf"]))
+
+    def ankles(x, y, conf=0.9):
+        return tuple([(0.0, 0.0, 0.0)] * 15 + [(x - 10.0, y, conf), (x + 10.0, y, conf)])
+
+    def obs(pid, bbox, keypoints=None):
+        return IdentityObservation(person_id=pid, track_id=pid, bbox=bbox, frame=0, timestamp="", keypoints=keypoints)
+
+    def judge_with(only):
+        risk = BookRisk()
+        judge = DualJudge(FusionConfig(link_customers_only=only), risk, floor, (1.0, 0.0), TimeAxis(30.0), TimeAxis(60.0),
+                          w, (w, h), {}, None, None)
+        judge.reset()
+        return judge, risk
+
+    near, far = (450.0, 500.0, 550.0, 990.0), (480.0, 100.0, 560.0, 520.0)
+    judge, risk = judge_with(True)
+    assert judge._link_candidate(1, obs(1, near, ankles(500.0, 980.0)), w, h)          # 발목이 보이고 매장 안 바닥
+    assert not judge._link_candidate(2, obs(2, near), w, h)                            # 발목이 안 보임 — 상자 아래는 발이 아닐 수 있다
+    assert not judge._link_candidate(3, obs(3, far, ankles(520.0, 510.0)), w, h)       # 발목은 보이지만 매장 밖
+    risk.book.customers[2] = SimpleNamespace(seen_inside=True)
+    assert judge._link_candidate(2, obs(2, near), w, h)                                # 이미 손님으로 센 신원은 가려져도 후보
+    risk.book.customers[3] = SimpleNamespace(seen_inside=False)
+    assert not judge._link_candidate(3, obs(3, far), w, h)
+
+    # 장면을 넣으면 표본은 모두 쌓이고, 후보 표시만 다르다
+    people = [obs(1, near, ankles(500.0, 980.0)), obs(4, far), obs(5, near)]
+    frame = Frame(index=0, timestamp="", pts_ms=0.0, image=None, camera_id="angle1")
+    judge.overview_step(frame, people, [], [])
+    assert set(judge.linker._overview) == {1, 4, 5} and judge.linker.overview_candidates(0.0) == [1]
+    off, _ = judge_with(False)                                                         # 기본(꺼짐): 보인 신원 전부
+    off.overview_step(frame, people, [], [])
+    assert off.linker.overview_candidates(0.0) == [1, 4, 5]
+
+
+# ---------------------------------------------------------------- 남은 짝 문제 (후속 44)
+
+
+def test_keep_bonus_goes_only_to_the_partner_of_the_previous_window():
+    # 3차 C15: 선반 카메라 1번이 14초에 전체 2번과 맺힌 뒤 4초 동안 화면에 없었다. 돌아왔을 때 진짜 짝(전체 1번)은 점수가 조금 높은데
+    # 예전 짝(전체 2번)이 가산점 0.1 로 이겼다. 가산점은 '한 조각의 흔들림'을 견디라고 준 것 — 몇 초 전 짝에게는 주지 않는다.
+    def run(recent_only):
+        linker = CrossViewLinker(FusionConfig(position_mode="floor", keep_bonus_recent_only=recent_only))
+        for t in range(0, 1500, 66):                       # 처음: 전체 2번과 같은 자리
+            linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.observe("overview", 2, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.update(float(t))
+        assert linker.current(1) == 2
+        for t in range(1500, 5500, 66):                    # 4초: 선반 카메라에는 아무도 없다
+            linker.observe("overview", 2, float(t), 0.5, None, (300.0, 100.0), None)
+            linker.update(float(t))
+        for t in range(5500, 6500, 66):                    # 돌아옴: 전체 1번이 3cm, 전체 2번이 6cm — 가산점 없이는 1번
+            linker.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+            linker.observe("overview", 1, float(t), 0.5, None, (33.0, 100.0), None)
+            linker.observe("overview", 2, float(t), 0.5, None, (36.0, 100.0), None)
+            linker.update(float(t))
+        return linker
+
+    assert [l.overview_id for l in run(False).links if l.start_ms >= 5500][0] == 2      # 기본: 4초 전 짝이 가산점으로 이긴다
+    fixed = run(True)
+    assert {l.overview_id for l in fixed.links if l.start_ms >= 5500} == {1}
+    # 이어진 짝에게는 그대로 준다: 한 조각만 다른 사람이 조금 더 가까워도 안 바뀐다
+    steady = CrossViewLinker(FusionConfig(position_mode="floor", keep_bonus_recent_only=True))
+    for t in range(0, 3000, 66):
+        near = (33.0, 100.0) if 1500 <= t < 2000 else (60.0, 100.0)
+        steady.observe("detail", 1, float(t), 0.5, None, (30.0, 100.0), None)
+        steady.observe("overview", 2, float(t), 0.5, None, (36.0, 100.0), None)
+        steady.observe("overview", 5, float(t), 0.5, None, near, None)
+        steady.update(float(t))
+    assert {l.overview_id for l in steady.links} == {2}
+    assert any(l.score > 0.95 for l in steady.links)      # 가산점이 붙은 조각이 있다 (6cm 의 위치 점수는 0.90)
+
+
+def test_hidden_behind_means_the_box_bottom_sits_inside_a_nearer_persons_box():
+    from src.fusion.judge import DualJudge
+
+    behind = (900.0, 105.0, 1257.0, 549.0)                # 3차 C15 9.3초: 허리께에서 잘린 상자
+    front = (953.0, 347.0, 1505.0, 1070.0)                # 그 앞에 선 사람
+    assert DualJudge.hidden_behind(behind, [front])
+    assert not DualJudge.hidden_behind(front, [behind])   # 앞사람은 가리지 않았다
+    assert not DualJudge.hidden_behind(behind, [])
+    beside = (1300.0, 100.0, 1600.0, 560.0)               # 옆에 나란히 — 아래 가운데가 그 상자 밖
+    assert not DualJudge.hidden_behind(behind, [beside])
+    level = (950.0, 120.0, 1300.0, 560.0)                 # 겹치지만 아래 변이 비슷한 높이 (상자 높이의 5% 안) — 앞뒤를 모른다
+    assert not DualJudge.hidden_behind(behind, [level])

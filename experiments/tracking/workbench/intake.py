@@ -200,9 +200,9 @@ def register(body: dict) -> dict:
 def estimate_offset(builder: Builder, pair: str) -> dict:
     """처리가 끝난 짝의 시차를 자동으로 추정해 sync.csv 에 적는다 (사람이 맞춘 값이 있으면 건드리지 않는다)."""
     c = builder.ctx()
-    de, SyncTable = c["dual_eval"], c["SyncTable"]
-    path = de.LABELS / "sync.csv"
-    with builder.lock:
+    SyncTable = c["SyncTable"]
+    path = builder.profile.labels / "sync.csv"
+    with builder.engine() as de:
         before = SyncTable.load(path)
         if before.rows.get(pair) is not None and before.rows[pair].method == "manual":
             return {"offset_ms": before.rows[pair].offset_ms, "method": "manual"}
@@ -211,7 +211,7 @@ def estimate_offset(builder: Builder, pair: str) -> dict:
         row = table.rows.get(pair)
         if row is None:
             return {"offset_ms": 0.0, "method": "none"}
-        video, ref = c["sync_pair"].pair_files(pair)   # dual_eval.sync 는 2차 촬영 폴더 이름을 적는다 — 실제 자리로 고친다
+        video, ref = c["sync_pair"].pair_files(pair, builder.shoot)   # dual_eval.sync 는 2차 촬영 폴더 이름을 적는다 — 실제 자리로 고친다
         want = (f"{video.parent.name}/{video.name}", f"{ref.parent.name}/{ref.name}")
         if (row.video, row.reference) != want:
             row.video, row.reference = want
@@ -229,20 +229,25 @@ def estimate_offset(builder: Builder, pair: str) -> dict:
 
 
 def set_offset(builder: Builder, pair: str, offset_ms: float, who: str = "") -> None:
-    """사람이 두 화면을 보고 맞춘 시차를 적는다 (method=manual). 예전 값은 메모에 남긴다."""
+    """사람이 두 화면을 보고 맞춘 시차를 적는다 (method=manual). 예전 값은 메모에 남긴다.
+    그 촬영의 시차표(<라벨 폴더>/sync.csv)에 적는다 — 이미 사람이 맞춘 값을 바꾸면 그 값도 메모에 남긴다."""
     c = builder.ctx()
-    de, SyncTable = c["dual_eval"], c["SyncTable"]
+    SyncTable = c["SyncTable"]
     from src.inputs.sync import SyncRow
     if not -30000 <= offset_ms <= 30000:
         raise ValueError("시차가 범위를 벗어났습니다 (±30초)")
-    path = de.LABELS / "sync.csv"
+    path = builder.profile.labels / "sync.csv"
     with builder.lock:
         table = SyncTable.load(path)
         old = table.rows.get(pair)
-        video, ref = c["sync_pair"].pair_files(pair)
+        video, ref = c["sync_pair"].pair_files(pair, builder.shoot)
         note = "눈으로 맞춤 (분석 도구)" + (f", 처음 {old.method} {old.offset_ms:+.0f}ms" if old and old.method != "manual" else "")
-        if old and old.method == "manual" and old.note:
-            note = old.note
+        if old and old.method == "manual" and "분석 도구" in old.note:
+            note = old.note   # 이 도구로 이미 한 번 고친 값 — 처음 값은 메모에 남아 있다
+        elif old and old.method == "manual":
+            # 다른 사람이(다른 도구로) 맞춘 값을 덮어쓰는 일이 조용히 지나가지 않게 그 값을 남긴다
+            was = f"분석 도구에서 다시 맞춤 (전 값 {old.offset_ms:+.0f}ms" + (f", {old.checked_by}" if old.checked_by else "") + ")"
+            note = "; ".join(x for x in (old.note, was) if x)[:300]
         table.upsert(SyncRow(pair, old.video if old else f"{video.parent.name}/{video.name}",
                              old.reference if old else f"{ref.parent.name}/{ref.name}",
                              round(float(offset_ms), 1), "manual", " ".join(who.split())[:40], note))

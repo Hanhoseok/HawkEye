@@ -91,7 +91,9 @@ def test_upload_writes_file_only_when_complete(tmp_path, monkeypatch):
 
 def test_batch_of_and_batch_names():
     assert intake.batch_of("N13", {"N13": {}}) == "added" and intake.batch_of("N1", {"N13": {}}) == "shoot2"
-    assert [key for key, _ in intake.BATCHES] == list(BATCH_NAME)
+    # 영상 추가는 2차 촬영 자리만 — 그 묶음들은 갤러리 묶음 이름에 모두 있어야 한다 (3차는 묶음이 하나: shoot3)
+    assert [key for key, _ in intake.BATCHES] == [key for key in BATCH_NAME if key != "shoot3"]
+    assert all(BATCH_NAME[key] == name for key, name in intake.BATCHES)
 
 
 def test_totals_work_for_a_single_batch():

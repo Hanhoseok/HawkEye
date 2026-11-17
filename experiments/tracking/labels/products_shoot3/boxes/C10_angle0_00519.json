@@ -1,0 +1,4 @@
+{"image": "C10_angle0_00519.jpg", "width": 1920, "height": 1080, "done": true, "skip": false, "boxes": [
+ {"cls": 0, "x1": 1138.2, "y1": 360.9, "x2": 1157.7, "y2": 391.4, "held": false},
+ {"cls": 0, "x1": 1138.6, "y1": 370.4, "x2": 1166.6, "y2": 431.5, "held": false}
+]}

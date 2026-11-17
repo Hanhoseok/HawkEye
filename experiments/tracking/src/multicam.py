@@ -27,7 +27,7 @@ from .fusion.shelf_events import TimeAxis, load_sensor_events
 from .inputs.live_source import INDEX_PER_SECOND, is_live_source, normalize_source
 from .inputs.video_source import VideoSource
 from .sinks.observation_log import ObservationLog
-from .zones.floor import FloorMap, FloorZoneMap, shelf_image_zones
+from .zones.floor import FloorMap, FloorZoneMap, detail_floor_map, shelf_image_zones
 from .zones.zone_map import ZoneMap
 
 
@@ -59,6 +59,8 @@ class DetailSetup:
     band_map: tuple[float, float]
     slot_shelf: dict[str, str]
     empty_slots: dict[str, str] = field(default_factory=dict)
+    floor: FloorMap | None = None
+    """선반 카메라 바닥 지도 (`floor_calibration`: 화면 보정점 + 전체 카메라와 같은 바닥 cm). 없으면 띠 위치만 쓴다."""
 
     @classmethod
     def load(cls, path: str | Path) -> "DetailSetup":
@@ -70,7 +72,7 @@ class DetailSetup:
         for z in zm.zones:
             slot_shelf.setdefault(z.name, first)
         a, b = raw.get("band_map") or (1.0, 0.0)
-        return cls(zm, shelves, (float(a), float(b)), slot_shelf, dict(raw.get("empty_slots") or {}))
+        return cls(zm, shelves, (float(a), float(b)), slot_shelf, dict(raw.get("empty_slots") or {}), detail_floor_map(raw))
 
 
 @dataclass
@@ -244,6 +246,10 @@ class MultiCameraPipeline:
         pay_log.close()
         with ObservationLog(out / "cross_view_links.jsonl") as f:
             f.write_many(self.judge.linker.links)
+        # 전체 카메라 번호 맞바뀜을 되돌린 기록 (fusion.swap_repair). 없어도 빈 파일 — 이전 실행의 것이 남지 않게.
+        # 위 짝 기록의 전체 카메라 번호는 되돌려 읽은 뒤의 매장 신원이다.
+        (out / "overview_swaps.jsonl").write_text(
+            "".join(json.dumps(s, ensure_ascii=False) + "\n" for s in self.judge.swaps), encoding="utf-8")
         with ObservationLog(out / "shelf_events.jsonl") as f:
             f.write_many(self.judge.fuser.records)
         with ObservationLog(out / self.config.output.actions_name) as f:
@@ -336,5 +342,6 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
         d_fps, d_size = 30.0, (1920, 1080)
     judge = DualJudge(config.fusion, risk, floor, setup.band_map if setup else (1.0, 0.0),
                       TimeAxis(d_fps, detail_cam.offset_ms if detail_cam else 0.0), TimeAxis(ov_fps, overview_cam.offset_ms),
-                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors, shelf_image_zones(floor_raw))
+                      d_size[0], ov_size, setup.slot_shelf if setup else {}, sensors, shelf_image_zones(floor_raw),
+                      detail_floor=setup.floor if setup else None, detail_height=d_size[1])
     return MultiCameraPipeline(config, overview, detail, overview_cam, detail_cam, judge, out_dir)

@@ -3,10 +3,11 @@
    서버 쪽은 workbench/tune.py — 값 목록(GET /api/wb/tune), 초안 판정(run), 전후 비교(result), 적용(apply). */
 
 const tune = { page: null, values: {}, result: null, error: "", notice: "", busy: "", timer: null, focus: null };
-const TUNE_KEY = "wb.tune.values";
+const tuneKey = () => `wb.tune.values.${app.shoot}`;   // 초안 값은 촬영 회차마다 따로 기억한다
 
+// 모든 저장·판정 요청에 지금 촬영 회차를 함께 보낸다
 const postJSON = async (url, body) => {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shoot: app.shoot, ...body }) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `${url} → ${r.status}`);
   return data;
@@ -22,7 +23,7 @@ function tuneChanged() {
   for (const k of tune.page.knobs) if (k.key in tune.values && tune.values[k.key] !== k.value) out[k.key] = tune.values[k.key];
   return out;
 }
-function tuneSave() { try { sessionStorage.setItem(TUNE_KEY, JSON.stringify(tune.values)); } catch (e) { /* 저장 못 해도 화면은 돈다 */ } }
+function tuneSave() { try { sessionStorage.setItem(tuneKey(), JSON.stringify(tune.values)); } catch (e) { /* 저장 못 해도 화면은 돈다 */ } }
 
 async function showTune(query) {
   crumbs.replaceChildren();
@@ -30,10 +31,11 @@ async function showTune(query) {
   tune.focus = query.focus || null;
   tune.error = ""; tune.notice = "";
   try {
-    tune.page = await getJSON("/api/wb/tune");
+    tune.page = await getJSON(api("tune"));
     if (!app.index) await loadIndex();
   } catch (e) { return showError(e); }
-  try { tune.values = JSON.parse(sessionStorage.getItem(TUNE_KEY) || "{}"); } catch (e) { tune.values = {}; }
+  tune.result = null; tune.busy = "";
+  try { tune.values = JSON.parse(sessionStorage.getItem(tuneKey()) || "{}"); } catch (e) { tune.values = {}; }
   for (const key of Object.keys(tune.values)) if (!tune.page.knobs.some(k => k.key === key)) delete tune.values[key];
   drawTune();
   await tuneRefresh();
@@ -71,17 +73,21 @@ function drawTune() {
     g.knobs.push(k);
   }
   view.replaceChildren(
-    h("div", { class: "head" }, h("h1", {}, "수치 조정")),
+    h("div", { class: "head" }, h("h1", {}, "수치 조정"), h("span", { class: "tag" }, p.shoot_name)),
     h("p", { class: "scenario" },
-      "판정 값을 바꿔 저장된 기록으로 다시 판정해 봅니다. 영상을 다시 돌리지 않아 몇 초면 됩니다. 큰 규칙은 그대로 두고 기준값만 바꿉니다."),
+      "판정 값을 바꿔 저장된 기록으로 다시 판정해 봅니다. 영상을 다시 돌리지 않아 몇 초면 됩니다. 큰 규칙은 그대로 두고 기준값만 바꿉니다. " +
+      `여기서 바꾸는 값은 ${p.shoot_name}에만 적용됩니다 — 카메라 자리가 다른 촬영은 값을 따로 둡니다.`),
     h("div", { class: "tune" },
       h("div", { class: "tune-main" },
         groups.map(g => h("section", { class: "box knobs" }, h("h2", {}, g.name), g.knobs.map(k => h("div", { class: "knob", id: "knob-" + k.key })))),
         h("section", { class: "box" }, h("h2", {}, "여기서 못 바꾸는 값"),
-          h("p", { class: "muted small" }, "아래 값은 탐지·추적 단계에서 쓰여 기록에 이미 들어가 있습니다. 바꾸려면 영상을 다시 돌려야 합니다 (38쌍에 약 2시간)."),
+          h("p", { class: "muted small" }, `아래 값은 탐지·추적 단계에서 쓰여 기록에 이미 들어가 있습니다. 바꾸려면 영상을 다시 돌려야 합니다 (${p.pairs.all}쌍에 약 2시간).`),
           h("ul", { class: "plain" }, p.rerun_only.map(t => h("li", {}, t))),
-          h("p", { class: "muted small" }, "구역(계산대·출구·선반 앞)은 아직 예전 ",
-            h("a", { class: "link", href: "/experiments/tracking/scripts/zone_editor.html" }, "구역 편집 페이지"), "에서 고칩니다."))),
+          p.shoot === 2
+            ? h("p", { class: "muted small" }, "구역(계산대·출구·선반 앞)은 아직 예전 ",
+              h("a", { class: "link", href: "/experiments/tracking/scripts/zone_editor.html" }, "구역 편집 페이지"), "에서 고칩니다.")
+            : h("p", { class: "muted small" }, "이 촬영의 구역은 기본 구역 파일(zones/store01_shoot3/)을 영상마다 그 영상의 카메라 자리로 옮겨 씁니다. " +
+              "구역 편집 페이지는 2차 촬영 구역만 엽니다."))),
       h("aside", { class: "tune-side", id: "tune-side" })));
   for (const k of p.knobs) drawKnob(k);
   drawTuneSide();
@@ -154,7 +160,7 @@ function compareBox(part, draft, scope) {
       if (r.diff.includes("taken")) bits.push(`물건 ${r.before.taken} → ${r.after.taken}개`);
       if (r.diff.includes("link_pct")) bits.push(`짝 ${r.before.link_pct} → ${r.after.link_pct}%`);
       const lens = r.diff.includes("people") ? "track" : (r.diff.includes("verdicts") || r.diff.includes("outcome") ? "verdict" : (r.diff.includes("taken") ? "take" : "link"));
-      return h("a", { class: `change ${r.effect}`, href: `#/pair/${encodeURIComponent(r.pair)}/${lens}?draft=${draft}` },
+      return h("a", { class: `change ${r.effect}`, href: at(`/pair/${encodeURIComponent(r.pair)}/${lens}?draft=${draft}`) },
         h("b", {}, r.pair), h("span", { class: "tag" }, r.set_name), h("span", {}, bits.join(" · ")));
     })));
   }
@@ -191,7 +197,7 @@ function drawTuneSide() {
         tune.busy === "all" ? "판정 중…" : "채점 열기")]));
 
   kids.push(h("div", { class: "box step" }, h("h2", {}, "③ 적용"),
-    h("p", { class: "muted small" }, "적용하면 평가(dual_eval)·실행(run_tracking)·갤러리가 이 값을 씁니다. 되돌리려면 값을 원래대로 놓고 다시 적용합니다." +
+    h("p", { class: "muted small" }, `적용하면 ${p.judge_file} 에 적히고, 이 촬영의 평가(dual_eval)·갤러리가 이 값을 씁니다. 되돌리려면 값을 원래대로 놓고 다시 적용합니다.` +
       (r && r.normal && !opened ? " 채점을 열지 않고 적용해도 갤러리에서 결과가 보이므로 연 것으로 기록됩니다." : "")),
     h("button", { class: "btn", disabled: !(r && r.normal) || running, onclick: tuneApply }, tune.busy === "apply" ? "적용 중…" : "이 값으로 적용")));
 
@@ -217,13 +223,13 @@ async function tuneRun(scope) {
 function tunePoll() {
   clearInterval(app.poll);
   app.poll = setInterval(async () => {
-    const s = await getJSON("/api/wb/status").catch(() => null);
+    const s = await getJSON(api("status")).catch(() => null);
     if (!s || s.job.running) return;
     clearInterval(app.poll);
     const scope = tune.busy;
     tune.busy = "";
     if (s.job.error) tune.error = "판정하지 못했습니다: " + s.job.error;
-    if (scope === "all") tune.page = await getJSON("/api/wb/tune").catch(() => tune.page);
+    if (scope === "all") tune.page = await getJSON(api("tune")).catch(() => tune.page);
     await tuneRefresh();
   }, 500);
 }
@@ -234,7 +240,7 @@ async function tuneApply() {
   try {
     await postJSON("/api/wb/tune/apply", { values: tuneChanged() });
     tune.values = {}; tuneSave();
-    tune.page = await getJSON("/api/wb/tune");
+    tune.page = await getJSON(api("tune"));
     app.index = null;
     tune.result = null;
     tune.notice = "적용했습니다. 갤러리를 새 값으로 다시 만드는 중입니다 (몇 초).";

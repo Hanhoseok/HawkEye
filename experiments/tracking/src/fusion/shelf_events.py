@@ -115,6 +115,12 @@ class ShelfEventFuser:
         self.records.append(FusedRecord("reach", start_ms, end_ms, overview_id, "전체 카메라 팔 뻗기",
                                         "손목이 화면의 선반 영역 안"))
 
+    def swap_overview(self, a: int, b: int, since_ms: float) -> None:
+        """since_ms 부터 적어 둔 '선반 앞에 있던 사람'·'팔을 뻗은 사람'에서 전체 카메라 신원 a·b 를 서로 바꾼다 (fusion.swap_repair)."""
+        flip = {a: b, b: a}
+        self._band = [(ms, flip.get(pid, pid) if ms >= since_ms else pid) for ms, pid in self._band]
+        self._reaches = [(s, e, flip.get(pid, pid) if s >= since_ms else pid) for s, e, pid in self._reaches]
+
     def note_slot_change(self, change) -> None:
         self._slot_changes.append(change)
 

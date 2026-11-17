@@ -1,0 +1,15 @@
+# 3차 촬영 상품 탐지 — 종류 3개 (사용자 결정 2026-11-16: 1종이 아니라 3종으로 찍는다. 나중에 1종으로 합칠 수는 있어도 반대는 안 된다)
+# 번호는 YOLO 라벨의 class 번호다. 한 번 정하면 바꾸지 않는다 (라벨 파일이 번호로 적힌다).
+# lane = 3차 선반 받침의 레인 (zones/store01_shoot3/angle0.yaml 과 센서 레인 이름이 같다).
+names:
+  0: cantata      # 칸타타 — 빨간 뚜껑 병 캔 (L1, 맨 오른쪽 칸)
+  1: donggwaru    # 동과루 — 흰 캔 (L2, 오른쪽 둘째 칸)
+  2: applecider   # 애플사이다 — 노란 캔 (L3, 오른쪽 셋째 칸)
+korean:
+  cantata: 칸타타
+  donggwaru: 동과루
+  applecider: 애플사이다
+lane:
+  L1: cantata
+  L2: donggwaru
+  L3: applecider

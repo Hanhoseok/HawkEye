@@ -138,3 +138,20 @@ def test_load_sensor_axis_lanes_and_filters(tmp_path):
     assert [(e.time_ms, e.slot, e.delta_g) for e in ev] == [(7000.0, "L2", -1.0), (8000.0, "L3", -1.0)]   # 영상 밖 ADD·RESYNC 뺌, +시차
     assert [e.slot for e in S.load_sensor(p, 0.0, ("L1", "L2"))] == ["L2"]
     assert S.load_sensor(tmp_path / "none.csv", 0.0) == []
+
+
+def test_pair_detail_carries_the_floor_map_moved_to_the_clip():
+    # 선반 카메라 바닥 지도(area_setting 기준)의 보정점을 그 영상 화면으로 옮겨 싣는다 — 두 화면 짝을 바닥 위 거리로 맺을 때 쓴다
+    from src.zones.floor import detail_floor_map
+
+    base = {"shelves": [], "zones": []}
+    floor0 = {"calibration": {"image": [[0.2, 0.7], [0.2, 0.9], [0.6, 0.7], [0.6, 0.9]],
+                              "floor": [[0, 0], [64, 0], [0, 74], [64, 74]]}}
+    out = S.pair_detail(base, SHIFT, [1.0, 0.0], floor0)
+    cal = out["floor_calibration"]
+    assert cal["image"][0] == pytest.approx([0.2 - 80 / 1920, 0.7 - 5 / 1080], abs=1e-5) and cal["floor"][3] == [64.0, 74.0]
+    # 같은 바닥 자리를 영상 화면에서 보면(기준 − 80, −5 px) 같은 바닥 cm 가 나온다
+    ref = detail_floor_map({"floor_calibration": floor0["calibration"]}).to_floor(0.45, 0.8)
+    moved = detail_floor_map(out).to_floor(0.45 - 80 / 1920, 0.8 - 5 / 1080)
+    assert moved == pytest.approx(ref, abs=1e-3)
+    assert "floor_calibration" not in S.pair_detail(base, SHIFT, [1.0, 0.0])   # 바닥 지도가 없으면 싣지 않는다
