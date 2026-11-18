@@ -262,3 +262,45 @@ class ConfigValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FixedBlock(unittest.TestCase):
+    """밀판 앞 고정 블록(block_mm): 실측 거리표가 없어도 첫 상품만 밀판을 조금 민다."""
+
+    def cfg(self, **kw):
+        return lane_cfg(thickness_mm=65, empty_distance_mm=430, max_count=5, block_mm=45, hysteresis_mm=4, **kw)
+
+    def test_reference_distances_follow_block(self):
+        c = self.cfg()
+        self.assertEqual([c.reference_mm(n) for n in range(6)], [430, 410, 345, 280, 215, 150])
+        self.assertEqual(c.validate(), [])
+
+    def test_zero_and_one_get_narrow_tolerance(self):
+        c = self.cfg()
+        self.assertAlmostEqual(c.tolerance_for(0), 7.75)
+        self.assertAlmostEqual(c.tolerance_for(1), 7.75)
+        self.assertEqual(c.tolerance_for(2), 15)
+        # 두 허용 구간 + 히스테리시스가 0개·1개 간격(20mm) 안에 들어간다
+        self.assertLess(c.tolerance_for(0) + c.tolerance_for(1) + c.hysteresis_mm, 20)
+
+    def test_measured_table_overrides_block(self):
+        c = self.cfg(count_distance_mm=[350, 328, 263, 198, 133, 68], count_tolerance_mm=[10, 7, 15, 15, 15, 15])
+        self.assertEqual(c.reference_mm(1), 328)
+        self.assertEqual(c.tolerance_for(1), 7)
+
+    def test_block_as_long_as_item_is_rejected(self):
+        c = lane_cfg(thickness_mm=65, empty_distance_mm=430, max_count=5, block_mm=62)
+        self.assertTrue(any("block_mm" in e for e in c.validate()))
+
+    def test_estimator_counts_first_item_with_small_move(self):
+        est = LaneEstimator(self.cfg())
+        f = Feeder(est)
+        f.hold(430, 3000)                       # 빈 레인
+        self.assertEqual([(e.event, e.current_count) for e in f.take()], [("INIT", 0)])
+        f.hold(410, 3000)                       # 첫 상품: 밀판이 20mm 만 움직임
+        self.assertEqual([(e.event, e.current_count) for e in f.take()], [("ADD", 1)])
+        f.hold(345, 3000)                       # 둘째 상품: 65mm
+        self.assertEqual([(e.event, e.current_count) for e in f.take()], [("ADD", 2)])
+        f.hold(410, 3000)
+        f.hold(430, 3000)                       # 다 뺌
+        self.assertEqual([(e.event, e.current_count) for e in f.take()], [("REMOVE", 1), ("REMOVE", 0)])

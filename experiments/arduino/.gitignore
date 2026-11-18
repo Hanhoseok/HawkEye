@@ -10,6 +10,7 @@ firmware/CP210x_Universal_Windows_Driver/
 python/logs/
 *.jsonl
 *.csv
+*.bak
 
 # Python
 __pycache__/

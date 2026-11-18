@@ -62,6 +62,7 @@ class Monitor:
         self.restock_since: dict[int, float] = {}
         self.last_status_pc: Optional[float] = None
         self._warned: set[str] = set()
+        self.sample_listeners: list = []   # (lane_id, t_ms, distance_mm) — 보정 화면 등이 유효 측정을 받아 봄
 
     # ------------------------------------------------------------ 출력
     def _publish(self, rec: dict) -> None:
@@ -222,6 +223,9 @@ class Monitor:
             sensor_status=str(msg.get("sensor_status", "UNKNOWN")), pc_mono=pc_mono, late=late,
             meta={k: msg.get(k) for k in ("device_id", "boot_id", "sequence", "uptime_ms")},
         )
+        if valid and not late:
+            for cb in list(self.sample_listeners):
+                cb(lane_id, dev_ms, float(dist))
         self._publish_lane(lane.on_sample(sample), pc_wall)
 
     # ------------------------------------------------------------ 상태
@@ -284,6 +288,40 @@ class Monitor:
             snap["link_ok"] = ok
             out.append(snap)
         return out
+
+    def rename_product(self, lane_id: int, product_name: str, product_id: str, pc_wall: float) -> None:
+        """상품 이름·ID 만 바꾼다. 보정값과 현재 수량은 그대로 (이후 이벤트에 새 이름이 기록됨)."""
+        lane = self.lanes.get(lane_id)
+        if lane is None:
+            return
+        old_name, old_id = lane.cfg.product_name, lane.cfg.product_id
+        lane.cfg.product_name, lane.cfg.product_id = product_name, product_id
+        for l in self.cfg.lanes:
+            if l.lane_id == lane_id and l is not lane.cfg:
+                l.product_name, l.product_id = product_name, product_id
+        self._system("PRODUCT_RENAMED", pc_wall, None, renamed_lane_id=lane_id, product_name=product_name,
+                     product_id=product_id, previous_name=old_name, previous_id=old_id)
+
+    def recalibrate_lane(self, new_cfg, pc_mono: float, pc_wall: float, detail: Optional[dict] = None) -> None:
+        """보정 결과를 바로 적용한다. 재입고 모드는 끝내고, 보정 전 수량 기준으로 RESYNC 를 기다린다."""
+        lane_id = new_cfg.lane_id
+        old = self.lanes.get(lane_id)
+        prev = None
+        if old is not None:
+            prev = old.restock_previous if old.restock else old.confirmed
+            if old.restock:
+                self.set_restock(lane_id, False, pc_mono, pc_wall, reason="CALIBRATION")
+        new = LaneEstimator(new_cfg, self.cfg.resync_gap_ms)
+        if prev is not None:
+            new.confirmed = prev
+            new.pending_resync = True
+            new.resync_previous = prev
+            new.resync_reason = "CALIBRATION"
+        self.lanes[lane_id] = new
+        self.restock_since.pop(lane_id, None)
+        self.cfg.lanes = [new_cfg if l.lane_id == lane_id else l for l in self.cfg.lanes]
+        self._system("LANE_CALIBRATED", pc_wall, None, calibrated_lane_id=lane_id,
+                     product_name=new_cfg.product_name, **(detail or {}))
 
     def set_restock(self, lane_id: int, on: bool, pc_mono: float, pc_wall: float, reason: str = "USER") -> None:
         lane = self.lanes.get(lane_id)

@@ -31,6 +31,8 @@ def describe(rec: dict) -> str:
             "DEVICE_SEEN": "보드 발견", "DEVICE_STALE": "보드 데이터 끊김(stale)", "DEVICE_RESTORED": "보드 데이터 재개",
             "LANE_CONFLICT": "두 보드가 같은 레인 번호 사용 — 레인 번호 다시 설정 필요",
             "LANE_OWNER_CHANGED": "레인을 보내는 보드가 바뀜",
+            "LANE_CALIBRATED": "레인 보정 저장 (안정되면 RESYNC)",
+            "PRODUCT_RENAMED": "상품 이름 변경",
             "LINK_RESTORED": "데이터 수신 재개", "DEVICE_REBOOT": "ESP32 재부팅 감지",
             "SEQUENCE_GAP": "메시지 누락", "BACKLOG_START": "수신 지연(버퍼 적체) - 해당 샘플은 판정 제외",
             "BACKLOG_END": "수신 지연 해소", "DEVICE_CONFIG_ERROR": "펌웨어 설정 오류",
