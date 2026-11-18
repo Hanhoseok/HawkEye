@@ -3,6 +3,7 @@
     python scripts/product_frames.py plan               # 어느 장면을 쓸지 정해 labels/products_shoot3/frames.csv 에 적는다 (그림은 안 만듦)
     python scripts/product_frames.py extract            # 묶음 1 의 장면을 그림으로 → outputs/products_shoot3/images/
     python scripts/product_frames.py extract --batch 0  # 후보 전부 (약 6천 장 — 용량 큼)
+    python scripts/product_frames.py extract --batch 2  # 이동 구간 장면 (Roboflow 에 올릴 것) → outputs/products_shoot3/upload/batch2/
     python scripts/product_frames.py sheet              # 묶음 1 을 한눈에 보는 모아보기 → outputs/products_shoot3/sheets/
     python scripts/product_frames.py export             # 다 찍은 라벨을 YOLO 학습용으로 → outputs/products_shoot3/ (data.yaml · labels/ · 목록)
 
@@ -12,6 +13,9 @@
   - base : 영상마다 1초에 한 장.
   - take : 사람 정답(labels/store01_shoot3/takes.csv — 꺼냄 · 되돌림)의 시각 -0.5 ~ +2초, 0.25초 간격. 손에 든 상품이 보이는 때다.
   - scan : 바코드 삑 소리(beeps.csv, kind=scan) 시각 ±0.5초, 0.25초 간격. 계산대에서 상품을 든 때다.
+  - carry: 첫 꺼냄 0.5초 전 ~ 마지막 계산 3초 뒤 (계산이 없는 꺼냄은 8초 뒤까지). 상품을 손에 들고 옮기는 구간이다.
+           base(정각 초)와 겹치지 않게 그 사이 시각만 고른다 — x.5초는 묶음 2, x.25 · x.75초는 묶음 3.
+           위에서 이미 고른 장면은 건드리지 않는다 (carry 는 새 장면만 더한다).
   옆 장면끼리는 거의 같아서 전부 찍지 않는다. **묶음 1**(먼저 라벨을 찍을 것) = take 는 0 · +0.75 · +1.5초, scan 은 그 시각 한 장,
   base 는 영상 · 카메라마다 2장(사람이 보인 장면 먼저). 나머지 후보는 모델이 틀리는 곳을 보고 묶음 2 로 고른다.
 
@@ -54,6 +58,14 @@ BASE_FIRST = 2
 """묶음 1 에 넣는 base 장면 수 (영상 · 카메라마다)."""
 COLUMNS = ("image", "pair", "camera", "frame", "time_sec", "reason", "lane", "action", "people", "split", "batch")
 PRIORITY = {"take": 0, "scan": 1, "base": 2}
+CARRY_STEP_MS = 250.0
+CARRY_BEFORE_MS = 500.0
+"""첫 꺼냄보다 이만큼 앞에서 시작한다 (손이 선반에 닿는 때)."""
+CARRY_AFTER_SCAN_MS = 3000.0
+CARRY_AFTER_TAKE_MS = 8000.0
+"""뒤에 계산이 없는 꺼냄(들고 나감 · 숨김)은 이만큼 뒤까지 본다."""
+CARRY_AFTER_RETURN_MS = 2000.0
+REASONS = ("base", "take", "scan", "carry")
 
 
 # ---------------------------------------------------------------------- 고르기 (영상을 안 읽는 부분)
@@ -97,6 +109,38 @@ def spread(items: list, count: int) -> list:
     return [items[int((k + 1) * len(items) / (count + 1))] for k in range(count)]
 
 
+def carry_span(takes: list[tuple[float, str, str]], scans: list[float]) -> tuple[float, float] | None:
+    """상품을 손에 들고 있을 구간 (시작 ms, 끝 ms). 꺼냄이 없으면 None.
+    시작 = 첫 꺼냄 - 0.5초. 끝 = 마지막 계산 + 3초, 뒤에 계산이 없는 꺼냄 + 8초, 되돌림 + 2초 중 가장 늦은 것."""
+    if not takes:
+        return None
+    last_scan = max(scans) if scans else None
+    ends = [] if last_scan is None else [last_scan + CARRY_AFTER_SCAN_MS]
+    for ms, _lane, action in takes:
+        if action == "return":
+            ends.append(ms + CARRY_AFTER_RETURN_MS)
+        elif last_scan is None or ms > last_scan:
+            ends.append(ms + CARRY_AFTER_TAKE_MS)
+    return min(ms for ms, _lane, _action in takes) - CARRY_BEFORE_MS, max(ends)
+
+
+def carry_frames(times: list[float], span: tuple[float, float] | None) -> dict[int, int]:
+    """구간 안에서 base(정각 초) 사이의 장면: {장면 번호: 묶음}. x.5초 = 묶음 2, x.25 · x.75초 = 묶음 3.
+    시각은 base 와 같이 첫 장면부터 센다."""
+    out: dict[int, int] = {}
+    if not times or span is None:
+        return out
+    start, end = max(span[0], times[0]), min(span[1], times[-1])
+    k = max(0, int((start - times[0]) // CARRY_STEP_MS))
+    while times[0] + k * CARRY_STEP_MS <= end:
+        ms = times[0] + k * CARRY_STEP_MS
+        if ms >= start and k % 4:
+            i = index_at(times, ms)
+            out[i] = min(out.get(i, 9), 2 if k % 4 == 2 else 3)
+        k += 1
+    return out
+
+
 def choose(times: list[float], takes: list[tuple[float, str, str]], scans: list[float],
            people: dict[int, int] | None = None) -> dict[int, dict]:
     """한 영상 · 한 카메라에서 쓸 장면: {장면 번호: {reason, lane, action, batch}}.
@@ -125,6 +169,9 @@ def choose(times: list[float], takes: list[tuple[float, str, str]], scans: list[
     with_people = [i for i in plain if people and people.get(i, 0) > 0]
     for i in spread(with_people if len(with_people) >= BASE_FIRST else plain, BASE_FIRST):
         rows[i]["batch"] = 1
+    for i, batch in carry_frames(times, carry_span(takes, scans)).items():      # 맨 뒤 — 위에서 고른 장면은 그대로 둔다
+        if i not in rows:
+            rows[i] = {"reason": "carry", "lane": "", "action": "", "batch": batch}
     return rows
 
 
@@ -235,15 +282,24 @@ def read_plan(path: Path | None = None) -> list[dict]:
 def summary(rows: list[dict]) -> str:
     def count(pred) -> int:
         return sum(1 for r in rows if pred(r))
-    first = [r for r in rows if str(r["batch"]) == "1"]
-    lines = [f"후보 {len(rows)}장 (base {count(lambda r: r['reason'] == 'base')} · take {count(lambda r: r['reason'] == 'take')} · "
-             f"scan {count(lambda r: r['reason'] == 'scan')}), 영상 {len({r['pair'] for r in rows})}편 × 카메라 2",
-             f"묶음 1: {len(first)}장 (base {sum(r['reason'] == 'base' for r in first)} · take {sum(r['reason'] == 'take' for r in first)} · "
-             f"scan {sum(r['reason'] == 'scan' for r in first)})"]
+    def parts(part: list[dict]) -> str:
+        return " · ".join(f"{k} {sum(r['reason'] == k for r in part)}" for k in REASONS if any(r["reason"] == k for r in part))
+    lines = [f"후보 {len(rows)}장 ({parts(rows)}), 영상 {len({r['pair'] for r in rows})}편 × 카메라 2"]
+    batches = sorted({str(r["batch"]) for r in rows} - {"0"})
+    for b in batches:
+        part = [r for r in rows if str(r["batch"]) == b]
+        lines.append(f"묶음 {b}: {len(part)}장 ({parts(part)}) — "
+                     + " · ".join(f"{c} {sum(r['camera'] == c for r in part)}" for c in CAMERAS))
     for name in ("train", "val", "test"):
-        part = [r for r in first if r["split"] == name]
-        lines.append(f"  {name:5s} 영상 {len({r['pair'] for r in rows if r['split'] == name}):2d}편 · 묶음 1 {len(part)}장")
+        side = [r for r in rows if r["split"] == name]
+        lines.append(f"  {name:5s} 영상 {len({r['pair'] for r in side}):2d}편 · "
+                     + " · ".join(f"묶음 {b} {sum(str(r['batch']) == b for r in side)}장" for b in batches))
     return "\n".join(lines)
+
+
+def folder_of(batch: int) -> Path:
+    """그림을 두는 곳. 묶음 0 · 1 은 분석 도구가 읽는 images/, 묶음 2 부터는 밖에 올릴 것이라 묶음마다 따로."""
+    return OUT / "images" if batch < 2 else OUT / "upload" / f"batch{batch}"
 
 
 def extract(rows: list[dict], batch: int, only: set[str] | None = None) -> int:
@@ -255,7 +311,7 @@ def extract(rows: list[dict], batch: int, only: set[str] | None = None) -> int:
     for r in rows:
         if (batch == 0 or str(r["batch"]) == str(batch)) and (not only or r["pair"] in only):
             want.setdefault((r["pair"], r["camera"]), {})[int(r["frame"])] = r["image"]
-    images = OUT / "images"
+    images = folder_of(batch)
     images.mkdir(parents=True, exist_ok=True)
     made = 0
     for (pair, camera), frames in sorted(want.items()):
@@ -291,7 +347,7 @@ def sheets(rows: list[dict], batch: int, cols: int = 6, per: int = 36, width: in
     for page in range(0, len(picked), per):
         tiles = []
         for r in picked[page:page + per]:
-            path = OUT / "images" / r["image"]
+            path = folder_of(batch) / r["image"]
             if not path.exists():
                 continue
             image = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_COLOR)
@@ -407,7 +463,7 @@ def main() -> int:
                 print(f"  ! {split} 이 비었다 — 이대로는 학습이 안 돈다")
         print(f"→ {(OUT / 'data.yaml').relative_to(ROOT)}")
     elif args.what == "extract":
-        print(f"새로 뽑은 그림 {extract(rows, args.batch, only)}장 → {(OUT / 'images').relative_to(ROOT)}")
+        print(f"새로 뽑은 그림 {extract(rows, args.batch, only)}장 → {folder_of(args.batch).relative_to(ROOT)}")
     else:
         made = sheets(rows, args.batch)
         print(f"모아보기 {len(made)}장 → {(OUT / 'sheets').relative_to(ROOT)}")
