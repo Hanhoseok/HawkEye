@@ -2,7 +2,7 @@
 and 'moved' (rarely at that place -> likely held / taken), measure recall for each, and save
 annotated crops of moved boxes.
 
-usage: python predict_test.py <products_dir> <out_dir> [split=test] [model_name=yolov8n_1280] [--no-images]
+usage: python predict_test.py <products_dir> <out_dir> [split=test] [model_name=yolov8n_1280] [--no-images] [--data=dataset_v2]
 """
 import csv
 import json
@@ -19,7 +19,7 @@ args = [a for a in sys.argv[3:] if not a.startswith("--")]
 SPLIT = args[0] if len(args) > 0 else "test"
 MODEL = args[1] if len(args) > 1 else "yolov8n_1280"
 IMAGES = "--no-images" not in sys.argv
-data = prod / "dataset"
+data = prod / next((x.split("=", 1)[1] for x in sys.argv if x.startswith("--data=")), "dataset")
 out.mkdir(parents=True, exist_ok=True)
 (out / "moved").mkdir(exist_ok=True)
 (out / "full").mkdir(exist_ok=True)
