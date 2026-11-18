@@ -1,0 +1,1234 @@
+{
+ "summary": {
+  "moved": {
+   "n": 66,
+   "found": 54,
+   "found_anycls": 54,
+   "recall": 0.818
+  },
+  "moved_angle0": {
+   "n": 45,
+   "found": 38,
+   "found_anycls": 38,
+   "recall": 0.844
+  },
+  "moved_angle1": {
+   "n": 21,
+   "found": 16,
+   "found_anycls": 16,
+   "recall": 0.762
+  },
+  "static": {
+   "n": 529,
+   "found": 516,
+   "found_anycls": 516,
+   "recall": 0.975
+  },
+  "static_angle0": {
+   "n": 371,
+   "found": 358,
+   "found_anycls": 358,
+   "recall": 0.965
+  },
+  "static_angle1": {
+   "n": 158,
+   "found": 158,
+   "found_anycls": 158,
+   "recall": 1.0
+  },
+  "false_positives_by_camera": {
+   "angle0": 42,
+   "angle1": 5
+  }
+ },
+ "moved": [
+  {
+   "image": "C05_angle0_rf0002.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1100,
+    354,
+    1126,
+    379
+   ],
+   "stability": 0.15,
+   "iou_same_cls": 0.81,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.81,
+    "conf": 0.8
+   }
+  },
+  {
+   "image": "C05_angle0_rf0003.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1099,
+    353,
+    1126,
+    381
+   ],
+   "stability": 0.15,
+   "iou_same_cls": 0.83,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.83,
+    "conf": 0.81
+   }
+  },
+  {
+   "image": "C05_angle0_rf0005.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1063,
+    355,
+    1119,
+    413
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.75,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.75,
+    "conf": 0.78
+   }
+  },
+  {
+   "image": "C05_angle0_rf0006.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1046,
+    425,
+    1065,
+    460
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.85,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.85,
+    "conf": 0.6
+   }
+  },
+  {
+   "image": "C05_angle0_rf0008.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1118,
+    342,
+    1156,
+    398
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.76,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.76,
+    "conf": 0.82
+   }
+  },
+  {
+   "image": "C05_angle0_rf0009.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1293,
+    395,
+    1358,
+    455
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.84,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.84,
+    "conf": 0.81
+   }
+  },
+  {
+   "image": "C05_angle0_rf0010.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1376,
+    607,
+    1456,
+    665
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.93,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.93,
+    "conf": 0.55
+   }
+  },
+  {
+   "image": "C05_angle0_rf0011.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1339,
+    678,
+    1434,
+    772
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.85,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.85,
+    "conf": 0.94
+   }
+  },
+  {
+   "image": "C05_angle0_rf0012.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1046,
+    683,
+    1139,
+    777
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.89,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.89,
+    "conf": 0.94
+   }
+  },
+  {
+   "image": "C05_angle0_rf0018.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1101,
+    491,
+    1152,
+    558
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.89,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.89,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C05_angle0_rf0019.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    524,
+    516,
+    580,
+    562
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.88,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.88,
+    "conf": 0.9
+   }
+  },
+  {
+   "image": "C05_angle0_rf0019.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1107,
+    481,
+    1159,
+    541
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.83,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.83,
+    "conf": 0.7
+   }
+  },
+  {
+   "image": "C05_angle0_rf0020.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    0,
+    936,
+    115,
+    1039
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.63,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.63,
+    "conf": 0.73
+   }
+  },
+  {
+   "image": "C05_angle0_rf0020.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1039,
+    574,
+    1102,
+    650
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.95,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.95,
+    "conf": 0.92
+   }
+  },
+  {
+   "image": "C05_angle0_rf0023.jpg",
+   "camera": "angle0",
+   "cls": "applecider",
+   "box": [
+    810,
+    346,
+    836,
+    418
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.89
+   }
+  },
+  {
+   "image": "C05_angle0_rf0029.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    466,
+    374,
+    509,
+    426
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.89
+   }
+  },
+  {
+   "image": "C13_angle1_rf0000.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1548,
+    670,
+    1587,
+    731
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.85,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.85,
+    "conf": 0.83
+   }
+  },
+  {
+   "image": "C13_angle1_rf0001.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1548,
+    671,
+    1586,
+    727
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.86,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.86,
+    "conf": 0.86
+   }
+  },
+  {
+   "image": "C13_angle1_rf0002.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1550,
+    670,
+    1587,
+    718
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.86,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.86,
+    "conf": 0.85
+   }
+  },
+  {
+   "image": "C13_angle1_rf0003.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1552,
+    669,
+    1587,
+    715
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.74,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.74,
+    "conf": 0.85
+   }
+  },
+  {
+   "image": "C13_angle1_rf0004.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1553,
+    671,
+    1588,
+    730
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.8,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.8,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C13_angle1_rf0005.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1408,
+    639,
+    1464,
+    684
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.8,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.8,
+    "conf": 0.81
+   }
+  },
+  {
+   "image": "C13_angle1_rf0006.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1281,
+    578,
+    1352,
+    629
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.91,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.91,
+    "conf": 0.86
+   }
+  },
+  {
+   "image": "C13_angle1_rf0007.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1245,
+    499,
+    1319,
+    542
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.86,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.86,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C13_angle1_rf0010.jpg",
+   "camera": "angle1",
+   "cls": "donggwaru",
+   "box": [
+    1433,
+    593,
+    1506,
+    636
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.94,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.94,
+    "conf": 0.69
+   }
+  },
+  {
+   "image": "C13_angle1_rf0011.jpg",
+   "camera": "angle1",
+   "cls": "donggwaru",
+   "box": [
+    1352,
+    522,
+    1390,
+    575
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.76,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.76,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C13_angle1_rf0016.jpg",
+   "camera": "angle1",
+   "cls": "donggwaru",
+   "box": [
+    1344,
+    407,
+    1378,
+    451
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.76,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.76,
+    "conf": 0.57
+   }
+  },
+  {
+   "image": "C13_angle1_rf0020.jpg",
+   "camera": "angle1",
+   "cls": "donggwaru",
+   "box": [
+    1327,
+    303,
+    1367,
+    341
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C13_angle1_rf0023.jpg",
+   "camera": "angle1",
+   "cls": "donggwaru",
+   "box": [
+    483,
+    169,
+    526,
+    216
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.88,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.88,
+    "conf": 0.89
+   }
+  },
+  {
+   "image": "C13_angle1_rf0027.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    646,
+    257,
+    684,
+    286
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.81,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.81,
+    "conf": 0.86
+   }
+  },
+  {
+   "image": "C13_angle1_rf0028.jpg",
+   "camera": "angle1",
+   "cls": "donggwaru",
+   "box": [
+    330,
+    283,
+    357,
+    318
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C13_angle1_rf0028.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1043,
+    333,
+    1073,
+    365
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.69,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.69,
+    "conf": 0.6
+   }
+  },
+  {
+   "image": "C13_angle1_rf0030.jpg",
+   "camera": "angle1",
+   "cls": "donggwaru",
+   "box": [
+    278,
+    286,
+    305,
+    323
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C13_angle1_rf0030.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1373,
+    388,
+    1397,
+    449
+   ],
+   "stability": 0.05,
+   "iou_same_cls": 0.84,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.84,
+    "conf": 0.56
+   }
+  },
+  {
+   "image": "C13_angle1_rf0031.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1367,
+    409,
+    1399,
+    451
+   ],
+   "stability": 0.05,
+   "iou_same_cls": 0.0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "C13_angle1_rf0032.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1365,
+    408,
+    1400,
+    453
+   ],
+   "stability": 0.05,
+   "iou_same_cls": 0.87,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.87,
+    "conf": 0.5
+   }
+  },
+  {
+   "image": "C13_angle1_rf0033.jpg",
+   "camera": "angle1",
+   "cls": "cantata",
+   "box": [
+    1325,
+    380,
+    1349,
+    409
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.38,
+   "best_pred": {
+    "cls": "cantata",
+    "iou": 0.38,
+    "conf": 0.81
+   }
+  },
+  {
+   "image": "C18_angle0_rf0017.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    462,
+    576,
+    533,
+    641
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.94,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.94,
+    "conf": 0.92
+   }
+  },
+  {
+   "image": "N05_angle0_rf0000.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1103,
+    356,
+    1128,
+    383
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.87,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.87,
+    "conf": 0.8
+   }
+  },
+  {
+   "image": "N05_angle0_rf0001.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1102,
+    355,
+    1127,
+    381
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.91,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.91,
+    "conf": 0.79
+   }
+  },
+  {
+   "image": "N05_angle0_rf0002.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1103,
+    355,
+    1128,
+    382
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.93,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.93,
+    "conf": 0.79
+   }
+  },
+  {
+   "image": "N05_angle0_rf0003.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1103,
+    356,
+    1126,
+    381
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.91,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.91,
+    "conf": 0.79
+   }
+  },
+  {
+   "image": "N05_angle0_rf0005.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1104,
+    356,
+    1127,
+    382
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.91,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.91,
+    "conf": 0.8
+   }
+  },
+  {
+   "image": "N05_angle0_rf0006.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1104,
+    355,
+    1127,
+    381
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.95,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.95,
+    "conf": 0.78
+   }
+  },
+  {
+   "image": "N05_angle0_rf0007.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1110,
+    363,
+    1133,
+    409
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.68,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.68,
+    "conf": 0.69
+   }
+  },
+  {
+   "image": "N05_angle0_rf0007.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1125,
+    347,
+    1158,
+    403
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.68,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.68,
+    "conf": 0.72
+   }
+  },
+  {
+   "image": "N05_angle0_rf0008.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1264,
+    357,
+    1325,
+    417
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.96,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.96,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "N05_angle0_rf0009.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1237,
+    463,
+    1283,
+    509
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.95,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.95,
+    "conf": 0.83
+   }
+  },
+  {
+   "image": "N05_angle0_rf0010.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1200,
+    306,
+    1235,
+    368
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.89,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.89,
+    "conf": 0.87
+   }
+  },
+  {
+   "image": "N05_angle0_rf0011.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1248,
+    452,
+    1293,
+    499
+   ],
+   "stability": 0.11,
+   "iou_same_cls": 0.81,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.81,
+    "conf": 0.77
+   }
+  },
+  {
+   "image": "N05_angle0_rf0011.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1312,
+    295,
+    1355,
+    359
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.9,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.9,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "N05_angle0_rf0012.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1231,
+    450,
+    1304,
+    500
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.87,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.87,
+    "conf": 0.76
+   }
+  },
+  {
+   "image": "N05_angle0_rf0012.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1257,
+    438,
+    1320,
+    484
+   ],
+   "stability": 0.05,
+   "iou_same_cls": 0.71,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.71,
+    "conf": 0.55
+   }
+  },
+  {
+   "image": "N05_angle0_rf0013.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1263,
+    455,
+    1336,
+    509
+   ],
+   "stability": 0.08,
+   "iou_same_cls": 0.0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "N05_angle0_rf0014.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1247,
+    444,
+    1313,
+    501
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.89,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.89,
+    "conf": 0.81
+   }
+  },
+  {
+   "image": "N05_angle0_rf0014.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1281,
+    443,
+    1322,
+    476
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.27,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.27,
+    "conf": 0.81
+   }
+  },
+  {
+   "image": "N05_angle0_rf0014.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1302,
+    286,
+    1350,
+    346
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.97,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.97,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "N05_angle0_rf0015.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1219,
+    476,
+    1288,
+    532
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.82,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.82,
+    "conf": 0.84
+   }
+  },
+  {
+   "image": "N05_angle0_rf0015.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1248,
+    362,
+    1298,
+    426
+   ],
+   "stability": 0.03,
+   "iou_same_cls": 0.83,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.83,
+    "conf": 0.88
+   }
+  },
+  {
+   "image": "N05_angle0_rf0015.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    1248,
+    470,
+    1301,
+    511
+   ],
+   "stability": 0.13,
+   "iou_same_cls": 0.28,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.28,
+    "conf": 0.84
+   }
+  },
+  {
+   "image": "N05_angle0_rf0016.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    958,
+    476,
+    1038,
+    521
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.88,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.88,
+    "conf": 0.91
+   }
+  },
+  {
+   "image": "N05_angle0_rf0016.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    984,
+    438,
+    1048,
+    485
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.86,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.86,
+    "conf": 0.85
+   }
+  },
+  {
+   "image": "N05_angle0_rf0024.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    798,
+    337,
+    824,
+    364
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0,
+   "best_pred": {
+    "cls": "applecider",
+    "iou": 0.0,
+    "conf": 0.89
+   }
+  },
+  {
+   "image": "N05_angle0_rf0035.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    359,
+    559,
+    432,
+    622
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.56,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.56,
+    "conf": 0.56
+   }
+  },
+  {
+   "image": "N05_angle0_rf0035.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    378,
+    532,
+    433,
+    575
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.33,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.33,
+    "conf": 0.85
+   }
+  },
+  {
+   "image": "N05_angle0_rf0035.jpg",
+   "camera": "angle0",
+   "cls": "donggwaru",
+   "box": [
+    406,
+    548,
+    468,
+    603
+   ],
+   "stability": 0.0,
+   "iou_same_cls": 0.69,
+   "best_pred": {
+    "cls": "donggwaru",
+    "iou": 0.69,
+    "conf": 0.74
+   }
+  }
+ ]
+}
