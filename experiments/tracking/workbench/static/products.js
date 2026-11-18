@@ -7,7 +7,7 @@
    안 찍은 장면을 열면 옆 장면의 상자가 초안(점선)으로 깔린다 — 확인하고 고친 뒤 Enter. */
 
 const PROD_COLOR = ["#ff5b5b", "#4dabf7", "#ffd43b", "#69db7c", "#da77f2"];
-const PROD_REASON = { base: "기본 장면", take: "꺼냄 근처", scan: "계산 삑 근처" };
+const PROD_REASON = { base: "기본 장면", take: "꺼냄 근처", scan: "계산 삑 근처", carry: "이동 구간" };
 const PROD_STATE = { todo: "안 찍음", doing: "찍는 중", done: "끝" };
 const PROD_MIN = 4;          // 이보다 작게 끈 것은 상자로 안 친다 (그림 픽셀)
 const PROD_ZOOM_MAX = 24;
@@ -89,7 +89,8 @@ function drawProdList() {
       h("span", { class: "gap" }),
       chip("camera", "all", "두 카메라"), Object.entries(L.cameras).map(([k, name]) => chip("camera", k, name, count(f => f.camera === k))),
       h("span", { class: "gap" }),
-      chip("reason", "all", "모든 장면"), Object.entries(PROD_REASON).map(([k, name]) => chip("reason", k, name, count(f => f.reason === k))),
+      chip("reason", "all", "모든 장면"), Object.entries(PROD_REASON).filter(([k]) => count(f => f.reason === k))
+        .map(([k, name]) => chip("reason", k, name, count(f => f.reason === k))),
       h("span", { class: "gap" }),
       next ? h("a", { class: "btn primary", href: prodHref(next.image) }, "이어서 찍기") : h("span", { class: "pill ok" }, "전부 끝")),
     h("div", { class: "prod-key small muted" },

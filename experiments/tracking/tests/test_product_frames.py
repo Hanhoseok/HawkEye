@@ -44,6 +44,37 @@ def test_first_base_frames_prefer_frames_with_people():
     assert sorted(i for i, r in rows.items() if r["batch"] == 1) == [20, 30]
 
 
+def test_carry_span_runs_from_first_take_to_after_the_last_scan():
+    assert pf.carry_span([], [8000.0]) is None                                        # 꺼냄이 없으면 구간도 없다
+    assert pf.carry_span([(5000.0, "L2", "take"), (6000.0, "L1", "take")], [8000.0, 9000.0]) == (4500.0, 12000.0)
+    assert pf.carry_span([(5000.0, "L2", "take")], []) == (4500.0, 13000.0)            # 계산이 없다 — 꺼냄 8초 뒤까지
+    assert pf.carry_span([(5000.0, "L2", "take"), (9000.0, "L1", "take")], [8000.0]) == (4500.0, 17000.0)   # 계산 뒤에 또 꺼냄
+    assert pf.carry_span([(5000.0, "L2", "take"), (9000.0, "L2", "return")], []) == (4500.0, 13000.0)
+    assert pf.carry_span([(5000.0, "L2", "take"), (12000.0, "L2", "return")], []) == (4500.0, 14000.0)      # 되돌림은 2초 뒤까지
+
+
+def test_carry_frames_sit_between_the_whole_second_frames():
+    got = pf.carry_frames(TIMES, (4500.0, 7000.0))
+    assert got == {45: 2, 47: 3, 52: 3, 55: 2, 57: 3, 62: 3, 65: 2, 67: 3}            # 5.0 · 6.0 · 7.0초(base)는 없다
+    assert not set(got) & set(pf.base_frames(TIMES))
+    assert pf.carry_frames(TIMES, None) == {} and pf.carry_frames([], (0.0, 1000.0)) == {}
+    assert max(pf.carry_frames(TIMES, (9000.0, 99000.0))) == 97                       # 영상 끝에서 자른다
+
+
+def test_carry_only_adds_frames_nothing_else_picked():
+    takes, scans = [(5000.0, "L2", "take")], [8000.0]
+    rows = pf.choose(TIMES, takes=takes, scans=scans)
+    carry = {i: r["batch"] for i, r in rows.items() if r["reason"] == "carry"}
+    assert carry == {72: 3, 87: 3, 92: 3, 95: 2, 97: 3}                               # 꺼냄 · 계산 근처는 이미 골라 둔 장면
+    assert rows[55] == {"reason": "take", "lane": "L2", "action": "take", "batch": 0}  # 겹치는 장면은 그대로 둔다
+    assert not any(r["reason"] == "carry" for r in pf.choose(TIMES, takes=[], scans=scans).values())
+
+
+def test_upload_batches_get_their_own_folder():
+    assert pf.folder_of(0) == pf.folder_of(1) == pf.OUT / "images"
+    assert pf.folder_of(2) == pf.OUT / "upload" / "batch2"
+
+
 def test_split_is_by_video_and_per_set():
     pairs = [f"C{i:02d}" for i in range(1, 11)] + [f"N{i:02d}" for i in range(1, 6)] + ["T01", "T02"]
     split = pf.split_of(pairs)
