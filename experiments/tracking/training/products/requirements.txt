@@ -1,0 +1,3 @@
+# 원래 컴퓨터와 같은 버전 — 학습한 모델(best.pt)을 가져가서 그대로 열 수 있게 맞춘다.
+# GPU 를 쓰려면 이것보다 먼저 그 컴퓨터에 맞는 PyTorch(CUDA)를 깐다: https://pytorch.org/get-started/locally/
+ultralytics==8.3.40

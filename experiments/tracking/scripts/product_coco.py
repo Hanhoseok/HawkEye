@@ -2,6 +2,7 @@
 
     python scripts/product_coco.py                       # source/labeling_object → outputs/products_rf/
     python scripts/product_coco.py --src <폴더> --out <폴더>
+    python scripts/product_coco.py --publish             # 바꿔 둔 것에서 라벨 · 목록만 training/products/dataset/ 으로 (그림 빼고)
 
 Roboflow 가 내보낸 것을 그대로 학습에 넣으면 안 되는 까닭 네 가지를 여기서 고친다 (limitations D-9):
 
@@ -50,6 +51,9 @@ MIN_SIDE = 2.0
 MIN_MARGIN = 0.2
 """두 카메라 기준과의 닮음 차이가 이보다 작으면 '모름' — 넣지 않고 알린다. (3차 1,194장에서 가장 작은 차이는 0.45 였다)"""
 COLUMNS = ("image", "source", "video", "camera", "index", "split", "roboflow_split", "boxes")
+PUBLISHED = COLUMNS + ("bytes", "sha1")
+KIT = ROOT / "training" / "products" / "dataset"
+"""저장소에 올리는 학습 폴더의 데이터 자리 (그림 빼고)."""
 
 
 # ---------------------------------------------------------------------- 영상을 읽지 않는 부분
@@ -242,12 +246,15 @@ def convert(src: Path, out: Path, plan_split: dict[str, str], names: dict[int, s
     return stats
 
 
-def write_lists(out: Path, rows: list[dict], names: dict[int, str]) -> None:
+def write_lists(out: Path, rows: list[dict], names: dict[int, str], columns=COLUMNS, portable: bool = False) -> None:
+    """나눔별 목록 · data.yaml · frames.csv. portable = data.yaml 에 이 컴퓨터의 경로를 적지 않는다
+    (path 줄이 없으면 ultralytics 는 data.yaml 이 있는 폴더를 기준으로 읽는다 — 다른 컴퓨터로 옮길 수 있다)."""
     def put(name: str, part: list[dict]) -> None:
         (out / name).write_text("".join(f"./images/{r['image']}\n" for r in part), encoding="utf-8", newline="\n")
 
     def yaml(name: str, suffix: str) -> None:
-        lines = [f"path: {out.as_posix()}", f"train: train{suffix}.txt", f"val: val{suffix}.txt", f"test: test{suffix}.txt", "names:"]
+        lines = [] if portable else [f"path: {out.as_posix()}"]
+        lines += [f"train: train{suffix}.txt", f"val: val{suffix}.txt", f"test: test{suffix}.txt", "names:"]
         lines += [f"  {i}: {n}" for i, n in sorted(names.items())]
         (out / name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
@@ -259,9 +266,32 @@ def write_lists(out: Path, rows: list[dict], names: dict[int, str]) -> None:
     for camera in pf.CAMERAS:
         yaml(f"data_{camera}.yaml", f"_{camera}")
     with (out / "frames.csv").open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS, lineterminator="\n")
+        w = csv.DictWriter(f, fieldnames=columns, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
+
+
+def publish(out: Path, dest: Path, names: dict[int, str]) -> dict:
+    """바꾼 것 가운데 **얼굴이 없는 것만** 저장소의 학습 폴더(dest)로 낸다 — 라벨 · 목록 · data.yaml · frames.csv.
+
+    그림은 내지 않는다. 대신 frames.csv 에 그림마다 크기(bytes)와 sha1 을 적어, 다른 컴퓨터에서 가져다 놓은 그림이
+    같은 것인지 확인할 수 있게 한다 (training/products/check.py).
+    """
+    import hashlib
+
+    with (out / "frames.csv").open(encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    labels = dest / "labels"
+    labels.mkdir(parents=True, exist_ok=True)
+    for old in labels.glob("*.txt"):
+        old.unlink()
+    for r in rows:
+        stem = Path(r["image"]).stem
+        shutil.copyfile(out / "labels" / f"{stem}.txt", labels / f"{stem}.txt")
+        raw = (out / "images" / r["image"]).read_bytes()
+        r["bytes"], r["sha1"] = len(raw), hashlib.sha1(raw).hexdigest()
+    write_lists(dest, rows, names, columns=PUBLISHED, portable=True)
+    return {"images": len(rows), "labels": len(list(labels.glob("*.txt")))}
 
 
 def main() -> int:
@@ -270,7 +300,15 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--unknown", choices=("train", "skip"), default="train",
                     help="우리 표에 없는 영상의 그림을 어디에 둘지 (기본: 학습 — 검증 · 시험 영상이 아니므로 점수를 부풀리지 않는다)")
+    ap.add_argument("--publish", nargs="?", type=Path, const=KIT, default=None, metavar="폴더",
+                    help=f"바꾸지 않고, 이미 바꿔 둔 --out 에서 라벨 · 목록만 학습 폴더로 낸다 (기본 {KIT.relative_to(ROOT).as_posix()})")
     args = ap.parse_args()
+    if args.publish:
+        if not (args.out / "frames.csv").exists():
+            raise SystemExit(f"{args.out} 에 바꾼 것이 없다 — 먼저 --publish 없이 돌린다")
+        p = publish(args.out, args.publish, pf.read_names())
+        print(f"라벨 {p['labels']}개 · 목록 · data.yaml · frames.csv → {args.publish} (그림은 내지 않는다)")
+        return 0
     if not args.src.exists():
         raise SystemExit(f"{args.src} 없음")
     plan_split: dict[str, str] = {}
