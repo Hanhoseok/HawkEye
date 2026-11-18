@@ -132,9 +132,59 @@
     catch (err) { alert(err.message); }
   });
 
+  // ---------- 결제 성공 "삑" 소리 (촬영 시 영상·음성 시간축 맞추기용) ----------
+  // 음원 파일 없이 Web Audio로 합성한다. 결제 단말기 같은 맑은 2음 차임("띠링").
+  // 사인파 + 약한 배음에 빠른 어택과 자연스러운 감쇠를 줘서 귀에 편하면서도 시작점은 또렷하다.
+  const BEEP = {
+    notes: [987.77, 1318.51], // B5 → E6 (올라가는 완전4도)
+    gapMs: 110,               // 두 음 사이 간격
+    decayMs: 450,             // 각 음이 사라지는 시간
+    volume: 0.9,              // 0~1
+  };
+  let audioCtx = null;
+  function primeAudio() {
+    // 브라우저는 사용자 클릭 안에서만 소리를 허용하므로, 결제 버튼 클릭 시점에 미리 깨워 둔다
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!audioCtx) audioCtx = new AC();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch { /* 소리를 못 내도 결제는 진행 */ }
+  }
+  function beep() {
+    if (!audioCtx) return;
+    try {
+      const now = audioCtx.currentTime;
+      // 배음 구성: 기본음을 중심으로 2·3배음을 조금 섞어 종소리 같은 맑은 음색을 만든다 (합계 1.0 → 클리핑 없음)
+      const partials = [[1, 0.72], [2, 0.2], [3, 0.08]];
+      BEEP.notes.forEach((freq, i) => {
+        const t0 = now + (i * BEEP.gapMs) / 1000;
+        const t1 = t0 + BEEP.decayMs / 1000;
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0, t0);
+        gain.gain.linearRampToValueAtTime(BEEP.volume, t0 + 0.005);    // 5ms 어택: 시작점이 또렷함
+        gain.gain.exponentialRampToValueAtTime(0.001, t1);             // 자연스럽게 사라짐
+        gain.connect(audioCtx.destination);
+        for (const [mult, level] of partials) {
+          const osc = audioCtx.createOscillator();
+          const g = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq * mult, t0);
+          g.gain.value = level;
+          osc.connect(g);
+          g.connect(gain);
+          osc.start(t0);
+          osc.stop(t1 + 0.02);
+        }
+      });
+    } catch { /* ignore */ }
+  }
+
   $('pay').addEventListener('click', async () => {
+    primeAudio();
     try {
       const r = await api('POST', `/api/sessions/${session.sessionId}/checkout`);
+      beep(); // 서버가 결제 성공을 응답한 직후에만 울린다
       showReceipt(r);
       await loadOrders();
     } catch (err) { alert(err.message); }
