@@ -1,0 +1,8 @@
+# 그림에는 얼굴이 있다 — 저장소에 올리지 않는다 (prepare.py 로 가져다 놓는다)
+dataset/images/*
+!dataset/images/.gitkeep
+# 학습 결과 · 가져갈 것 · 가중치
+runs/
+handoff/
+*.pt
+*.cache

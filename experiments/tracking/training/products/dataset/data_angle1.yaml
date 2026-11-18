@@ -1,0 +1,7 @@
+train: train_angle1.txt
+val: val_angle1.txt
+test: test_angle1.txt
+names:
+  0: cantata
+  1: donggwaru
+  2: applecider

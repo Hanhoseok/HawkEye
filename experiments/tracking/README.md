@@ -205,6 +205,7 @@ src/
   multicam.py              전체 조립 (카메라 2대)
 scripts/                   평가·실험 도구 — 아래 표
 workbench/                 분석 도구 — 기록을 영상 위에 그려 질문별로 보는 웹 화면 (workbench/README.md)
+training/products/         상품 탐지 학습 폴더 — 다른 컴퓨터에서 이 폴더만으로 학습한다 (training/products/README.md, 그림은 git 제외)
 tests/                     층별 규칙 테스트
 labels/                    정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서, events/ 는 분석 도구로 적는 집음·짝·경보 대상)
 data/videos/, outputs/     입력 영상·결과물 (git 제외)
@@ -237,6 +238,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | | `retailaction_eval.py` · `retailaction_hands.py` · `eval_takes.py` | RetailAction: 자세만으로 집기 · 손 사진으로 집음/놓음 · 손 뻗기 후보를 라벨과 대조 |
 | **라벨·구역 준비** | `label_actions.py` · `export_frame.py` · `zone_report.py` | 행동 구간 라벨링 · 격자 입힌 장면 저장 · 신원별 구역 체류 집계 |
 | **상품 탐지 데이터 (3차)** | `product_frames.py` | 학습용 장면 고르기(`plan`) · 그림으로 뽑기(`extract`) · 모아보기(`sheet`) · 찍은 라벨을 YOLO 학습용으로 내보내기(`export`) — 표 · 라벨은 `labels/products_shoot3/`, 그림은 `outputs/` 에만. 라벨은 분석 도구의 '상품 라벨' 화면에서 찍는다 |
+| | `product_coco.py` | Roboflow 로 찍은 데이터셋(COCO, `source/labeling_object/`)을 YOLO 학습용으로 바꾸기 — 영상 단위로 다시 나누고 · 종류 번호를 맞추고 · 카메라를 갈라 이름에 넣는다 → `outputs/products_rf/`. `--publish` 는 그 가운데 라벨 · 목록만(그림 빼고) 학습 폴더 `training/products/dataset/` 으로 낸다 |
 | **추적 분석 (초기 단계)** | `analyze_observations.py` · `detect_id_jumps.py` · `find_crossings.py` | 추적 번호 단위 요약 · 번호가 남에게 옮겨 간 지점 · 두 사람이 겹친 구간 |
 | **시연·시험용** | `shelf_demo.py` · `make_sample_video.py` | 선반 지도 1단계 시연 · 영상 입출력만 확인하는 합성 영상 |
 
