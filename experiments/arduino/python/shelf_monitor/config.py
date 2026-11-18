@@ -37,17 +37,29 @@ class LaneConfig:
     count_distance_mm: Optional[list[float]] = None
     count_tolerance_mm: Optional[list[float]] = None   # 수량별 허용 오차 (없으면 모두 tolerance_mm)
     shape: str = "box"
+    block_mm: float = 0
+    """밀판 앞 고정 블록(스페이서) 길이. 첫 상품은 밀판을 (thickness_mm - block_mm) 만 밀고, 둘째부터 thickness_mm 씩 민다.
+    실측 거리표(count_distance_mm)가 없는 레인에서만 쓴다 — 보정하면 거리표가 우선한다. 0 = 블록 없음."""
+
+    def first_step_mm(self) -> float:
+        """첫 상품이 밀판을 미는 거리 (0개 → 1개 기준 거리 차이)."""
+        return self.thickness_mm - self.block_mm
 
     def reference_mm(self, n: int) -> float:
         """수량 n 일 때 기대되는 센서→밀판 거리."""
         if self.count_distance_mm:
             return float(self.count_distance_mm[n])
+        if self.block_mm > 0 and n >= 1:
+            return self.empty_distance_mm - self.first_step_mm() - (n - 1) * self.thickness_mm
         return self.empty_distance_mm - n * self.thickness_mm
 
     def tolerance_for(self, n: int) -> float:
         """수량 n 의 허용 오차. 예: 첫 상품이 밀판을 조금만 미는 레일은 0개·1개만 좁게 준다."""
         if self.count_tolerance_mm:
             return float(self.count_tolerance_mm[n])
+        if self.block_mm > 0 and not self.count_distance_mm and n <= 1:
+            # 0개·1개 간격이 좁다 → 두 허용 구간과 히스테리시스가 그 간격 안에 들어가게 나눈다
+            return min(self.tolerance_mm, max(1.0, (self.first_step_mm() - self.hysteresis_mm - 0.5) / 2))
         return self.tolerance_mm
 
     def min_spacing_mm(self) -> float:
@@ -74,6 +86,10 @@ class LaneConfig:
                 return e
         elif self.thickness_mm <= 0:
             e.append(f"{p}: thickness_mm > 0 이어야 함")
+            return e
+        elif self.block_mm < 0 or (self.block_mm > 0 and self.first_step_mm() < 5):
+            e.append(f"{p}: block_mm 은 0 이상이고 thickness_mm 보다 5mm 넘게 작아야 함 "
+                     f"(첫 상품이 밀판을 {self.first_step_mm():g}mm 만 밀면 0개·1개를 구분할 수 없음)")
             return e
         if self.count_tolerance_mm is not None:
             if len(self.count_tolerance_mm) != self.max_count + 1:
@@ -133,6 +149,7 @@ class AppConfig:
     status_log: str = "logs/status.jsonl"
     lanes: list[LaneConfig] = field(default_factory=list)
     base_dir: Path = Path(".")
+    config_path: Optional[Path] = None      # 보정 결과를 다시 쓸 파일
 
     def lane(self, lane_id: int) -> Optional[LaneConfig]:
         for l in self.lanes:
@@ -152,7 +169,7 @@ def load_config(path: str | Path, enable_all: bool = False) -> AppConfig:
     path = Path(path)
     with open(path, "rb") as f:
         raw = tomllib.load(f)
-    cfg = AppConfig(base_dir=path.resolve().parent)
+    cfg = AppConfig(base_dir=path.resolve().parent, config_path=path.resolve())
     errors: list[str] = []
     n = raw.get("network", {})
     cfg.source = str(n.get("source", cfg.source))
@@ -212,3 +229,70 @@ def load_config(path: str | Path, enable_all: bool = False) -> AppConfig:
         raise ConfigError("\n".join(errors))
     cfg.lanes.sort(key=lambda l: l.lane_id)
     return cfg
+
+
+def _toml_value(v) -> str:
+    import json
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return json.dumps(v, ensure_ascii=False)          # TOML 기본 문자열과 이스케이프가 같다
+    if isinstance(v, float):
+        return f"{v:g}"
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    return str(v)
+
+
+def update_lane_in_toml(path: str | Path, lane_id: int, values: dict, note: str = "",
+                        drop_comments: bool = True) -> Path:
+    """config.toml 에서 lane_id 레인 블록의 키만 바꾼다. 다른 레인과 주석은 그대로 둔다.
+
+    바꾸기 전 파일은 config.toml.bak 으로 남기고, 바꾼 뒤 전체를 다시 검사해 실패하면 되돌린다.
+    drop_comments: 보정 저장 때는 그 레인 블록의 주석(이전 보정 설명)을 지우고 note 한 줄로 대신한다.
+    이름만 바꿀 때는 False 로 두어 주석을 남긴다.
+    """
+    import re
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    starts = [i for i, l in enumerate(lines) if l.strip() == "[[lanes]]"]
+    block = None
+    for k, s in enumerate(starts):
+        e = next((j for j in range(s + 1, len(lines)) if lines[j].lstrip().startswith("[")), len(lines))
+        if any(re.match(rf"\s*lane_id\s*=\s*{lane_id}\s*(#.*)?$", lines[j]) for j in range(s + 1, e)):
+            block = (s, e)
+            break
+    if block is None:
+        raise ConfigError(f"config.toml 에 lane_id = {lane_id} 레인이 없습니다")
+    s, e = block
+    body = [l for l in lines[s + 1:e] if not (drop_comments and l.lstrip().startswith("#"))]
+    while body and not body[-1].strip():
+        body.pop()
+    done = set()
+    for i, l in enumerate(body):
+        m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", l)
+        if m and m.group(1) in values:
+            key = m.group(1)
+            body[i] = f"{key} = {_toml_value(values[key])}"
+            done.add(key)
+        elif m and m.group(1) == "enabled" and drop_comments:
+            body[i] = "enabled = true"
+    for key, v in values.items():
+        if key not in done:
+            body.append(f"{key} = {_toml_value(v)}")
+    if note:
+        lid = next((i for i, l in enumerate(body) if re.match(r"\s*lane_id\s*=", l)), 0)
+        body.insert(lid + 1, f"# {note}")
+    new_lines = lines[:s + 1] + body + [""] + lines[e:]
+    while len(new_lines) > 1 and not new_lines[-1].strip() and not new_lines[-2].strip():
+        new_lines.pop()
+    backup = path.with_suffix(path.suffix + ".bak")
+    backup.write_text(text, encoding="utf-8")
+    path.write_text("\n".join(new_lines).rstrip("\n") + "\n", encoding="utf-8")
+    try:
+        load_config(path)
+    except ConfigError:
+        path.write_text(text, encoding="utf-8")
+        raise
+    return backup

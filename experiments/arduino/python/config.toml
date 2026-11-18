@@ -52,6 +52,9 @@ shape              = "box"  # 화면 표시용: "box" 또는 "can"(위에서 본
 #  max_count         : 레일에 들어가는 최대 수량
 #  count_distance_mm : (선택) 0개, 1개, 2개 ... max_count 개일 때의 실측 거리표.
 #                      있으면 thickness/empty 기반 계산보다 우선한다. 길이 = max_count + 1.
+#  block_mm          : (선택) 밀판 앞 고정 블록(스페이서) 길이. 첫 상품은 밀판을 thickness - block 만 밀고
+#                      둘째부터 thickness 씩 민다. 실측 거리표(count_distance_mm)가 없는 레인에서만 쓰인다.
+#                      0개·1개 허용 오차는 좁은 간격에 맞게 자동으로 줄어든다. 화면에 '블록'이 그려진다.
 #  tca_channel       : TCA9548A 채널 (펌웨어 LANE_HW 와 동일하게)
 # 상품 종류나 두께를 바꾸면 empty_distance_mm / count_distance_mm 를 다시 보정해야 한다.
 # -----------------------------------------------------------------------------
@@ -60,7 +63,7 @@ shape              = "box"  # 화면 표시용: "box" 또는 "can"(위에서 본
 lane_id = 1
 enabled = true
 product_id = "CAN-COLA-355"
-product_name = "맥주"
+product_name = "칸타타 275ml 스위트 아메리카노"
 thickness_mm = 65          # 실제 상품 지름
 empty_distance_mm = 345    # 빈 레인 실측 (배선 수리 후 재기록, 5회 반복 중앙값 약 345)
 max_count = 5
@@ -78,35 +81,35 @@ hysteresis_mm = 4
 
 [[lanes]]
 lane_id = 2
+# 자동 보정 2026-11-11 14:54 · 빈 353 / 1개 333 / 2개 268 mm · 지름 65 · 0↔1 간격 20
 enabled = true
 product_id = "CAN-CANTATA-SWEET-AMERICANO-275"
-product_name = "칸타타 스위트 아메리카노 275ml"
-thickness_mm = 66          # 캔 지름
-empty_distance_mm = 339    # 빈 레인 실측 (5분 기록, 5회 반복 337~340)
-max_count = 5              # 1번과 같은 레일(38cm, 앞 블록 5cm) 기준. 실제 들어가는 개수로 확인
+product_name = "동과루"
+thickness_mm = 65
+empty_distance_mm = 353
+max_count = 4
 tca_channel = 1
 shape = "can"
-# 앞 고정 블록 때문에 첫 캔은 밀판을 약 10mm 만 민다 (1번 레인 18mm 보다 작음).
-#   실측(5회 반복): 0개 중앙값 337~340, 1개 328~331. 필터(7개) 후 0개 330~346, 1개 324~334 → 약간 겹침
-#   녹화 데이터 재생 결과: 넣기 5회·빼기 4회를 정확히 판정. 단, 센서 값이 -2mm 또는 +3mm 이상
-#   치우치면 잘못된 이벤트가 생김 → 여유가 작다. 밀판 스페이서로 간격을 넓히는 것을 권장.
-# 2개 이상은 1개 위치에서 66mm 씩 뺀 추정값 → 캔을 넣어 확인 후 실측값으로 교체할 것.
-count_distance_mm  = [340, 329, 263, 197, 131, 65]
-count_tolerance_mm = [6,   4,   15,  15,  15,  15]
-hysteresis_mm = 0          # 0개·1개 간격(11mm)이 좁아 히스테리시스를 둘 여유가 없음
-median_window = 7          # 흔들림을 줄이려고 1번(5)보다 길게. 판정이 약 0.25초 늦어짐
+count_distance_mm = [354.5, 334.5, 269.5, 204.5, 139.5]
+count_tolerance_mm = [10.9, 5.6, 15, 15, 15]
+hysteresis_mm = 3
+median_window = 5
 
 [[lanes]]
 lane_id = 3
-enabled = true     # ※ 상품·빈 레인 거리는 아직 예시값 (보정 필요)
+# 자동 보정 2026-11-11 14:42 · 빈 327 / 1개 309 / 2개 245 mm · 지름 64 · 0↔1 간격 18
+enabled = true
 product_id = "BOX-SNACK-01"
-product_name = "과자"
-thickness_mm = 45
-empty_distance_mm = 430
-max_count = 8
+product_name = "애플사이다"
+thickness_mm = 64
+empty_distance_mm = 327
+max_count = 4
 tca_channel = 2
 tolerance_mm = 10
-hysteresis_mm = 8
+hysteresis_mm = 3
+count_distance_mm = [328, 310, 244.5, 180.5, 116.5]
+count_tolerance_mm = [8.5, 6, 15, 15, 15]
+median_window = 5
 
 [[lanes]]
 lane_id = 4
@@ -118,15 +121,20 @@ empty_distance_mm = 430
 max_count = 5
 tca_channel = 3
 shape = "can"
+# 블록은 다섯 레인이 같다. 1~3번 실측: 첫 상품이 밀판을 18~22mm 밀었다 (지름 65 - 블록 ≈ 43~47) → 45 로 둠.
+# 빈 레인 거리(430)는 예시값이라 개수는 '재입고 시작' 보정 전까지 맞지 않는다. 보정하면 실측 거리표가 이 값을 대신한다.
+block_mm = 45
+hysteresis_mm = 4
 
 [[lanes]]
 lane_id = 5
-enabled = false
-product_id = "BOX-GUM-01"
-product_name = "껌"
-thickness_mm = 30
+enabled = true     # ※ 상품·빈 레인 거리는 아직 예시값 (보정 필요) — 화면의 '재입고 시작'으로 보정하고 이름을 넣을 것
+product_id = "LANE5-TBD"
+product_name = "레인5 (보정 필요)"
+thickness_mm = 65
 empty_distance_mm = 430
-max_count = 12
+max_count = 5
 tca_channel = 4
-tolerance_mm = 8
-hysteresis_mm = 5
+shape = "can"
+block_mm = 45          # 4번 레인과 같은 블록 (1~3번 실측 평균)
+hysteresis_mm = 4

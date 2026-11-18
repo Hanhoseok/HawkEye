@@ -13,10 +13,13 @@ import queue
 import time
 import tkinter as tk
 from tkinter import font as tkfont
+from tkinter import ttk
+from datetime import datetime
 from typing import Callable, Optional
 
 from .app import Monitor
-from .config import AppConfig, MAX_LANES
+from .calibration import DONE, MEASURING, CalibrationError, LevelCapture, compute_settings
+from .config import AppConfig, ConfigError, MAX_LANES, load_config, update_lane_in_toml
 from .sinks import STATE_KO, describe
 
 LANE_COLORS = ["#d62828", "#2a9d8f", "#f4a261", "#4ea8de", "#9b5de5"]
@@ -70,15 +73,25 @@ class RailWindow:
         self._shown_seq = 0
         # 화면 전용 상태 (판단 로직과 무관): 밀판 위치 평활값, 상태 표시 지연
         self._view: dict[int, dict] = {}
+        self.dialogs: dict[int, "CalibrationDialog"] = {}
+        self.product_dialogs: dict[int, "ProductDialog"] = {}
+        self.pending_calib: dict[int, tuple] = {}     # 레인 → (보정 계산 결과, 측정값) — 재입고 종료 때 저장
 
         self.buttons: dict[int, tk.Button] = {}
         self.button_windows: dict[int, int] = {}
+        self.name_buttons: dict[int, tk.Button] = {}
+        self.name_button_windows: dict[int, int] = {}
+        self.name_dialogs: dict[int, "NameDialog"] = {}
         for lane_id in range(1, MAX_LANES + 1):
             if lane_id in monitor.lanes:
                 b = tk.Button(self.root, font=self.f_norm, width=12,
                               command=lambda i=lane_id: self._toggle_restock(i))
                 self.buttons[lane_id] = b
                 self.button_windows[lane_id] = self.canvas.create_window(0, 0, window=b)
+                nb = tk.Button(self.root, text="이름 수정", font=self.f_small, width=12,
+                               command=lambda i=lane_id: self._open_name_dialog(i))
+                self.name_buttons[lane_id] = nb
+                self.name_button_windows[lane_id] = self.canvas.create_window(0, 0, window=nb)
 
     # ------------------------------------------------------------------
     def _close(self) -> None:
@@ -87,7 +100,36 @@ class RailWindow:
 
     def _toggle_restock(self, lane_id: int) -> None:
         lane = self.monitor.lanes[lane_id]
-        self.monitor.set_restock(lane_id, not lane.restock, time.monotonic(), time.time())
+        if lane.restock:
+            self.finish_restock(lane_id)
+            return
+        # 재입고 시작 = 재입고 모드(중간 이벤트 억제) + 짧은 보정 창
+        self.pending_calib.pop(lane_id, None)
+        self.monitor.set_restock(lane_id, True, time.monotonic(), time.time())
+        if lane_id not in self.dialogs:
+            self.dialogs[lane_id] = CalibrationDialog(self, lane_id)
+
+    def _open_name_dialog(self, lane_id: int) -> None:
+        dlg = self.name_dialogs.get(lane_id)
+        if dlg is not None:
+            dlg.top.lift()
+            return
+        self.name_dialogs[lane_id] = NameDialog(self, lane_id)
+
+    def finish_restock(self, lane_id: int) -> None:
+        """재입고 종료: 측정한 보정 결과가 있으면 상품 정보 입력 창을 띄우고, 없으면 바로 끝낸다."""
+        dlg = self.dialogs.get(lane_id)
+        if dlg is not None:
+            dlg.close()
+        pending = self.pending_calib.get(lane_id)
+        if pending is None:
+            self.monitor.set_restock(lane_id, False, time.monotonic(), time.time())
+            return
+        existing = self.product_dialogs.get(lane_id)
+        if existing is not None:
+            existing.top.lift()
+            return
+        self.product_dialogs[lane_id] = ProductDialog(self, lane_id, *pending)
 
     def run(self) -> None:
         self._loop()
@@ -314,8 +356,9 @@ class RailWindow:
         if snap["restock"]:
             c.create_rectangle(cx - 58, y0 + 6, cx + 58, y0 + 30, fill="#2f6fd6", outline="", tags="dyn")
             obs = snap["restock_observed"]
-            c.create_text(cx, y0 + 18, text=f"재입고 중 (관측 {obs if obs is not None else '?'}개)",
-                          fill="white", font=self.f_small, tags="dyn")
+            banner = "재입고 중 · 보정 측정 완료" if lane_id in self.pending_calib else \
+                f"재입고 중 (관측 {obs if obs is not None else '?'}개)"
+            c.create_text(cx, y0 + 18, text=banner, fill="white", font=self.f_small, tags="dyn")
         if snap["error"]:
             self._badge(cx, mid, f"센서 오류\n{snap['error_kind']}", "#d0342c")
         elif not snap["link_ok"]:
@@ -373,5 +416,324 @@ class RailWindow:
             b.configure(text="재입고 종료" if snap["restock"] else "재입고 시작",
                         bg="#2f6fd6" if snap["restock"] else "#f0f0f0",
                         fg="white" if snap["restock"] else "black")
-            c.coords(self.button_windows[lane_id], x1 - 52, y + 54)
+            c.coords(self.button_windows[lane_id], x1 - 52, y + 70)
             c.tag_raise(self.button_windows[lane_id])
+        nb = self.name_buttons.get(lane_id)
+        if nb is not None:
+            c.coords(self.name_button_windows[lane_id], x1 - 52, y + 40)
+            c.tag_raise(self.name_button_windows[lane_id])
+
+
+# ---------------------------------------------------------------------------
+# 재입고 + 짧은 보정 창
+#   재입고 시작 → CalibrationDialog: 빈 → 1개 → 2개 측정, 결과는 RailWindow.pending_calib 에 보관
+#   재입고 종료 → (측정 결과가 있으면) ProductDialog: 상품 이름·ID·최대 수량 입력 → 저장·적용
+# ---------------------------------------------------------------------------
+class CalibrationDialog:
+    """빈 상태 → 1개 → 2개 위치를 재서 상품 지름과 0개·1개 기준을 계산한다. 저장은 재입고 종료 때 한다."""
+
+    STEPS = [
+        ("1/3  빈 레인", "레인의 상품을 모두 빼고, 밀판이 앞으로 나와 멈출 때까지 기다린 뒤 누르세요.", "비웠음 → 측정"),
+        ("2/3  상품 1개", "상품을 1개 넣고 손을 뗀 뒤 누르세요.", "1개 넣음 → 측정"),
+        ("3/3  상품 2개", "상품을 1개 더 넣어 2개로 만들고 손을 뗀 뒤 누르세요.", "2개 넣음 → 측정"),
+    ]
+    TIMEOUT_S = 30
+
+    def __init__(self, window: "RailWindow", lane_id: int):
+        self.win, self.lane_id = window, lane_id
+        self.monitor = window.monitor
+        self.lane_cfg = window.cfg.lane(lane_id)
+        self.step = 0
+        self.results = []
+        self.capture: Optional[LevelCapture] = None
+        self.capture_started = 0.0
+        self.live: Optional[float] = None
+        self.closed = False
+
+        top = self.top = tk.Toplevel(window.root)
+        top.title(f"레인 {lane_id} 재입고 · 짧은 보정")
+        top.configure(bg=BG, padx=18, pady=14)
+        top.resizable(False, False)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        f = window.f_norm
+        self.title = tk.Label(top, font=window.f_title, bg=BG, anchor="w")
+        self.title.pack(fill="x")
+        self.text = tk.Label(top, font=f, bg=BG, anchor="w", justify="left", wraplength=440)
+        self.text.pack(fill="x", pady=(6, 8))
+        self.bar = ttk.Progressbar(top, length=440, maximum=100)
+        self.bar.pack(fill="x")
+        self.status = tk.Label(top, font=window.f_small, bg=BG, anchor="w", fg="#555", wraplength=440,
+                               justify="left")
+        self.status.pack(fill="x", pady=(4, 8))
+        self.buttons = tk.Frame(top, bg=BG)
+        self.buttons.pack(fill="x", pady=(6, 0))
+        self.primary = tk.Button(self.buttons, font=f, width=16, command=self._on_primary)
+        self.primary.pack(side="left")
+        tk.Button(self.buttons, font=f, text="처음부터", command=self._restart).pack(side="left", padx=6)
+        self.secondary = tk.Button(self.buttons, font=f, text="보정 없이 재입고만", command=self._skip)
+        self.secondary.pack(side="right")
+
+        self.monitor.sample_listeners.append(self._on_sample)
+        self._show_step()
+        self._tick()
+
+    # ------------------------------------------------------------------
+    def _on_sample(self, lane_id: int, t_ms: int, d: float) -> None:
+        if lane_id != self.lane_id:
+            return
+        self.live = d
+        if self.capture is not None:
+            self.capture.feed(t_ms, d)
+
+    def _show_step(self, note: str = "") -> None:
+        title, text, button = self.STEPS[self.step]
+        self.title.configure(text=f"레인 {self.lane_id} · {title}")
+        self.text.configure(text=text + (f"\n\n{note}" if note else ""), fg="#b03a2e" if note else "#1b1b1b")
+        self.primary.configure(text=button, state="normal")
+        self.secondary.configure(text="보정 없이 재입고만", command=self._skip)
+        self.bar["value"] = 0
+        self.capture = None
+
+    def _on_primary(self) -> None:
+        if self.step >= len(self.STEPS):
+            self.win.finish_restock(self.lane_id)       # 측정 완료 후: 바로 재입고 종료 + 상품 정보 입력
+            return
+        self.capture = LevelCapture(median_window=5)
+        self.capture_started = time.monotonic()
+        self.primary.configure(state="disabled")
+
+    def _restart(self) -> None:
+        self.step, self.results = 0, []
+        self.win.pending_calib.pop(self.lane_id, None)
+        self._show_step()
+
+    def _skip(self) -> None:
+        self.win.pending_calib.pop(self.lane_id, None)
+        self.close()
+
+    def _tick(self) -> None:
+        if self.closed:
+            return
+        live = "-" if self.live is None else f"{self.live:.0f} mm"
+        if self.capture is not None:
+            state, frac = self.capture.progress()
+            waited = time.monotonic() - self.capture_started
+            if state == DONE:
+                self._step_done(self.capture.result)
+            elif state == MEASURING:
+                self.bar["value"] = 40 + 60 * frac
+                self.status.configure(text=f"측정 중… (현재 {live})")
+            else:
+                self.bar["value"] = 40 * frac
+                hint = ""
+                if self.live is None:
+                    hint = " · 이 레인 데이터가 들어오지 않습니다 (보드·Wi-Fi 확인)"
+                elif waited > self.TIMEOUT_S:
+                    hint = " · 값이 계속 흔들립니다. 손을 떼고 밀판이 멈출 때까지 기다리세요"
+                self.status.configure(text=f"값이 안정되길 기다리는 중… (현재 {live}){hint}")
+        elif self.step < len(self.STEPS):
+            self.status.configure(text=f"현재 거리 {live}")
+        self.top.after(150, self._tick)
+
+    def _step_done(self, res) -> None:
+        self.capture = None
+        if self.step == 1 and self.results[0].median - res.median < 3:
+            self._show_step(f"빈 상태({self.results[0].median:.0f}mm)와 거리가 거의 같습니다 ({res.median:.0f}mm). "
+                            "상품이 밀판을 밀었는지 확인하고 다시 측정하세요.")
+            return
+        self.results.append(res)
+        self.step += 1
+        if self.step < len(self.STEPS):
+            self._show_step()
+            return
+        try:
+            calib = compute_settings(*self.results, valid_min_mm=self.lane_cfg.valid_min_mm)
+        except CalibrationError as e:
+            self.step, self.results = 1, self.results[:1]
+            self._show_step(str(e))
+            return
+        self.win.pending_calib[self.lane_id] = (calib, list(self.results))
+        self.title.configure(text=f"레인 {self.lane_id} · 측정 완료")
+        self.text.configure(text="\n".join(calib_summary(calib, self.results)) +
+                            "\n\n상품을 마저 채운 뒤 레인의 '재입고 종료' 버튼을 누르면 상품 이름을 입력하고 저장합니다."
+                            "\n이 창은 닫아도 측정 결과는 유지됩니다.", fg="#1b1b1b")
+        self.bar["value"] = 100
+        self.status.configure(text="")
+        self.primary.configure(text="지금 재입고 종료", state="normal")
+        self.secondary.configure(text="닫기 (재입고 계속)", command=self.close)
+
+    def close(self) -> None:
+        """창만 닫는다. 재입고 모드와 측정 결과(있으면)는 유지되고, '재입고 종료' 버튼으로 끝낸다."""
+        if self.closed:
+            return
+        self.closed = True
+        if self._on_sample in self.monitor.sample_listeners:
+            self.monitor.sample_listeners.remove(self._on_sample)
+        self.win.dialogs.pop(self.lane_id, None)
+        try:
+            self.top.destroy()
+        except tk.TclError:
+            pass
+
+
+def calib_summary(c, results) -> list[str]:
+    e, o, t = results
+    lines = [f"빈 레인 {e.median:.0f} mm · 1개 {o.median:.0f} mm · 2개 {t.median:.0f} mm",
+             f"상품 지름(진열 방향 길이) {c.thickness_mm:g} mm · 0개↔1개 간격 {c.gap01_mm:g} mm",
+             f"허용 오차: 0개 ±{c.count_tolerance_mm[0]:g} · 1개 ±{c.count_tolerance_mm[1]:g}"
+             f" · 2개 이상 ±{c.count_tolerance_mm[2]:g} mm"]
+    return lines + [f"⚠ {w}" for w in c.warnings]
+
+
+class ProductDialog:
+    """재입고 종료 시: 측정한 보정값과 함께 상품 이름·ID·최대 수량을 저장하고 적용한다."""
+
+    def __init__(self, window: "RailWindow", lane_id: int, calib, results):
+        self.win, self.lane_id, self.calib, self.results = window, lane_id, calib, results
+        self.lane_cfg = window.cfg.lane(lane_id)
+        self.closed = False
+        top = self.top = tk.Toplevel(window.root)
+        top.title(f"레인 {lane_id} 재입고 종료 · 상품 정보")
+        top.configure(bg=BG, padx=18, pady=14)
+        top.resizable(False, False)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        f = window.f_norm
+        tk.Label(top, text=f"레인 {lane_id} · 상품 정보 입력", font=window.f_title, bg=BG, anchor="w").pack(fill="x")
+        tk.Label(top, text="\n".join(calib_summary(calib, results)), font=window.f_small, bg=BG, anchor="w",
+                 justify="left", wraplength=440, fg="#444").pack(fill="x", pady=(6, 10))
+        form = tk.Frame(top, bg=BG)
+        form.pack(fill="x")
+        self.name_var = tk.StringVar(value=self.lane_cfg.product_name)
+        self.id_var = tk.StringVar(value=self.lane_cfg.product_id)
+        self.max_var = tk.IntVar(value=max(1, min(self.lane_cfg.max_count, calib.max_count_geometry)))
+        self.name_entry = tk.Entry(form, textvariable=self.name_var, font=f, width=32)
+        rows = [("상품 이름", self.name_entry),
+                ("상품 ID", tk.Entry(form, textvariable=self.id_var, font=f, width=32)),
+                (f"최대 수량 (1~{calib.max_count_geometry})",
+                 tk.Spinbox(form, from_=1, to=calib.max_count_geometry, textvariable=self.max_var, font=f, width=6))]
+        for r, (label, widget) in enumerate(rows):
+            tk.Label(form, text=label, font=f, bg=BG, anchor="w").grid(row=r, column=0, sticky="w", pady=3)
+            widget.grid(row=r, column=1, sticky="w", padx=8, pady=3)
+        tk.Label(top, text="저장하면 이 레인 설정이 바뀌고 재입고 모드가 끝납니다. 안정된 수량으로 RESYNC 됩니다.",
+                 font=window.f_small, bg=BG, fg="#555", anchor="w", wraplength=440, justify="left").pack(fill="x", pady=(8, 6))
+        buttons = tk.Frame(top, bg=BG)
+        buttons.pack(fill="x")
+        tk.Button(buttons, text="저장하고 재입고 종료", font=f, command=self.save).pack(side="left")
+        tk.Button(buttons, text="취소 (재입고 계속)", font=f, command=self.close).pack(side="left", padx=6)
+        tk.Button(buttons, text="보정 버리고 재입고 종료", font=f, command=self.discard).pack(side="right")
+        self.name_entry.focus_set()
+        self.name_entry.select_range(0, "end")
+
+    def save(self) -> None:
+        from tkinter import messagebox
+        name, pid = self.name_var.get().strip(), self.id_var.get().strip()
+        try:
+            max_count = int(self.max_var.get())
+        except (tk.TclError, ValueError):
+            max_count = 0
+        c = self.calib
+        if not name or not pid:
+            messagebox.showerror("입력 확인", "상품 이름과 상품 ID 를 입력하세요.", parent=self.top)
+            return
+        if not 1 <= max_count <= c.max_count_geometry:
+            messagebox.showerror("입력 확인", f"최대 수량은 1~{c.max_count_geometry} 사이여야 합니다.", parent=self.top)
+            return
+        refs, tols = c.for_max_count(max_count)
+        values = {"product_id": pid, "product_name": name, "thickness_mm": c.thickness_mm,
+                  "empty_distance_mm": c.empty_distance_mm, "max_count": max_count,
+                  "count_distance_mm": refs, "count_tolerance_mm": tols,
+                  "hysteresis_mm": c.hysteresis_mm, "median_window": c.median_window}
+        e, o, t = self.results
+        note = (f"자동 보정 {datetime.now():%Y-%m-%d %H:%M} · 빈 {e.median:.0f} / 1개 {o.median:.0f} / 2개 {t.median:.0f} mm"
+                f" · 지름 {c.thickness_mm:g} · 0↔1 간격 {c.gap01_mm:g}")
+        path = self.win.cfg.config_path
+        try:
+            if path is None:
+                raise ConfigError("설정 파일 경로를 알 수 없습니다")
+            update_lane_in_toml(path, self.lane_id, values, note=note)
+            new_lane = load_config(path, enable_all=True).lane(self.lane_id)
+        except (ConfigError, OSError) as ex:
+            messagebox.showerror("저장 실패", f"설정을 저장하지 못했습니다. 이전 설정을 유지합니다.\n\n{ex}", parent=self.top)
+            return
+        new_lane.enabled = True
+        self.win.pending_calib.pop(self.lane_id, None)
+        self.win.monitor.recalibrate_lane(new_lane, time.monotonic(), time.time(),
+                                          detail={"thickness_mm": c.thickness_mm, "gap01_mm": c.gap01_mm})
+        self.close()
+
+    def discard(self) -> None:
+        self.win.pending_calib.pop(self.lane_id, None)
+        self.win.monitor.set_restock(self.lane_id, False, time.monotonic(), time.time())
+        self.close()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self.win.product_dialogs.pop(self.lane_id, None)
+        try:
+            self.top.destroy()
+        except tk.TclError:
+            pass
+
+
+class NameDialog:
+    """상품 이름·ID 만 바꾼다. 보정값과 현재 수량은 그대로 두고 config.toml 에 저장한다."""
+
+    def __init__(self, window: "RailWindow", lane_id: int):
+        self.win, self.lane_id = window, lane_id
+        lane_cfg = window.cfg.lane(lane_id)
+        self.closed = False
+        top = self.top = tk.Toplevel(window.root)
+        top.title(f"레인 {lane_id} 상품 이름 수정")
+        top.configure(bg=BG, padx=18, pady=14)
+        top.resizable(False, False)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        f = window.f_norm
+        tk.Label(top, text=f"레인 {lane_id} · 상품 이름 수정", font=window.f_title, bg=BG, anchor="w").pack(fill="x")
+        form = tk.Frame(top, bg=BG)
+        form.pack(fill="x", pady=(8, 4))
+        self.name_var = tk.StringVar(value=lane_cfg.product_name)
+        self.id_var = tk.StringVar(value=lane_cfg.product_id)
+        self.name_entry = tk.Entry(form, textvariable=self.name_var, font=f, width=32)
+        for r, (label, widget) in enumerate([("상품 이름", self.name_entry),
+                                             ("상품 ID", tk.Entry(form, textvariable=self.id_var, font=f, width=32))]):
+            tk.Label(form, text=label, font=f, bg=BG, anchor="w").grid(row=r, column=0, sticky="w", pady=3)
+            widget.grid(row=r, column=1, sticky="w", padx=8, pady=3)
+        tk.Label(top, text="보정값과 현재 수량은 바뀌지 않습니다. 이후 기록되는 이벤트에 새 이름이 들어갑니다.",
+                 font=window.f_small, bg=BG, fg="#555", anchor="w", wraplength=420, justify="left").pack(fill="x", pady=(4, 8))
+        buttons = tk.Frame(top, bg=BG)
+        buttons.pack(fill="x")
+        tk.Button(buttons, text="저장", font=f, width=10, command=self.save).pack(side="left")
+        tk.Button(buttons, text="취소", font=f, width=8, command=self.close).pack(side="left", padx=6)
+        top.bind("<Return>", lambda _e: self.save())
+        top.bind("<Escape>", lambda _e: self.close())
+        self.name_entry.focus_set()
+        self.name_entry.select_range(0, "end")
+
+    def save(self) -> None:
+        from tkinter import messagebox
+        name, pid = self.name_var.get().strip(), self.id_var.get().strip()
+        if not name or not pid:
+            messagebox.showerror("입력 확인", "상품 이름과 상품 ID 를 입력하세요.", parent=self.top)
+            return
+        path = self.win.cfg.config_path
+        try:
+            if path is None:
+                raise ConfigError("설정 파일 경로를 알 수 없습니다")
+            update_lane_in_toml(path, self.lane_id, {"product_name": name, "product_id": pid}, drop_comments=False)
+        except (ConfigError, OSError) as ex:
+            messagebox.showerror("저장 실패", f"저장하지 못했습니다. 이전 이름을 유지합니다.\n\n{ex}", parent=self.top)
+            return
+        self.win.monitor.rename_product(self.lane_id, name, pid, time.time())
+        self.close()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self.win.name_dialogs.pop(self.lane_id, None)
+        try:
+            self.top.destroy()
+        except tk.TclError:
+            pass
