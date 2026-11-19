@@ -1,4 +1,4 @@
-"""분석 도구의 촬영 회차 나누기 (2차·3차) — 회차별 자리, 실제 장면 시각, 바닥 위 거리.
+"""분석 도구의 촬영 회차 나누기 (2차·3차) — 회차별 자리, 견줘 보기(상품 모델), 실제 장면 시각, 바닥 위 거리.
 
 영상·기록 없이 만든 조각으로 시험한다.
 """
@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from workbench import intake  # noqa: E402
 from workbench.analyze import _duration, lens_link, locate, presence  # noqa: E402
-from workbench.data import PROFILES, Builder  # noqa: E402
+from workbench.data import PROFILES, SHOOT3_PRODUCT, Builder, main_views  # noqa: E402
 from workbench.tune import changed_values, knobs_for  # noqa: E402
 
 
@@ -69,6 +69,56 @@ def test_pair_zone_files_are_left_alone_when_nothing_changed(tmp_path):
     assert path.stat().st_mtime_ns == stamp and not list(tmp_path.glob("*.part"))
     shoot3_eval._write_if_changed(path, "a: 2\n")
     assert path.read_text(encoding="utf-8") == "a: 2\n" and not list(tmp_path.glob("*.part"))
+
+
+# ---------------------------------------------------------------------- 견줘 보기 (같은 회차의 다른 기록)
+
+def test_product_view_is_shoot3_with_other_records_and_no_tuning():
+    three, prod = PROFILES[3], PROFILES[SHOOT3_PRODUCT]
+    assert prod.shoot == 3 and Builder(SHOOT3_PRODUCT).shoot == 3 and Builder(SHOOT3_PRODUCT).key == SHOOT3_PRODUCT
+    assert prod.records != three.records and prod.out != three.out          # 기록과 만든 것은 따로
+    for name in ("labels", "zones", "judge_file", "signature_files", "payment"):
+        assert getattr(prod, name) == getattr(three, name), name            # 정답표 · 구역 · 적용한 값은 3차 것
+    assert three.can_tune and not prod.can_tune and not prod.can_add        # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
+    assert prod.note and not three.note
+    assert main_views() == [2, 3]
+
+
+def test_engine_points_the_judge_at_the_views_records():
+    import dual_eval as de
+    try:
+        with Builder(SHOOT3_PRODUCT).engine():
+            assert de.SHOOT == 3 and de.OUT == PROFILES[SHOOT3_PRODUCT].records and de.LABELS == PROFILES[3].labels
+        with Builder(3).engine():
+            assert de.SHOOT == 3 and de.OUT == PROFILES[3].records          # 같은 회차라도 기록 폴더가 다르면 다시 맞춘다
+        with Builder(SHOOT3_PRODUCT).engine():
+            assert de.OUT == PROFILES[SHOOT3_PRODUCT].records
+    finally:
+        de.set_profile(2)
+
+
+def test_thumbnail_is_copied_from_the_base_view(tmp_path):
+    builder = Builder(SHOOT3_PRODUCT)
+    ready = tmp_path / "base"
+    ready.mkdir()
+    (ready / "C01.jpg").write_bytes(b"jpg")
+    builder.profile = dataclasses.replace(builder.profile, records=tmp_path / "records", thumbs=ready)
+    builder.out = tmp_path / "out"
+    assert builder._thumb("C01", {}) == "thumbs/C01.jpg"                    # 영상을 읽지 않는다 (data 가 비어도 된다)
+    assert (tmp_path / "out" / "thumbs" / "C01.jpg").read_bytes() == b"jpg"
+    assert builder._thumb("C02", {}) is None                                # 가져올 것이 없으면 예전 길 (여기서는 영상이 없어 None)
+
+
+def test_server_never_opens_on_a_compare_view_and_has_no_tuner_for_it(monkeypatch):
+    from workbench import server
+    assert SHOOT3_PRODUCT in server.BUILDERS and SHOOT3_PRODUCT not in server.TUNERS
+    assert set(server.TUNERS) == {2, 3}
+    for key, b in server.BUILDERS.items():
+        monkeypatch.setattr(b, "pairs", lambda key=key: ["C01"])            # 모든 보기에 기록이 있다고 치고
+    assert server.shoot_of(None, None) == 3                                 # 처음 여는 화면은 가장 최근 회차
+    assert server.shoot_of(str(SHOOT3_PRODUCT)) == SHOOT3_PRODUCT           # 골라서 여는 것은 된다
+    with pytest.raises(ValueError):
+        server.shoot_of("30")
 
 
 # ---------------------------------------------------------------------- 실제 장면 시각

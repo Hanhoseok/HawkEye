@@ -18,11 +18,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,12 @@ class Profile:
     can_add: bool
     """분석 도구에서 새 영상을 추가할 수 있나 (구역을 그대로 쓸 수 있는 회차만)."""
     payment: str = "계산대 체류 = 결제"
+    note: str = ""
+    """갤러리 아래에 보이는 설명 — 같은 회차의 다른 기록(견줘 보기)이 무엇을 바꾼 것인지."""
+    can_tune: bool = True
+    """수치 조정을 할 수 있나. 견줘 보기는 못 한다 — 적용한 값 파일과 조정 기록을 그 회차와 함께 쓰기 때문."""
+    thumbs: Path | None = None
+    """장면 그림을 여기서 가져다 쓴다 (전체 카메라 추적이 같은 기록이면 그림도 같다 — 영상을 다시 읽지 않는다)."""
 
 
 PROFILES = {
@@ -80,6 +87,23 @@ PROFILES = {
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
                 ROOT / "outputs" / "sync_floor" / "register.csv"), False),
 }
+"""열쇠는 보기 번호 — 주소(#/3)와 요청(?shoot=3)에 쓴다. 회차의 기본 기록은 회차 번호 그대로이고,
+같은 회차의 다른 기록(견줘 보기)은 다른 번호를 쓴다 (Profile.shoot 는 그대로 회차)."""
+
+SHOOT3_PRODUCT = 31
+"""3차 기록에서 선반 물건 탐지만 상품 모델로 바꿔 다시 계산한 것 (docs/shelf-map.md '상품 모델을 끼워 봄').
+기록은 scripts/product_shelf_cache.py → dual_eval.py replay 로 만든다. 없으면 화면에 안 나온다.
+정답표 · 시차 · 결제 · 구역 · 적용한 값은 3차 것을 그대로 쓴다 — 여기서 정답을 고치면 3차의 정답이 바뀐다."""
+PROFILES[SHOOT3_PRODUCT] = replace(
+    PROFILES[3], name="3차 · 상품 모델", records=ROOT / "outputs" / "dual_eval_shoot3_prod", out=OUT / "shoot3_prod",
+    can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
+    note="3차 기록에서 선반 물건 탐지만 상품 모델(2차 yolov8n)로 바꿔 다시 계산한 것입니다. 사람 · 추적 · 구역 · 판정 값은 3차 촬영과 같습니다. "
+         "모델이 이 영상들의 장면으로 학습했으므로(39편 중 25편) 점수는 낙관적입니다. 수치 조정은 3차 촬영에서 합니다.")
+
+
+def main_views() -> list[int]:
+    """회차의 기본 기록인 보기들 (견줘 보기를 뺀 것)."""
+    return [key for key, p in PROFILES.items() if key == p.shoot]
 
 ENGINE_LOCK = threading.RLock()
 """판정 코드(scripts/dual_eval.py)는 촬영 회차·기록 폴더를 모듈 값으로 들고 있다 — 한 번에 한 회차만 돌린다.
@@ -131,9 +155,12 @@ def _labeled(cards: list[dict]) -> dict:
 class Builder:
     """한 촬영 회차의 짝별 데이터를 만들고 상태를 알려 준다. 서버는 build_async 로 뒤에서 돌리고 status 를 화면에 보인다."""
 
-    def __init__(self, shoot: int = 2) -> None:
-        self.profile = PROFILES[shoot]
-        self.shoot = shoot
+    def __init__(self, key: int = 2) -> None:
+        self.profile = PROFILES[key]
+        self.key = key
+        """보기 번호 (PROFILES 의 열쇠)."""
+        self.shoot = self.profile.shoot
+        """촬영 회차 — 판정 코드가 구역 · 정답표를 고르는 번호."""
         self.out = self.profile.out
         self.lock = ENGINE_LOCK
         self.state = {"running": False, "done": 0, "total": 0, "current": "", "errors": [], "seconds": 0.0}
@@ -146,6 +173,7 @@ class Builder:
             de = self.ctx()["dual_eval"]
             if de.SHOOT != self.shoot or de.OUT != self.profile.records:
                 de.set_profile(self.shoot)
+                de.OUT = self.profile.records      # 같은 회차의 다른 기록 (견줘 보기)
             yield de
 
     # -- 판정에 쓰는 것들 (한 번 읽어 둔다)
@@ -320,6 +348,11 @@ class Builder:
         done = self.records_dir() / pair / ".done"
         if path.exists() and done.exists() and path.stat().st_mtime >= done.stat().st_mtime:
             return f"thumbs/{pair}.jpg"   # 기록이 그대로면 다시 만들지 않는다 (영상을 처음부터 읽어야 해서 느리다)
+        ready = self.profile.thumbs / f"{pair}.jpg" if self.profile.thumbs else None
+        if ready is not None and ready.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ready, path)
+            return f"thumbs/{pair}.jpg"
         try:
             import cv2
             track = data["tracks"]["angle1"]
@@ -372,7 +405,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true", help="바뀌지 않은 짝도 다시 만든다")
     ap.add_argument("--only", help="짝 이름 (쉼표)")
-    ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2, help="촬영 회차 (기본 2)")
+    ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
+                    help=f"보기 번호 — 2 · 3 은 촬영 회차, {SHOOT3_PRODUCT} 은 3차에 상품 모델을 끼운 기록 (기본 2)")
     args = ap.parse_args()
     b = Builder(args.shoot)
     state = b.build(args.only.split(",") if args.only else None, args.force)

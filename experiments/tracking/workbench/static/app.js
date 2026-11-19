@@ -152,7 +152,7 @@ function drawBuilding(build) {
 
 function drawGallery(index) {
   const all = index.cards || [], batches = index.batches || [], pending = index.pending || [];
-  const batch = batches.find(x => x.key === app.batch) || batches[0] || null, home = `shoot${index.shoot}`;
+  const batch = batches.find(x => x.key === app.batch) || batches[0] || null, home = `shoot${index.shoot_base}`;
   const cards = batch && batches.length > 1 ? all.filter(c => (c.batch || home) === batch.key) : all;
   const t = batch && batches.length > 1 ? batch.totals : index.totals;
   const kids = [];
@@ -161,7 +161,7 @@ function drawGallery(index) {
   if (!all.length && !pending.length && !add.open) {
     kids.push(h("div", { class: "empty" }, index.build.running ? "처음 여는 중이라 잠시 걸립니다 (짝마다 몇 초)." :
       (index.can_add ? "아직 영상이 없습니다. 아래에서 두 각도 영상을 추가하세요."
-        : `${index.shoot_name}의 기록이 없습니다. 먼저 python scripts/dual_eval.py --shoot ${index.shoot} run 으로 영상을 처리해 주세요.`)));
+        : `${index.shoot_name}의 기록이 없습니다. 먼저 python scripts/dual_eval.py --shoot ${index.shoot_base} run 으로 영상을 처리해 주세요.`)));
   }
   if (batches.length > 1) {
     kids.push(h("div", { class: "filters batches" }, batches.map(x => h("button", {
@@ -185,9 +185,10 @@ function drawGallery(index) {
   const shown = cards.filter(test);
   kids.push(h("div", { class: "grid" }, index.can_add ? addCard(index) : null, pending.map(x => pendingCard(x)), shown.map(c => card(c, index))));
   if (cards.length && !shown.length) kids.push(h("div", { class: "empty" }, "여기에 해당하는 영상이 없습니다."));
-  if (!index.can_add && all.length) {
+  if (index.note && all.length) kids.push(h("p", { class: "gallery-note" }, index.note));
+  else if (!index.can_add && all.length) {
     kids.push(h("p", { class: "gallery-note" }, `${index.shoot_name}은 영상마다 카메라가 조금씩 움직여 영상별로 구역을 옮겨 씁니다. ` +
-      `그래서 여기서는 새 영상을 추가하지 못합니다 — 영상을 넣으려면 카메라 맞추기(scripts/sync_floor.py)와 scripts/dual_eval.py --shoot ${index.shoot} run 을 먼저 합니다. ` +
+      `그래서 여기서는 새 영상을 추가하지 못합니다 — 영상을 넣으려면 카메라 맞추기(scripts/sync_floor.py)와 scripts/dual_eval.py --shoot ${index.shoot_base} run 을 먼저 합니다. ` +
       "위 점수는 이 컴퓨터에서 만든 기록으로 다시 판정한 것입니다."));
   }
   view.replaceChildren(...kids);

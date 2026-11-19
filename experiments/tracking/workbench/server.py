@@ -9,6 +9,7 @@
 
 촬영 회차(2차·3차)마다 영상·기록·정답표·적용한 값이 따로다 — 요청마다 shoot 을 받는다 (GET 은 ?shoot=3, POST 는 본문의 shoot).
 안 주면 /api/wb/index 는 기록이 있는 가장 최근 회차, 나머지는 2차.
+shoot 은 보기 번호다 (workbench/data.py 의 PROFILES) — 2 · 3 은 회차 그대로, 31 은 3차 기록에 상품 모델을 끼운 것 (견줘 보기, 수치 조정 없음).
 
 /api/wb/index   갤러리 목록 + 만드는 중인지. 바뀐 짝이 있으면 뒤에서 다시 만들기 시작한다.
 /api/wb/status  만드는 중 상태만.
@@ -41,12 +42,13 @@ from urllib.parse import parse_qs, urlsplit  # noqa: E402
 from workbench import intake  # noqa: E402
 from workbench import labels as label_store  # noqa: E402
 from workbench import products as product_store  # noqa: E402
-from workbench.data import PROFILES, Builder  # noqa: E402
+from workbench.data import PROFILES, Builder, main_views  # noqa: E402
 from workbench.tune import Tuner  # noqa: E402
 
 STATIC = "/" + (ROOT / "workbench" / "static").relative_to(REPO).as_posix() + "/"
 BUILDERS = {shoot: Builder(shoot) for shoot in PROFILES}
-TUNERS = {shoot: Tuner(builder) for shoot, builder in BUILDERS.items()}
+TUNERS = {shoot: Tuner(builder) for shoot, builder in BUILDERS.items() if builder.profile.can_tune}
+IDLE_JOB = {"running": False, "id": None, "scope": None, "error": None}
 PRODUCTS = product_store.Store()
 RUNNER = intake.Runner(BUILDERS[2])
 """새 영상 추가는 2차 촬영 자리에서 찍은 영상만 받는다 (PROFILES[..].can_add)."""
@@ -57,7 +59,7 @@ def shoot_of(value, default: int | None = 2) -> int:
     if value in (None, ""):
         if default is not None:
             return default
-        have = [s for s, b in BUILDERS.items() if b.pairs()]
+        have = [s for s in main_views() if BUILDERS[s].pairs()]      # 견줘 보기는 처음 여는 화면이 아니다
         return max(have) if have else 2
     try:
         shoot = int(value)
@@ -103,8 +105,8 @@ def index_payload(shoot: int) -> dict:
     add = {"pending": RUNNER.pending(), "suggest": intake.suggest_names()} if p.can_add else {"pending": [], "suggest": {}}
     return {"static": STATIC, "data": data_url(builder), "build": dict(builder.state), "started": started,
             "stale": [] if builder.state["running"] else builder.stale(),
-            "shoot": shoot, "shoot_name": p.name, "can_add": p.can_add,
-            "labels_dir": p.labels.relative_to(ROOT).as_posix(),
+            "shoot": shoot, "shoot_base": p.shoot, "shoot_name": p.name, "can_add": p.can_add, "can_tune": p.can_tune,
+            "note": p.note, "labels_dir": p.labels.relative_to(ROOT).as_posix(),
             "shoots": [{"shoot": s, "name": b.profile.name, "n": len(b.pairs())} for s, b in BUILDERS.items()],
             **add, **index}
 
@@ -197,9 +199,12 @@ class Handler(RangeHandler):
                 out = products_api(method, path, query, body)
                 return self._json(200, out) if out is not None else self.send_error(404)
             shoot = shoot_of(query.get("shoot") if method == "GET" else body.get("shoot"))
-            builder, tuner = BUILDERS[shoot], TUNERS[shoot]
+            builder, tuner = BUILDERS[shoot], TUNERS.get(shoot)
             if method == "GET" and path == "/api/wb/status":
-                return self._json(200, {"build": dict(builder.state), "job": dict(tuner.job)})
+                return self._json(200, {"build": dict(builder.state), "job": dict(tuner.job if tuner else IDLE_JOB)})
+            if path.startswith("/api/wb/tune") and tuner is None:
+                base = PROFILES[builder.shoot].name
+                raise ValueError(f"'{builder.profile.name}'은 견줘 보는 화면이라 수치 조정이 없습니다 — 값은 {base}에서 바꿉니다 (적용한 값을 함께 씁니다)")
             if method == "GET" and path == "/api/wb/tune":
                 return self._json(200, tuner.page())
             if path.startswith("/api/wb/add") and not builder.profile.can_add:
