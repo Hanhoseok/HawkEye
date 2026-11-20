@@ -74,7 +74,8 @@ class ShelfVisit:
     """칸 그림 비교 결과 (설계 M-7 보조): '줄어듦' / '늘어남' / '바뀜'(방향 모름) / None(칸 그대로 또는 비교 안 함).
     물건 탐지가 못 보는 물건도 칸이 비었는지는 알 수 있다."""
     source: str = "vision"
-    """근거 출처: vision (카메라) / sensor (선반 센서만) / sensor+vision (둘 다, 개수는 센서)."""
+    """근거 출처: vision (카메라) / sensor (선반 센서만) / sensor+vision (둘 다, 개수는 센서) /
+    overview+vision (방문은 선반 카메라, 개수는 전체 카메라가 센 상품 — fusion.overview_count)."""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -128,7 +129,7 @@ def classify_visit(visit: ShelfVisit, takes: list[TakeCandidate]) -> ShelfAction
     """선반 방문 하나를 행동으로. 같은 시간·같은 선반의 손 뻗기를 근거로 붙인다."""
     covered = [t for t in takes if visit.covers(t)]
     count = visit.removed - visit.added
-    shelf_word = "센서" if visit.source == "sensor" else ("센서+선반" if visit.source == "sensor+vision" else "선반")
+    shelf_word = {"sensor": "센서", "sensor+vision": "센서+선반", "overview+vision": "전체+선반"}.get(visit.source, "선반")
     if visit.removed and visit.added:
         kind = "MOVE"
     elif visit.removed:

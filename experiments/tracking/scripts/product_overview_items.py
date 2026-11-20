@@ -4,7 +4,7 @@
         --from dual_eval_shoot3 --out dual_eval_shoot3_prod
 
 상품 탐지 모델은 두 카메라의 장면으로 학습했다 (labels/products_shoot3). 선반 지도는 선반 카메라(angle0)만 쓰므로
-전체 카메라에서 찾은 것은 **보기만** 한다 — 판정에는 안 들어간다.
+전체 카메라에서 찾은 것은 기본으로는 **보기만** 한다. fusion.overview_count 를 켜면 선반 방문의 개수에 쓴다 (아래 --visits).
 
 - --from 의 저장분(cache/angle1.pkl.gz)에서 처리한 장면 번호를 읽고, 그 장면 전부에서 찾는다 (3차는 4장에 1장 = 초당 15장).
 - 결과는 <out>/<짝>/angle1/product_items.jsonl — 선반 카메라의 shelf_items.jsonl 과 같은 모양
@@ -30,6 +30,15 @@
   - '개수'는 0.6초 넘게 그대로인 것만 본다 (사람이 지나가며 잠깐 가린 것을 거른다). 처음 · 끝은 그런 구간의 첫 · 마지막.
   - 영상 전체의 차이만 본다 — 언제 · 누가는 모른다. 영상이 끝날 때 사람이 선반을 가리고 있으면 틀린다.
 
+    python scripts/product_overview_items.py --visits --out dual_eval_shoot3_prod      # 선반 방문마다 개수를 세어 정답과 견준다
+
+--visits 가 하는 것: 판정(fusion.overview_count)이 쓰는 것과 같은 세기(src/fusion/overview_count.py)를 선반 방문마다 돌린다.
+  - 방문 = 선반 카메라의 shelf_visits.jsonl (시작 · 끝에 시차를 더해 전체 카메라 시각으로).
+  - 정답 = takes.csv 에서 그 방문 시간 안의 꺼냄 · 되돌림 수 (어느 방문에도 안 든 것은 1초 안의 가장 가까운 방문에).
+  - 판정과 같게 **그때까지 들어온 장면만** 쓴다: 방문이 끝나고 1.5초 뒤부터 묻고, 뒤 개수가 아직 없으면 --wait 초(기본 3)까지 기다린다.
+  - 세 가지를 견준다: 선반 지도 개수 · 전체 카메라 개수(못 센 방문은 따로 센다) · 합친 것(전체 카메라가 셌으면 그 개수, 아니면 선반 지도).
+  - 상품 모델의 학습 나눔(labels/products_shoot3/frames.csv 의 split)별로도 센다 — 모델이 학습 때 본 영상과 안 본 영상을 가른다.
+
 모델 · 영상 · 기록은 저장소에 없다 (outputs/ · handoff/ · source/).
 """
 
@@ -45,6 +54,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from src.fusion.overview_count import EDGE_MS, MERGE, NEAR, PAD, STABLE_MS, OverviewCounter, inside, iou, merge, region_of  # noqa: E402,F401
+from src.fusion.overview_count import center as _center  # noqa: E402
+
 CAMERA = "angle1"
 NAME = "product_items.jsonl"
 SHOW = 0.25
@@ -53,14 +65,10 @@ STOCK = {"cantata": 2, "donggwaru": 3, "applecider": 1}
 """3차 촬영에서 영상이 시작할 때의 진열 (L1 칸타타 · L2 동과루 · L3 애플사이다)."""
 LANE_CLASS = {"L1": "cantata", "L2": "donggwaru", "L3": "applecider"}
 START_MS = 1000.0
-PAD = 40.0
-NEAR = 200.0
-"""처음 1초의 상자 가운데, 가운데값에서 이 거리 안에 있는 것만 선반의 상자로 본다 (잘못 찾은 상자 하나가 선반 자리를 화면 전체로 키우지 않게)."""
 AFTER_MS = 10000.0
-MERGE = 0.4
-"""같은 종류의 두 상자가 이만큼 겹치면 한 상품으로 친다 (탐지기 자체의 겹침 제거는 0.7 이라 덜 겹친 쌍이 남는다)."""
-STABLE_MS = 600.0
-"""개수가 이 시간 넘게 그대로여야 '그때의 개수'로 본다 (선반 지도의 stable_seconds 와 같은 값)."""
+RELEASE_MS = 1500.0
+"""--visits: 판정이 방문을 넘기기 전에 기다리는 시간 (DualJudge.VISIT_DELAY_MS 와 같다)."""
+# PAD · NEAR · MERGE · STABLE_MS 와 상자 겹침 · 합치기 · 선반 자리는 판정이 쓰는 것(src/fusion/overview_count.py)을 그대로 쓴다.
 
 
 def row(frame: int, detections: list) -> dict:
@@ -105,21 +113,10 @@ def start_rows(rows: list[dict], times: list[float]) -> list[dict]:
     return [r for r in rows if times[r["frame"]] - t0 <= START_MS]
 
 
-def _center(b: list) -> tuple[float, float]:
-    return (b[1] + b[3]) / 2, (b[2] + b[4]) / 2
-
-
 def shelf_region(rows: list[dict], times: list[float]) -> tuple[float, float, float, float] | None:
     """처음 1초에 선반에서 본 상자들을 감싼 네모 + 여유 = 선반 자리. 하나도 못 봤으면 None.
     기준 점수(SHOW)로 정한다 — 세는 점수를 바꿔도 선반 자리는 같다."""
-    boxes = [it for r in start_rows(rows, times) for it in shown(r["items"])]
-    if not boxes:
-        return None
-    xs, ys = sorted(_center(b)[0] for b in boxes), sorted(_center(b)[1] for b in boxes)
-    mx, my = xs[len(xs) // 2], ys[len(ys) // 2]
-    boxes = [b for b in boxes if abs(_center(b)[0] - mx) <= NEAR and abs(_center(b)[1] - my) <= NEAR]
-    return (min(b[1] for b in boxes) - PAD, min(b[2] for b in boxes) - PAD,
-            max(b[3] for b in boxes) + PAD, max(b[4] for b in boxes) + PAD)
+    return region_of([it for r in start_rows(rows, times) for it in shown(r["items"])], PAD, NEAR)
 
 
 def away(items: list, region, score: float = SHOW) -> list:
@@ -142,30 +139,10 @@ def seen_after(rows: list[dict], times: list[float], region, t_ms: float, name: 
                and any(name is None or it[0] == name for it in away(r["items"], region, score)))
 
 
-def iou(a: list, b: list) -> float:
-    w = min(a[3], b[3]) - max(a[1], b[1])
-    h = min(a[4], b[4]) - max(a[2], b[2])
-    inter = max(0.0, w) * max(0.0, h)
-    union = (a[3] - a[1]) * (a[4] - a[2]) + (b[3] - b[1]) * (b[4] - b[2]) - inter
-    return inter / union if union > 0 else 0.0
-
-
-def merge(items: list, limit: float = MERGE) -> list:
-    """같은 종류끼리 limit 이상 겹친 상자는 점수 높은 것 하나만 남긴다."""
-    keep: list = []
-    for it in sorted(items, key=lambda i: -i[5]):
-        if all(k[0] != it[0] or iou(k, it) < limit for k in keep):
-            keep.append(it)
-    return keep
-
-
 def counts(items: list, region, score: float = SHOW, limit: float = MERGE) -> tuple[int, ...]:
     """선반 자리 안의 종류별 개수 (STOCK 의 순서: 칸타타 · 동과루 · 애플사이다)."""
-    if region is None:
-        return tuple(0 for _ in STOCK)
-    x1, y1, x2, y2 = region
-    inside = merge([it for it in shown(items, score) if x1 <= _center(it)[0] <= x2 and y1 <= _center(it)[1] <= y2], limit)
-    return tuple(sum(it[0] == name for it in inside) for name in STOCK)
+    found = inside(items, region, score, limit)
+    return tuple(sum(it[0] == name for it in found) for name in STOCK)
 
 
 def stable_states(rows: list[dict], times: list[float], region, score: float = SHOW, limit: float = MERGE) -> list[tuple]:
@@ -216,6 +193,106 @@ def count_report(out: str, score: float = SHOW, limit: float = MERGE) -> dict:
         elif not map_good:
             total["fixed"].append(pair)
         total["lines"].append(f"{pair:5s} 정답 {want}  전체 카메라 {got} {'O' if good else 'X'}  선반 지도 {'O' if map_good else 'X'}  개수 {' → '.join(str(v) for v in states)}")
+    return total
+
+
+def visit_changes(frames: list[tuple[float, list, list]], visits: list[tuple[float, float]], wait_ms: float,
+                  score: float = SHOW, edge_ms: float = EDGE_MS) -> list:
+    """판정과 같은 차례로 방문마다 개수 변화를 묻는다 → 방문 순서대로 CountChange 또는 None(못 셈).
+    frames = [(ms, 상품 상자들, 사람 상자들), …] 시간순. visits = [(시작 ms, 끝 ms), …] 시간순 (전체 카메라 시각)."""
+    counter = OverviewCounter(score=score, edge_ms=edge_ms, late_ms=wait_ms)
+    out: list = []
+    for ms, items, people in frames:
+        counter.update(ms, items, people)
+        while len(out) < len(visits):
+            start, end = visits[len(out)]
+            if end > ms - RELEASE_MS or not (counter.ready(end) or end <= ms - RELEASE_MS - wait_ms):
+                break
+            out.append(counter.change(start, end))
+    while len(out) < len(visits):
+        out.append(counter.change(*visits[len(out)]))
+    return out
+
+
+def assign(actions: list[tuple[float, str]], visits: list[tuple[float, float]], near_ms: float = 1000.0) -> tuple[list, int]:
+    """정답 행동(시각, take/return)을 방문에 나눠 담는다 → (방문별 [꺼냄, 되돌림], 어느 방문에도 못 넣은 수)."""
+    per = [[0, 0] for _ in visits]
+    lost = 0
+    for t, action in actions:
+        gap = [0.0 if s <= t <= e else min(abs(t - s), abs(t - e)) for s, e in visits]
+        if not gap or min(gap) > near_ms:
+            lost += 1
+            continue
+        per[gap.index(min(gap))][0 if action == "take" else 1] += 1
+    return per, lost
+
+
+def splits(path: Path) -> dict[str, str]:
+    """짝 → 상품 모델 학습 때의 나눔 (train / val / test). 표가 없으면 빈 것."""
+    import csv
+
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        return {r["pair"]: r["split"] for r in csv.DictReader(f) if r.get("split")}
+
+
+def visit_report(out: str, wait_s: float = 3.0, score: float = SHOW, edge_s: float = EDGE_MS / 1000.0) -> dict:
+    import csv
+
+    from src.inputs.sync import SyncTable
+
+    labels = ROOT / "labels" / "store01_shoot3"
+    table = SyncTable.load(labels / "sync.csv")
+    actions: dict[str, list] = {}
+    with (labels / "takes.csv").open(encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            if (r.get("time_sec") or "").strip():
+                actions.setdefault(r["pair"], []).extend([(float(r["time_sec"]) * 1000.0, r["action"])] * int(r.get("qty") or 1))
+    total = {"pairs": 0, "visits": 0, "shelf_ok": 0, "counted": 0, "counted_ok": 0, "merged_ok": 0, "lost": 0,
+             "pairs_shelf_ok": 0, "pairs_merged_ok": 0, "lines": [], "by_split": {}}
+    split_of = splits(ROOT / "labels" / "products_shoot3" / "frames.csv")
+    for folder in sorted((ROOT / "outputs" / out).iterdir()):
+        path, visit_file = folder / CAMERA / NAME, folder / "angle0" / "shelf_visits.jsonl"
+        if not path.exists() or not visit_file.exists():
+            continue
+        pair = folder.name
+        offset = table.offset_ms(pair) or 0.0
+        times = json.loads((folder / f"times_{CAMERA}.json").read_text(encoding="utf-8"))
+        people: dict[int, list] = {}
+        for line in (folder / CAMERA / "identities.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                o = json.loads(line)
+                people.setdefault(o["frame"], []).append(o["bbox"])
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        frames = [(times[r["frame"]], r["items"], people.get(r["frame"], [])) for r in rows]
+        raw = [json.loads(line) for line in visit_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        raw = [v for v in raw if v.get("source", "vision") == "vision"]
+        visits = [(v["start_ms"] + offset, v["end_ms"] + offset) for v in raw]
+        truth, lost = assign(sorted((t + offset, a) for t, a in actions.get(pair, [])), visits)
+        changes = visit_changes(frames, visits, wait_s * 1000.0, score, edge_s * 1000.0)
+        marks, shelf_all, merged_all = [], lost == 0, lost == 0
+        part = total["by_split"].setdefault(split_of.get(pair, "모름"), {"visits": 0, "shelf_ok": 0, "merged_ok": 0})
+        for v, want, c in zip(raw, truth, changes):
+            shelf = [v["removed"], v["added"]]
+            merged = [c.removed, c.added] if c is not None else shelf
+            part["visits"] += 1
+            part["shelf_ok"] += shelf == want
+            part["merged_ok"] += merged == want
+            total["visits"] += 1
+            total["shelf_ok"] += shelf == want
+            total["counted"] += c is not None
+            total["counted_ok"] += c is not None and merged == want
+            total["merged_ok"] += merged == want
+            shelf_all, merged_all = shelf_all and shelf == want, merged_all and merged == want
+            seen = f"-{c.removed}+{c.added}" if c is not None else "못 셈"
+            marks.append(f"[{v['start_ms'] / 1000:.1f}~{v['end_ms'] / 1000:.1f}초 정답 -{want[0]}+{want[1]} · 선반 지도 -{shelf[0]}+{shelf[1]}"
+                         f"{'' if shelf == want else ' X'} · 전체 카메라 {seen}{'' if merged == want else ' X'}]")
+        total["pairs"] += 1
+        total["lost"] += lost
+        total["pairs_shelf_ok"] += shelf_all
+        total["pairs_merged_ok"] += merged_all
+        total["lines"].append(f"{pair:5s} {'O' if merged_all else 'X'} {' '.join(marks)}" + (f"  방문 밖 행동 {lost}" if lost else ""))
     return total
 
 
@@ -278,9 +355,24 @@ def main() -> int:
     ap.add_argument("--count", action="store_true", help="찾지 않고, 전체 카메라의 종류별 개수(처음 - 끝)를 정답과 견준다")
     ap.add_argument("--score", type=float, default=SHOW, help="--report · --count 가 세는 점수 기준 (기본 0.25)")
     ap.add_argument("--merge", type=float, default=MERGE, help="--count: 같은 종류의 상자가 이만큼 겹치면 하나로 (기본 0.4, 1 이면 안 합침)")
+    ap.add_argument("--visits", action="store_true", help="찾지 않고, 선반 방문마다 전체 카메라 개수 변화를 세어 정답과 견준다")
+    ap.add_argument("--wait", type=float, default=3.0, help="--visits: 뒤 개수를 기다리는 시간(초) — fusion.overview_count_wait_seconds 와 같은 뜻")
+    ap.add_argument("--edge", type=float, default=EDGE_MS / 1000.0,
+                    help="--visits: 방문의 끝과 본 개수 구간의 끝이 어긋나도 봐주는 시간(초) — 판정은 fusion.event_tolerance_seconds(1초)")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if args.visits:
+        r = visit_report(args.out, args.wait, args.score, args.edge)
+        print("\n".join(r["lines"]))
+        print(f"\n{args.out}: 영상 {r['pairs']}편 · 선반 방문 {r['visits']}번 · 점수 {args.score} 이상 · 기다림 {args.wait}초 · 어긋남 {args.edge}초")
+        print(f"  방문의 (꺼냄, 놓음) 개수가 정답과 같은 것: 선반 지도 {r['shelf_ok']}/{r['visits']} · 합친 것 {r['merged_ok']}/{r['visits']}")
+        print(f"  전체 카메라가 센 방문 {r['counted']}/{r['visits']} · 그중 정답과 같은 것 {r['counted_ok']}")
+        print(f"  모든 방문이 맞은 영상: 선반 지도 {r['pairs_shelf_ok']}/{r['pairs']} · 합친 것 {r['pairs_merged_ok']}/{r['pairs']}"
+              + (f" · 어느 방문에도 안 든 정답 행동 {r['lost']}" if r["lost"] else ""))
+        print("  상품 모델 학습 나눔별 (방문): " + " · ".join(
+            f"{name} 선반 지도 {p['shelf_ok']}/{p['visits']} → 합친 것 {p['merged_ok']}/{p['visits']}" for name, p in sorted(r["by_split"].items())))
+        return 0
     if args.count:
         r = count_report(args.out, args.score, args.merge)
         print("\n".join(r["lines"]))

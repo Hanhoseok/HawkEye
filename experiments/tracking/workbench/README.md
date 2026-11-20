@@ -38,8 +38,9 @@ python workbench/server.py          # http://127.0.0.1:8770/  (내 컴퓨터에�
 - 처음 열 때 이 보기가 먼저 뜨지는 않는다 (가장 최근 **회차**가 뜬다).
 - 장면 그림은 3차 것을 가져다 쓴다 (사람 추적이 같은 기록이다).
 - **'물건 집기'에서 전체 카메라에도 상품 상자가 나온다** (2026-11-20) — `scripts/product_overview_items.py` 가 남긴 기록(`<기록>/<짝>/angle1/product_items.jsonl`)이 있을 때. 상자 색은 종류다 (칸타타 · 동과루 · 애플사이다, 화면 아래 범례). 선반 카메라의 상자도 같은 색으로 나온다. **보기만 한다 — 판정에는 안 들어간다.** '구역 표시'를 끄면 상자도 꺼진다.
-- 3차 촬영과 같은 영상을 나란히 보려면 주소의 번호만 바꾼다: `#/3/pair/C16` ↔ `#/31/pair/C16`.
-- 더하려면 `data.py` 에 `PROFILES[번호] = replace(PROFILES[3], records=…, out=…, can_tune=False, …)` 한 줄.
+- **3차 · 상품 모델 + 전체 카메라 개수** (주소 `#/32`, 2026-11-20) — 위와 같은 기록을 `fusion.overview_count=true` 로 판정한 것 (`docs/shelf-map.md` '전체 카메라 개수를 판정에 넣음'). 선반 방문의 개수만 전체 카메라가 센 상품 개수로 바뀐다. 바뀐 방문은 '물건 집기'의 행동 줄에 "전체 카메라 개수 … → … — 선반 지도는 …"으로 나오고 근거가 '전체+선반'이다. 전체 카메라 상품 기록(`angle1/product_items.jsonl`)이 없는 짝은 만들기에 실패한다. 보기 데이터는 `outputs/workbench/shoot3_count/`.
+- 3차 촬영과 같은 영상을 나란히 보려면 주소의 번호만 바꾼다: `#/3/pair/C16` ↔ `#/31/pair/C16` ↔ `#/32/pair/C16`.
+- 더하려면 `data.py` 에 `PROFILES[번호] = replace(PROFILES[3], records=…, out=…, can_tune=False, …)` 한 줄. 같은 기록을 다른 판정 값으로 보려면 `overrides=("절.키=값",)` 를 준다 (보기 32 가 그렇다).
 
 ## 화면
 

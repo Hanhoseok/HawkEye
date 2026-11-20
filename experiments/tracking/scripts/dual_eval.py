@@ -542,6 +542,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
                       detail_point=detail_point_for(pair), detail_floor=detail_floor_map(detail_setup),
                       detail_height=m0["height"])
     judge.reset()
+    products = overview_products(pair) if cfg.fusion.overview_count else None
     if use_detail:
         from src.shelf.slot_diff import SlotChange
         for r in log.slot_changes:
@@ -577,7 +578,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
             frame = Frame(index=idx, timestamp="", pts_ms=ms, image=None, camera_id="angle1")
             now_frame["idx"] = idx
             judge.overview_step(frame, log.ids["angle1"].get(idx, []), take_at["angle1"].get(idx, []),
-                                merges_seen, log.appearance("angle1", 0.0, ms), log.resolver("angle1", idx))
+                                merges_seen, log.appearance("angle1", 0.0, ms), log.resolver("angle1", idx),
+                                products.get(idx, []) if products is not None else None)
             last = frame
     resolve_end = log.resolver("angle1", m1["frames"])
     judge.finish(last, resolve_end)
@@ -598,6 +600,16 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         "cancels": sum(1 for p in risk.book.payments if p.method == "cancel"),
         "shelf_events": [r.to_dict() for r in judge.fuser.records],
     }
+
+
+def overview_products(pair: str) -> dict[int, list]:
+    """전체 카메라 장면 번호 → 그 장면의 상품 상자 (scripts/product_overview_items.py 가 만든 angle1/product_items.jsonl).
+    fusion.overview_count 를 켰을 때만 읽는다. 없으면 그 짝은 실패로 적힌다 — 조용히 선반 지도 개수로 돌아가지 않게."""
+    path = OUT / pair / "angle1" / "product_items.jsonl"
+    if not path.exists():
+        raise FileNotFoundError(f"{pair}: angle1/product_items.jsonl 없음 — fusion.overview_count 는 "
+                                "scripts/product_overview_items.py 로 전체 카메라 상품을 찾아 둔 기록에서만")
+    return {r["frame"]: r["items"] for r in PairLog._jsonl(path)}
 
 
 def load_band_map() -> tuple[float, float]:

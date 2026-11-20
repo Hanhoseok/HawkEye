@@ -81,8 +81,10 @@ class FusedRecord:
 class ShelfEventFuser:
     def __init__(self, config: FusionConfig, linker: CrossViewLinker, detail_axis: TimeAxis,
                  overview_axis: TimeAxis, slot_shelf: dict[str, str] | None = None,
-                 sensors: list[SensorEvent] | None = None) -> None:
+                 sensors: list[SensorEvent] | None = None, overview=None) -> None:
         self.config = config
+        self.overview = overview
+        """전체 카메라 상품 개수 (OverviewCounter, fusion.overview_count). 있으면 방문의 개수를 그쪽 것으로 바꾼다."""
         self.linker = linker
         self.detail_axis = detail_axis
         self.overview_axis = overview_axis
@@ -178,6 +180,7 @@ class ShelfEventFuser:
             owner = self._band_owner(start_ms, end_ms)
             how = "선반 앞 한 명" if owner is not None else "선반 앞 여러 명 또는 없음 — 모름"
         removed, added, source, extra = visit.removed, visit.added, visit.source, ""
+        detail = visit.detail
         slot_change, slot_text = visit.slot_change, ""
         if slot_change is None:
             slot_change, slot_text = self._slot_change_for(start_ms, end_ms, visit.shelf)
@@ -189,19 +192,44 @@ class ShelfEventFuser:
             if (s_removed, s_added) != (removed, added):
                 extra = f" / 센서와 다름 (카메라 -{removed}+{added}, 센서 -{s_removed}+{s_added})"
             removed, added, source = s_removed, s_added, "sensor+vision"
+        count = self.overview.change(start_ms, end_ms) if self.overview is not None else None
+        if count is not None:
+            # 전체 카메라가 방문 전 · 뒤의 상품 개수를 봤다 — 센서가 없는 방문이면 개수를 그쪽 것으로 (센서가 있으면 적어만 둔다)
+            same = (count.removed, count.added) == (visit.removed, visit.added)
+            extra += f" / 전체 카메라 개수 {count.text()} (-{count.removed}+{count.added}{'' if same else ', 선반 지도와 다름'})"
+            if not sensor:
+                removed, added, source = count.removed, count.added, "overview+vision"
+                if not same:
+                    detail = self._count_detail(detail, count)
+        elif self.overview is not None and self.overview.fed:
+            extra += " / 전체 카메라 개수 못 봄"
         out = replace(visit, person_id=owner if owner is not None else -1, removed=removed, added=added,
                       source=source, zone=self.config.shelf_zone, slot_change=slot_change,
                       start_frame=self.overview_axis.to_frame(start_ms), end_frame=self.overview_axis.to_frame(end_ms),
-                      detail=visit.detail + extra)
+                      detail=detail + extra)
         self.records.append(FusedRecord("visit", start_ms, end_ms, out.person_id, how, out.detail))
         return out
 
-    def sensor_only(self, now_ms: float) -> list[ShelfVisit]:
-        """카메라 방문과 묶이지 않은 채 시간이 지난 센서 기록 → 센서만의 방문."""
+    @staticmethod
+    def _count_detail(detail: str, count) -> str:
+        """개수를 전체 카메라 것으로 바꾼 방문의 설명: '[선반] 사라짐: … -> 손님 1' → '[선반] 전체 카메라 개수 … — 선반 지도는 사라짐: … -> 손님 1'.
+        행동 설명(손님 장부)은 ' -> ' 앞을 쓴다 — 개수와 설명이 어긋나 보이지 않게."""
+        head, sep, what = detail.partition("] ")
+        if not sep:
+            head, what = "", detail
+        what, arrow, who = what.partition(" -> ")
+        return f"{head}{sep}전체 카메라 개수 {count.text()} — 선반 지도는 {what or '변화 없음'}{arrow}{who}"
+
+    def sensor_only(self, now_ms: float, hold: list[tuple[float, float, str]] | None = None) -> list[ShelfVisit]:
+        """카메라 방문과 묶이지 않은 채 시간이 지난 센서 기록 → 센서만의 방문.
+        hold = 전체 카메라 개수를 기다리느라 아직 못 넘긴 방문들 (시작 ms, 끝 ms, 선반) — 그 방문이 묶어 갈 센서 기록은 남겨 둔다."""
         out = []
         tol = self.config.event_tolerance_seconds * 1000.0
         for i, s in enumerate(self.sensors):
             if i in self._sensor_used or s.time_ms > now_ms - 3 * tol:
+                continue
+            if any(start - tol <= s.time_ms <= end + tol and self.slot_shelf.get(s.slot, s.slot) == shelf
+                   for start, end, shelf in hold or []):
                 continue
             self._sensor_used.add(i)
             owners = self._touch_owners(s.time_ms - tol, s.time_ms + tol, self.slot_shelf.get(s.slot, s.slot))

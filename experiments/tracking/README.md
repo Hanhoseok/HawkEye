@@ -239,7 +239,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | **라벨·구역 준비** | `label_actions.py` · `export_frame.py` · `zone_report.py` | 행동 구간 라벨링 · 격자 입힌 장면 저장 · 신원별 구역 체류 집계 |
 | **상품 탐지 데이터 (3차)** | `product_frames.py` | 학습용 장면 고르기(`plan`) · 그림으로 뽑기(`extract`, `--batch 2` 는 상품을 들고 옮기는 구간 — Roboflow 에 올릴 것) · 모아보기(`sheet`) · 찍은 라벨을 YOLO 학습용으로 내보내기(`export`) — 표 · 라벨은 `labels/products_shoot3/`, 그림은 `outputs/` 에만. 라벨은 분석 도구의 '상품 라벨' 화면에서 찍는다 |
 | | `product_shelf_cache.py` | 3차 평가 저장분에서 선반 물건 탐지만 상품 모델로 바꾼 저장분 만들기 — 선반 지도에 상품 모델을 끼워 보는 길 (그 뒤 `dual_eval.py replay`) |
-| | `product_overview_items.py` | 전체 카메라(angle1) 영상에서도 상품을 찾아 기록에 남기기 — 분석 도구가 전체 카메라 화면에 상품 상자를 그린다 (보기만, 판정에는 안 씀). `--report` 로 사람 정답과 견줘 세고, `--count` 로 전체 카메라의 종류별 개수(처음 - 끝)를 꺼냄 정답 · 선반 지도와 견준다 |
+| | `product_overview_items.py` | 전체 카메라(angle1) 영상에서도 상품을 찾아 기록에 남기기 — 분석 도구가 전체 카메라 화면에 상품 상자를 그린다 (기본 판정에는 안 씀 — `fusion.overview_count` 를 켜면 선반 방문의 개수에 쓴다). `--report` 로 사람 정답과 견줘 세고, `--count` 로 전체 카메라의 종류별 개수(처음 - 끝)를 꺼냄 정답 · 선반 지도와 견준다. `--visits` 로 선반 방문마다 개수 변화를 세어 정답과 견준다 (판정의 `fusion.overview_count` 와 같은 세기 — `src/fusion/overview_count.py`) |
 | | `product_shelf_report.py` | 선반 지도가 센 것을 사람 정답(`takes.csv`)과 견주기 — 개수 · 종류 · 주인, `--judge` 로 판정 점수도 기준과 견줌 |
 | | `product_model_check.py` | 받은 상품 탐지 모델을 이 컴퓨터에서 확인 — '움직인 상품'(주로 손에 든 것)을 몇 개 찾는지 · CPU 에서 한 장에 몇 초인지 · 놓친 것 / 찾은 것 모아보기 → `outputs/` |
 | | `product_coco.py` | Roboflow 로 찍은 데이터셋(COCO, `source/labeling_object/`)을 YOLO 학습용으로 바꾸기 — 영상 단위로 다시 나누고 · 종류 번호를 맞추고 · 카메라를 갈라 이름에 넣는다 → `outputs/products_rf/`. `--publish` 는 그 가운데 라벨 · 목록만(그림 빼고) 학습 폴더 `training/products/dataset/` 으로 낸다 |

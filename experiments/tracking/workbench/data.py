@@ -73,6 +73,8 @@ class Profile:
     """수치 조정을 할 수 있나. 견줘 보기는 못 한다 — 적용한 값 파일과 조정 기록을 그 회차와 함께 쓰기 때문."""
     thumbs: Path | None = None
     """장면 그림을 여기서 가져다 쓴다 (전체 카메라 추적이 같은 기록이면 그림도 같다 — 영상을 다시 읽지 않는다)."""
+    overrides: tuple[str, ...] = ()
+    """이 보기에서만 얹는 판정 값 (`절.키=값`, dual_eval.py 의 --set 과 같다) — 같은 기록을 다른 설정으로 판정해 견줄 때."""
 
 
 PROFILES = {
@@ -100,6 +102,17 @@ PROFILES[SHOOT3_PRODUCT] = replace(
     can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
     note="3차 기록에서 선반 물건 탐지만 상품 모델(2차 yolov8n)로 바꿔 다시 계산한 것입니다. 사람 · 추적 · 구역 · 판정 값은 3차 촬영과 같습니다. "
          "모델이 이 영상들의 장면으로 학습했으므로(39편 중 25편) 점수는 낙관적입니다. 수치 조정은 3차 촬영에서 합니다.")
+
+
+SHOOT3_COUNT = 32
+"""상품 모델 기록(31)과 같은 기록을, 선반 방문의 개수만 전체 카메라가 센 상품 개수로 바꿔 판정한 것 (fusion.overview_count, 후속 54).
+scripts/product_overview_items.py 로 전체 카메라 상품을 찾아 둔 기록이어야 한다 — 없는 짝은 만들기에 실패한다."""
+PROFILES[SHOOT3_COUNT] = replace(
+    PROFILES[SHOOT3_PRODUCT], name="3차 · 상품 모델 + 전체 카메라 개수", out=OUT / "shoot3_count",
+    overrides=("fusion.overview_count=true",),
+    note="'3차 · 상품 모델'과 같은 기록입니다. 선반 방문의 꺼냄 · 놓음 개수만 전체 카메라가 센 상품 개수(방문 전 - 방문 뒤)로 바꿔 판정했습니다. "
+         "바뀐 방문은 행동 설명에 '전체 카메라 개수 … — 선반 지도는 …'으로 나옵니다. 모델이 이 영상들로 학습했으므로 점수는 낙관적입니다. "
+         "수치 조정은 3차 촬영에서 합니다.")
 
 
 def main_views() -> list[int]:
@@ -205,7 +218,7 @@ class Builder:
                  self.records_dir() / pair / ".done",
                  self.records_dir() / pair / "meta.json",
                  self.records_dir() / pair / "angle1" / "product_items.meta.json"]     # 전체 카메라 상품 (있을 때만)
-        h = hashlib.sha1(f"v{VERSION}".encode())
+        h = hashlib.sha1(f"v{VERSION}{'|'.join(p.overrides)}".encode())
         # 짝마다 한 줄씩 있는 표는 그 짝의 줄만 본다 — 한 영상의 시차·결제를 고쳤다고 38쌍을 다 다시 만들지 않게
         for table in (p.labels / "sync.csv", p.labels / "truth.csv", self.payments_file(), p.labels / "added.csv"):
             h.update(self._rows(table).get(pair, "-").encode("utf-8"))
@@ -310,7 +323,8 @@ class Builder:
         home = f"shoot{self.shoot}"
         (out / "pairs").mkdir(parents=True, exist_ok=True)
         (out / "cards").mkdir(parents=True, exist_ok=True)
-        opts = {"set": list(overrides)} if overrides else {}
+        sets = [*self.profile.overrides, *(overrides or [])]
+        opts = {"set": sets} if sets else {}
         for pair in todo:
             self.state["current"] = pair
             try:
@@ -408,7 +422,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="바뀌지 않은 짝도 다시 만든다")
     ap.add_argument("--only", help="짝 이름 (쉼표)")
     ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
-                    help=f"보기 번호 — 2 · 3 은 촬영 회차, {SHOOT3_PRODUCT} 은 3차에 상품 모델을 끼운 기록 (기본 2)")
+                    help=f"보기 번호 — 2 · 3 은 촬영 회차, {SHOOT3_PRODUCT} 은 3차에 상품 모델을 끼운 기록, {SHOOT3_COUNT} 는 거기에 전체 카메라 개수를 넣은 판정 (기본 2)")
     args = ap.parse_args()
     b = Builder(args.shoot)
     state = b.build(args.only.split(",") if args.only else None, args.force)

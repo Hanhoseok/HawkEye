@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from workbench import intake  # noqa: E402
 from workbench.analyze import _duration, lens_link, locate, presence  # noqa: E402
-from workbench.data import PROFILES, SHOOT3_PRODUCT, Builder, main_views  # noqa: E402
+from workbench.data import PROFILES, SHOOT3_COUNT, SHOOT3_PRODUCT, Builder, main_views  # noqa: E402
 from workbench.tune import changed_values, knobs_for  # noqa: E402
 
 
@@ -81,6 +81,15 @@ def test_product_view_is_shoot3_with_other_records_and_no_tuning():
         assert getattr(prod, name) == getattr(three, name), name            # 정답표 · 구역 · 적용한 값은 3차 것
     assert three.can_tune and not prod.can_tune and not prod.can_add        # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
     assert prod.note and not three.note
+    assert main_views() == [2, 3]
+
+
+def test_count_view_judges_the_product_records_with_the_overview_count():
+    prod, count = PROFILES[SHOOT3_PRODUCT], PROFILES[SHOOT3_COUNT]
+    assert count.records == prod.records and count.out != prod.out          # 같은 기록, 만든 것은 따로
+    assert count.overrides == ("fusion.overview_count=true",) and prod.overrides == () and PROFILES[3].overrides == ()
+    assert count.shoot == 3 and not count.can_tune and count.note and count.thumbs == prod.thumbs
+    assert Builder(SHOOT3_COUNT).signature("C01") != Builder(SHOOT3_PRODUCT).signature("C01")      # 얹는 값이 다르면 다시 만든다
     assert main_views() == [2, 3]
 
 
