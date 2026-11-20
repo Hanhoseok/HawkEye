@@ -41,7 +41,8 @@ VERSION = 13
 10: 전체 카메라 번호 맞바뀜 되돌리기 (fusion.swap_repair, 후속 49) — 보기 데이터에 swaps 가 생기고 3차 C20 의 번호·짝이 달라진다.
 11: 전체 카메라에서 찾은 상품 (overview_items, 후속 52) — 보기만 하고 판정은 그대로다.
 12: 전체 카메라의 선반 앞 머묾을 판정에 넣었는지 (overview_dwell, 후속 55) — 뺀 보기는 그 줄에 '판정에 안 씀'이 붙는다.
-13: 3차의 기본 기록이 상품 모델 기록으로, 3차 기본 판정이 전체 카메라 개수 · 든 사람 · 머묾 안 씀으로 (후속 56). 보기 31 · 32 의 뜻이 바뀌고 33 은 없어졌다."""
+13: 3차의 기본 기록이 상품 모델 기록으로, 3차 기본 판정이 전체 카메라 개수 · 든 사람 · 머묾 안 씀으로 (후속 56). 보기 31 · 32 의 뜻이 바뀌고 33 은 없어졌다.
+(같은 날, 후속 57) 보기는 회차마다 최신 2개만 둔다 — 31 = 3차의 바로 전 판정, 32 는 없앴다. 만드는 내용은 그대로라 번호를 안 올렸다."""
 RUN_KEY = "current"
 
 
@@ -97,26 +98,45 @@ PROFILES = {
 """열쇠는 보기 번호 — 주소(#/3)와 요청(?shoot=3)에 쓴다. 회차의 기본 기록은 회차 번호 그대로이고,
 같은 회차의 다른 기록(견줘 보기)은 다른 번호를 쓴다 (Profile.shoot 는 그대로 회차)."""
 
-SHOOT3_GENERIC = 31
-"""예전 기준: 일반 탐지 모델로 만든 3차 기록(outputs/dual_eval_shoot3)을 예전 판정 값으로 본 것 (후속 56 전까지의 '3차 촬영').
-선반 물건을 일반 YOLO 로 찾아 선반 지도가 대부분 '변화 없음'이고, 전체 카메라의 선반 앞 머묾을 집기 동작으로 쓴다.
+MAX_VIEWS = 2
+"""한 회차의 보기는 최신 2개까지 (사용자 규칙, 2026-11-20): 지금 기준(#/3)과 바로 전 판정(#/31).
+새 판정이 기준이 되면 — 지금 것을 '바로 전'으로 옮기고, 그 전 것은 지운다 (보기 데이터 폴더는 `--prune`).
+더 옛 판정은 점수만 본다: `scripts/dual_eval.py judge --out <기록> --set …` (docs/shelf-map.md)."""
+
+SHOOT3_PREV = 31
+"""바로 전 판정: 지금 기록(상품 모델)을 '선반 앞 머묾'을 쓰던 판정으로 본 것 — 전체 카메라 개수는 쓰고, 든 사람으로 주인 정하기는 끄고,
+머묾은 켠다 (후속 54 까지의 판정). 머묾을 뺀 것이 무엇을 바꿨는지 견줘 보는 용도다.
 정답표 · 시차 · 결제 · 구역 · 적용한 값은 3차 것을 그대로 쓴다 — 여기서 정답을 고치면 3차의 정답이 바뀐다."""
-OLD_JUDGE = ("fusion.overview_count=false", "fusion.overview_owner=false", "fusion.overview_dwell=true")
-PROFILES[SHOOT3_GENERIC] = replace(
-    PROFILES[3], name="3차 · 예전 기준 (일반 탐지 모델)", records=ROOT / "outputs" / "dual_eval_shoot3", out=OUT / "shoot3_generic",
-    can_tune=False, thumbs=OUT / "shoot3" / "thumbs", overrides=OLD_JUDGE,
-    note="2026-11-20 까지의 기준입니다. 선반 물건을 일반 탐지 모델로 찾은 기록을, 선반 지도 개수와 '선반 앞 머묾'으로 판정했습니다. "
-         "지금의 '3차 촬영'은 상품 모델 기록입니다. 수치 조정은 3차 촬영에서 합니다.")
-
-
-SHOOT3_DWELL = 32
-"""지금 기록(상품 모델)을 '선반 앞 머묾'을 쓰던 판정으로 본 것 — 전체 카메라 개수는 쓰고, 든 사람으로 주인 정하기는 끄고, 머묾은 켠다
-(후속 54 까지의 판정). 머묾을 뺀 것이 무엇을 바꿨는지 견줘 보는 용도다."""
-PROFILES[SHOOT3_DWELL] = replace(
-    PROFILES[3], name="3차 · 머묾을 쓰던 판정", out=OUT / "shoot3_dwell", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
+PROFILES[SHOOT3_PREV] = replace(
+    PROFILES[3], name="3차 · 바로 전 판정 (머묾을 씀)", out=OUT / "shoot3_prev", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
     overrides=("fusion.overview_owner=false", "fusion.overview_dwell=true"),
     note="'3차 촬영'과 같은 기록입니다. 전체 카메라의 '선반 앞 머묾'을 집기 동작으로 쓰고, 주인을 못 정한 방문은 '모름'으로 두던 판정입니다 "
          "(2026-11-20 후속 55 전). 수치 조정은 3차 촬영에서 합니다.")
+
+
+def views_of(shoot: int) -> list[int]:
+    """그 회차의 보기 번호들 (기본 보기 + 견줘 보기)."""
+    return [key for key, p in PROFILES.items() if p.shoot == shoot]
+
+
+def check_views() -> None:
+    """보기 규칙을 어기면 그 자리에서 멈춘다 — 회차마다 MAX_VIEWS 개까지, 만든 것을 두는 폴더는 서로 달라야 한다."""
+    for shoot in {p.shoot for p in PROFILES.values()}:
+        keys = views_of(shoot)
+        if len(keys) > MAX_VIEWS:
+            raise RuntimeError(f"{shoot}차 보기가 {len(keys)}개입니다 ({keys}) — 최신 {MAX_VIEWS}개만 둡니다. 가장 옛 것을 지우세요")
+    outs = [p.out for p in PROFILES.values()]
+    if len(set(outs)) != len(outs):
+        raise RuntimeError("두 보기가 같은 폴더에 만듭니다")
+
+
+check_views()
+
+
+def stale_outputs() -> list[Path]:
+    """지금 어느 보기도 안 쓰는 보기 데이터 폴더 (outputs/workbench/shoot*) — 없앤 옛 보기가 남긴 것."""
+    used = {p.out for p in PROFILES.values()}
+    return sorted(d for d in OUT.glob("shoot*") if d.is_dir() and d not in used)
 
 
 def main_views() -> list[int]:
@@ -427,9 +447,14 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="바뀌지 않은 짝도 다시 만든다")
     ap.add_argument("--only", help="짝 이름 (쉼표)")
     ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
-                    help=f"보기 번호 — 2 · 3 은 촬영 회차 (3차는 상품 모델 기록), {SHOOT3_GENERIC} 은 3차의 예전 기준(일반 탐지 모델), "
-                         f"{SHOOT3_DWELL} 는 3차를 머묾을 쓰던 판정으로 본 것 (기본 2)")
+                    help=f"보기 번호 — 2 · 3 은 촬영 회차 (3차는 상품 모델 기록), {SHOOT3_PREV} 은 3차의 바로 전 판정 (기본 2)")
+    ap.add_argument("--prune", action="store_true", help="없앤 옛 보기가 남긴 보기 데이터 폴더를 지우고 끝낸다 (다시 만들 수 있는 것만 들어 있다)")
     args = ap.parse_args()
+    if args.prune:
+        for d in stale_outputs():
+            shutil.rmtree(d)
+            print("지움:", d)
+        return 0
     b = Builder(args.shoot)
     state = b.build(args.only.split(",") if args.only else None, args.force)
     print(f"만든 짝 {state['done']}/{state['total']}, {state['seconds']}초 → {b.out}")

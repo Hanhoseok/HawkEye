@@ -15,7 +15,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from workbench import intake  # noqa: E402
 from workbench.analyze import _duration, lens_link, locate, presence  # noqa: E402
-from workbench.data import OLD_JUDGE, PROFILES, SHOOT3_DWELL, SHOOT3_GENERIC, Builder, main_views  # noqa: E402
+from workbench import data as wb_data  # noqa: E402
+from workbench.data import MAX_VIEWS, PROFILES, SHOOT3_PREV, Builder, check_views, main_views, stale_outputs, views_of  # noqa: E402
 from workbench.tune import changed_values, knobs_for  # noqa: E402
 
 
@@ -80,44 +81,73 @@ def test_shoot3_reads_the_product_model_records_like_the_judge_script():
     assert PROFILES[3].overrides == () and PROFILES[3].can_tune           # 3차 기본 판정 값은 판정 코드(dual_config)에 있다
 
 
-def test_generic_view_is_the_old_baseline_with_other_records_and_no_tuning():
-    three, old = PROFILES[3], PROFILES[SHOOT3_GENERIC]
-    assert old.shoot == 3 and Builder(SHOOT3_GENERIC).shoot == 3 and Builder(SHOOT3_GENERIC).key == SHOOT3_GENERIC
-    assert old.records.name == "dual_eval_shoot3" and old.records != three.records and old.out != three.out
+OTHER = 39
+"""시험용 보기 번호 — 같은 회차의 '다른 기록'을 보는 견줘 보기. 지금은 그런 보기가 없어 (바로 전 판정은 같은 기록) 시험에서만 만든다."""
+
+
+@pytest.fixture
+def other_records(monkeypatch):
+    """3차의 다른 기록 폴더를 보는 견줘 보기 하나를 잠깐 더한다 (바로 전 판정 자리에 — 규칙은 회차마다 2개)."""
+    monkeypatch.delitem(PROFILES, SHOOT3_PREV)
+    monkeypatch.setitem(PROFILES, OTHER, dataclasses.replace(
+        PROFILES[3], name="다른 기록", records=PROFILES[3].records.with_name("dual_eval_shoot3"), out=PROFILES[3].out.with_name("shoot3_other"),
+        can_tune=False, thumbs=PROFILES[3].out / "thumbs", overrides=("fusion.overview_count=false",), note="시험"))
+    check_views()
+    return PROFILES[OTHER]
+
+
+def test_previous_view_judges_the_same_records_with_the_overview_dwell():
+    three, prev = PROFILES[3], PROFILES[SHOOT3_PREV]
+    assert SHOOT3_PREV == 31 and prev.shoot == 3 and Builder(SHOOT3_PREV).shoot == 3 and Builder(SHOOT3_PREV).key == SHOOT3_PREV
+    assert prev.records == three.records and prev.out != three.out          # 같은 기록, 만든 것은 따로
+    assert prev.overrides == ("fusion.overview_owner=false", "fusion.overview_dwell=true")
     for name in ("labels", "zones", "judge_file", "signature_files", "payment"):
-        assert getattr(old, name) == getattr(three, name), name             # 정답표 · 구역 · 적용한 값은 3차 것
-    assert three.can_tune and not old.can_tune and not old.can_add          # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
-    assert old.note and not three.note
-    # 예전 기록에는 전체 카메라 상품 기록이 없다 — 3차 기본(개수 · 든 사람 켬, 머묾 끔)을 예전 값으로 되돌려 판정한다
-    assert old.overrides == OLD_JUDGE == ("fusion.overview_count=false", "fusion.overview_owner=false", "fusion.overview_dwell=true")
+        assert getattr(prev, name) == getattr(three, name), name            # 정답표 · 구역 · 적용한 값은 3차 것
+    assert three.can_tune and not prev.can_tune and not prev.can_add        # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
+    assert prev.note and not three.note and prev.thumbs == three.out / "thumbs"
+    assert Builder(SHOOT3_PREV).signature("C01") != Builder(3).signature("C01")       # 얹는 값이 다르면 다시 만든다
     assert main_views() == [2, 3]
 
 
-def test_dwell_view_judges_the_same_records_with_the_overview_dwell():
-    three, dwell = PROFILES[3], PROFILES[SHOOT3_DWELL]
-    assert dwell.records == three.records and dwell.out != three.out        # 같은 기록, 만든 것은 따로
-    assert dwell.overrides == ("fusion.overview_owner=false", "fusion.overview_dwell=true")
-    assert dwell.shoot == 3 and not dwell.can_tune and dwell.note and dwell.thumbs == PROFILES[SHOOT3_GENERIC].thumbs
-    assert Builder(SHOOT3_DWELL).signature("C01") != Builder(3).signature("C01")      # 얹는 값이 다르면 다시 만든다
-    assert set(PROFILES) == {2, 3, SHOOT3_GENERIC, SHOOT3_DWELL}
-    assert main_views() == [2, 3]
+def test_each_shoot_keeps_at_most_two_views(monkeypatch):
+    """사용자 규칙 (2026-11-20): 분석 도구의 보기는 회차마다 최신 2개 — 지금 기준과 바로 전 판정."""
+    assert MAX_VIEWS == 2 and set(PROFILES) == {2, 3, SHOOT3_PREV}
+    assert views_of(3) == [3, SHOOT3_PREV] and views_of(2) == [2]
+    check_views()
+    monkeypatch.setitem(PROFILES, 32, dataclasses.replace(PROFILES[SHOOT3_PREV], out=PROFILES[3].out.with_name("shoot3_third")))
+    with pytest.raises(RuntimeError, match="최신 2개"):
+        check_views()                                                       # 세 번째를 더하면 멈춘다 — 가장 옛 것을 지워야 한다
+    monkeypatch.setitem(PROFILES, 32, dataclasses.replace(PROFILES[2], shoot=2, out=PROFILES[2].out))
+    with pytest.raises(RuntimeError, match="같은 폴더"):
+        check_views()
 
 
-def test_engine_points_the_judge_at_the_views_records():
+def test_stale_outputs_are_the_folders_no_view_uses(tmp_path, monkeypatch):
+    monkeypatch.setattr(wb_data, "OUT", tmp_path)
+    for name in ("shoot3", "shoot3_prev", "shoot3_generic", "shoot3_owner", "pairs", "thumbs"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "shoot_note.txt").write_text("x", encoding="utf-8")         # 폴더만 본다
+    monkeypatch.setitem(PROFILES, 3, dataclasses.replace(PROFILES[3], out=tmp_path / "shoot3"))
+    monkeypatch.setitem(PROFILES, SHOOT3_PREV, dataclasses.replace(PROFILES[SHOOT3_PREV], out=tmp_path / "shoot3_prev"))
+    assert [d.name for d in stale_outputs()] == ["shoot3_generic", "shoot3_owner"]   # 2차의 pairs · thumbs 는 안 건드린다
+
+
+def test_engine_points_the_judge_at_the_views_records(other_records):
     import dual_eval as de
+    assert other_records.records.name == "dual_eval_shoot3" and other_records.records != PROFILES[3].records
     try:
-        with Builder(SHOOT3_GENERIC).engine():
-            assert de.SHOOT == 3 and de.OUT == PROFILES[SHOOT3_GENERIC].records and de.LABELS == PROFILES[3].labels
+        with Builder(OTHER).engine():
+            assert de.SHOOT == 3 and de.OUT == other_records.records and de.LABELS == PROFILES[3].labels
         with Builder(3).engine():
             assert de.SHOOT == 3 and de.OUT == PROFILES[3].records          # 같은 회차라도 기록 폴더가 다르면 다시 맞춘다
-        with Builder(SHOOT3_GENERIC).engine():
-            assert de.OUT == PROFILES[SHOOT3_GENERIC].records
+        with Builder(OTHER).engine():
+            assert de.OUT == other_records.records
     finally:
         de.set_profile(2)
 
 
 def test_thumbnail_is_copied_from_the_base_view(tmp_path):
-    builder = Builder(SHOOT3_GENERIC)
+    builder = Builder(SHOOT3_PREV)
     ready = tmp_path / "base"
     ready.mkdir()
     (ready / "C01.jpg").write_bytes(b"jpg")
@@ -130,12 +160,12 @@ def test_thumbnail_is_copied_from_the_base_view(tmp_path):
 
 def test_server_never_opens_on_a_compare_view_and_has_no_tuner_for_it(monkeypatch):
     from workbench import server
-    assert SHOOT3_GENERIC in server.BUILDERS and SHOOT3_GENERIC not in server.TUNERS
+    assert SHOOT3_PREV in server.BUILDERS and SHOOT3_PREV not in server.TUNERS
     assert set(server.TUNERS) == {2, 3}
     for key, b in server.BUILDERS.items():
         monkeypatch.setattr(b, "pairs", lambda key=key: ["C01"])            # 모든 보기에 기록이 있다고 치고
     assert server.shoot_of(None, None) == 3                                 # 처음 여는 화면은 가장 최근 회차
-    assert server.shoot_of(str(SHOOT3_GENERIC)) == SHOOT3_GENERIC           # 골라서 여는 것은 된다
+    assert server.shoot_of(str(SHOOT3_PREV)) == SHOOT3_PREV           # 골라서 여는 것은 된다
     with pytest.raises(ValueError):
         server.shoot_of("30")
 
