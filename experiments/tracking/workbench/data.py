@@ -34,11 +34,12 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 10
+VERSION = 11
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
-10: 전체 카메라 번호 맞바뀜 되돌리기 (fusion.swap_repair, 후속 49) — 보기 데이터에 swaps 가 생기고 3차 C20 의 번호·짝이 달라진다."""
+10: 전체 카메라 번호 맞바뀜 되돌리기 (fusion.swap_repair, 후속 49) — 보기 데이터에 swaps 가 생기고 3차 C20 의 번호·짝이 달라진다.
+11: 전체 카메라에서 찾은 상품 (overview_items, 후속 52) — 보기만 하고 판정은 그대로다."""
 RUN_KEY = "current"
 
 
@@ -202,7 +203,8 @@ class Builder:
         p = self.profile
         files = [*p.signature_files, p.judge_file, self.events_dir() / f"{pair}.json",
                  self.records_dir() / pair / ".done",
-                 self.records_dir() / pair / "meta.json"]
+                 self.records_dir() / pair / "meta.json",
+                 self.records_dir() / pair / "angle1" / "product_items.meta.json"]     # 전체 카메라 상품 (있을 때만)
         h = hashlib.sha1(f"v{VERSION}".encode())
         # 짝마다 한 줄씩 있는 표는 그 짝의 줄만 본다 — 한 영상의 시차·결제를 고쳤다고 38쌍을 다 다시 만들지 않게
         for table in (p.labels / "sync.csv", p.labels / "truth.csv", self.payments_file(), p.labels / "added.csv"):

@@ -19,6 +19,10 @@ const LEGEND = {
 };
 const PALETTE = ["#4c6ef5", "#f76707", "#0ca678", "#d6336c", "#7048e8", "#f08c00", "#1098ad", "#74b816"];
 const GRAY = "#a8a79f";
+/* 상품 탐지 모델이 아는 종류 (labels/products_shoot3). 일반 YOLO 의 이름(bottle …)은 예전처럼 초록 한 색 */
+const ITEM_COLOR = { cantata: "#e599f7", donggwaru: "#66d9e8", applecider: "#8ce99a" };
+const ITEM_NAME = { cantata: "칸타타", donggwaru: "동과루", applecider: "애플사이다" };
+const ITEM_PLAIN = "#69db7c";
 const ZONE_NAME = { shelf: "선반 앞", counter: "계산대", door: "출구", outside: "문 밖", aisle: "통로" };
 const ZONE_COLOR = { SHELF: "#f08c00", CHECKOUT: "#0ca678", EXIT: "#e03131", OUTSIDE: "#868e96", OTHER: "#4c6ef5" };
 const LEVEL_NAME = { HIGH_RISK: "경보", REVIEW: "확인 필요", CLEAR: "통과" };
@@ -273,6 +277,11 @@ class Player {
       this.keyMs[cam] = this.keys[cam].map(k => tr.ms ? tr.ms[k] : k * 1000 / tr.fps);
     }
     this.itemMs = data.shelf_items.map(r => r.length > 2 ? r[2] : r[0] * 1000 / data.tracks.angle0.fps);
+    this.overItems = data.overview_items || [];        // 전체 카메라에서 찾은 상품 (보기만 — 판정에는 안 쓴다)
+    this.overItemMs = this.overItems.map(r => r[2]);
+    const kinds = new Set();
+    for (const rows of [data.shelf_items, this.overItems]) for (const r of rows.slice(0, 40)) for (const it of r[1]) if (ITEM_COLOR[it[0]]) kinds.add(it[0]);
+    this.itemKinds = Object.keys(ITEM_COLOR).filter(k => kinds.has(k));
     this.floor = data.floor ? this.floorSetup(data.floor) : null;
     this.showZones = lens === "verdict" || lens === "take";
     this.initLabels();
@@ -373,7 +382,8 @@ class Player {
     if (lens !== "label" && this.pick) { this.pick = null; this.showPick(); }
     this.drawLensBar();
     this.legend.replaceChildren(...LEGEND[lens].map(([tone, text]) => h("span", {},
-      h("i", { style: tone === "who" ? `background:${PALETTE[0]}` : "", class: tone === "who" ? "" : `tl-seg ${tone}`, }), text)));
+      h("i", { style: tone === "who" ? `background:${PALETTE[0]}` : "", class: tone === "who" ? "" : `tl-seg ${tone}`, }), text)),
+      ...(lens === "take" ? this.itemKinds.map(k => h("span", {}, h("i", { style: `background:${ITEM_COLOR[k]}` }), `상자 = ${ITEM_NAME[k]}`)) : []));
     for (const i of this.legend.querySelectorAll("i.tl-seg")) i.style.position = "static";
     this.logBox.hidden = lens === "label";
     if (lens === "label") {
@@ -670,6 +680,7 @@ class Player {
       const names = lens === "take" ? ["shelf"] : (lens === "verdict" ? ["counter", "door", "outside", "shelf"] : z.overview.map(q => q.name));
       for (const q of z.overview) if (names.includes(q.name)) this.poly(p, q.poly, ZONE_COLOR[q.type] || "#868e96", ZONE_NAME[q.name] || q.name, 0.08);
     }
+    if (lens === "take" && this.showZones) this.drawItems(p, this.itemsNear(this.overItems, this.overItemMs, this.t));
     for (const r of this.rowsAt("angle1")) {
       const rid = r[1], cust = this.customers.has(rid);
       if (!cust) {
@@ -714,11 +725,7 @@ class Player {
     if (lens === "take" && this.showZones) {
       const active = new Set(this.data.takes0.filter(t => t.start <= this.t && this.t <= t.end + 150).map(t => t.zone));
       for (const s of z.slots) this.poly(p, s.poly, active.has(s.name) ? "#ff3b6b" : "#ffd43b", `${s.name} 칸`, active.has(s.name) ? 0.28 : 0);
-      const items = this.itemsAt();
-      for (const it of items) {
-        p.ctx.strokeStyle = "#69db7c"; p.ctx.lineWidth = 1.5 * p.u;
-        p.ctx.strokeRect(it[1], it[2], it[3] - it[1], it[4] - it[2]);
-      }
+      this.drawItems(p, this.itemsAt());
     }
     for (const r of this.rowsAt("angle0")) {
       const rid = r[1], l = rid > 0 ? this.linkOf(rid) : null;
@@ -735,12 +742,21 @@ class Player {
       }
     }
   }
-  itemsAt() {
-    const local = this.t - this.offset, ms = this.itemMs;
-    let best = -1;
-    for (let i = 0; i < ms.length; i++) { if (ms[i] <= local) best = i; else break; }
+  itemsAt() { return this.itemsNear(this.data.shelf_items, this.itemMs, this.t - this.offset); }
+  /* 그 시각 바로 앞 장면의 물건들 (1초 넘게 비면 없음). rows = [[장면 번호, 물건들, …]], ms = 줄마다의 시각 */
+  itemsNear(rows, ms, local) {
+    let lo = 0, hi = ms.length;                       // ms[lo - 1] <= local 인 가장 큰 lo
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (ms[mid] <= local) lo = mid + 1; else hi = mid; }
+    const best = lo - 1;
     if (best < 0 || local - ms[best] > 1000) return [];
-    return this.data.shelf_items[best][1];
+    return rows[best][1];
+  }
+  drawItems(p, items) {
+    p.ctx.lineWidth = 1.5 * p.u;
+    for (const it of items) {
+      p.ctx.strokeStyle = ITEM_COLOR[it[0]] || ITEM_PLAIN;
+      p.ctx.strokeRect(it[1], it[2], it[3] - it[1], it[4] - it[2]);
+    }
   }
 
   /* -- 바닥 지도 (3차: 두 화면 짝을 바닥 위 거리로 맺을 때). 줄 끝 r[10] = 발의 바닥 좌표 [x, y] 또는 [x, y, dx, dy](발목이 안 보임) */
