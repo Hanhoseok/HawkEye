@@ -100,3 +100,40 @@ def test_item_rows_drop_weak_boxes_and_carry_the_frame_time(tmp_path):
                                                       ["donggwaru", 1.0, 2.0, 3.0, 4.0, 0.2]]}) + "\n", encoding="utf-8")
     assert rx._item_rows(path, lambda f: f * 16.666) == [[4, [["cantata", 10, 21, 30, 40, 90]], 66.7]]
     assert rx._item_rows(tmp_path / "none.jsonl", None) == []               # 기록이 없으면 빈 목록 (일반 YOLO 기록)
+
+
+# ---------------------------------------------------------------------- 개수로 세기 (--count)
+
+def test_merge_keeps_one_of_two_heavily_overlapping_boxes_of_a_kind():
+    a, b = ["cantata", 1498, 673, 1547, 755, 0.71], ["cantata", 1502, 673, 1547, 734, 0.32]      # 3차 C01 — 한 캔에 상자 둘 (IoU 0.68)
+    assert 0.6 < po.iou(a, b) < 0.7
+    assert po.merge([b, a]) == [a]                                          # 점수 높은 것이 남는다
+    assert len(po.merge([a, b], 1.0)) == 2                                  # 1 이면 안 합친다
+    other = ["donggwaru", 1502, 673, 1547, 734, 0.9]
+    assert len(po.merge([a, other])) == 2                                   # 다른 종류는 겹쳐도 따로
+    assert len(po.merge(SHELF)) == len(SHELF)                               # 나란히 선 것은 그대로
+
+
+def test_counts_are_per_kind_inside_the_shelf_region():
+    region = po.shelf_region(rows(), TIMES)
+    assert po.counts(SHELF, region) == (2, 3, 1)
+    assert po.counts(SHELF + [item("cantata", 900, 500)], region) == (2, 3, 1)          # 선반 밖(손에 든 것)은 안 센다
+    assert po.counts(SHELF[1:], region) == (1, 3, 1)
+    assert po.counts(SHELF, None) == (0, 0, 0)
+
+
+def test_stable_states_skip_brief_occlusion_and_keep_the_order():
+    gone = [it for it in SHELF if it[0] != "applecider"]
+    taken = SHELF[1:]                                                       # 칸타타 하나 꺼냄
+    r = rows()
+    for x in r:
+        if 200 <= x["frame"] < 220:                                         # 0.33초 가림 — 거른다
+            x["items"] = gone
+        elif 400 <= x["frame"] < 520:                                       # 2초 가림 — 개수로 남는다 (가림과 진짜 변화를 가르지 못한다)
+            x["items"] = gone
+        elif x["frame"] >= 520:
+            x["items"] = taken
+    region = po.shelf_region(r, TIMES)
+    assert po.stable_states(r, TIMES, region) == [(2, 3, 1), (2, 3, 0), (1, 3, 1)]
+    assert po.stable_states([], TIMES, region) == []
+
