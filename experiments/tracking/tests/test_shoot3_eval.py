@@ -159,15 +159,15 @@ def test_pair_detail_carries_the_floor_map_moved_to_the_clip():
 
 # ---------------------------------------------------------------------- 3차 기준 = 상품 모델 기록 (후속 56)
 
-def test_shoot3_judges_with_the_product_records_and_without_the_overview_dwell():
+def test_shoot3_judges_with_the_product_records_and_counts_held_items_at_once():
     import dual_eval as D
     from src.core.config import AppConfig
 
     cfg = AppConfig()
-    assert cfg.fusion.overview_dwell and not cfg.fusion.overview_count and not cfg.fusion.overview_owner     # 코드 기본 (2차)
+    assert not cfg.fusion.overview_count and not cfg.fusion.overview_owner and not cfg.fusion.overview_instant   # 코드 기본 (2차)
     D.use_product_records(cfg)
     assert cfg.shelves.model_path == D.PRODUCT_MODEL
-    assert cfg.fusion.overview_count and cfg.fusion.overview_owner and not cfg.fusion.overview_dwell
+    assert cfg.fusion.overview_count and cfg.fusion.overview_owner and cfg.fusion.overview_instant
     assert D.RECORDS == {2: "dual_eval_pose3", 3: "dual_eval_shoot3_prod"}
 
 

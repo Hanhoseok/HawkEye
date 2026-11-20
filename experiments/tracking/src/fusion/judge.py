@@ -22,7 +22,7 @@ import numpy as np
 from ..core.config import FusionConfig, InteractionConfig
 from ..core.types import Frame, IdentityObservation, RiskEvent, TakeCandidate
 from ..interaction.detector import InteractionDetector
-from ..risk.customers import ShelfVisit
+from ..risk.customers import HeldItem, ShelfVisit
 from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
@@ -99,6 +99,10 @@ class DualJudge:
             self.reach.reset()
         self._pending_takes: list[tuple[float, TakeCandidate]] = []
         self._pending_visits: list[tuple[float, ShelfVisit, float, float]] = []
+        self.held: list[dict] = []
+        """손에 든 것을 본 기록 (fusion.overview_instant): pid · name · seen_ms(처음 본 때) · ms(확정한 때) · counted(셌나) ·
+        why(안 셌으면 까닭) · until_ms(이것을 대신한 선반 방문이 끝난 때 — 아직 안 바뀌었으면 None)."""
+        self._settled: list[tuple[float, float]] = []
         self._waiting: list[tuple[float, float, str]] = []
         """넘길 때가 됐는데 전체 카메라 개수를 기다리느라 붙들고 있는 방문 (시작 ms, 끝 ms, 선반) — fusion.overview_count 일 때만 생긴다."""
         self.events: list[RiskEvent] = []
@@ -297,13 +301,15 @@ class DualJudge:
         self,
         frame: Frame,
         identities: list[IdentityObservation],
-        takes: list[TakeCandidate],
         merges: list[dict],
         appearance: Callable[[int], np.ndarray | None] | None = None,
         resolve: Callable[[int], int] | None = None,
         products: list | None = None,
     ):
-        """products = 이 장면에서 찾은 상품 상자 [[종류, x1, y1, x2, y2, 점수], …] (fusion.overview_count 일 때만 쓴다)."""
+        """products = 이 장면에서 찾은 상품 상자 [[종류, x1, y1, x2, y2, 점수], …] (fusion.overview_count 일 때만 쓴다).
+
+        전체 카메라의 '선반 앞 머묾'(선반 구역에 느리게 3초)은 여기 들어오지 않는다 — 상품 · 관절 인식 전의 임시 근거라 지웠다 (후속 58).
+        이 카메라가 판정에 넣는 것: 사람의 위치 · 팔 뻗기(주인 근거) · 상품 개수 · 상품을 든 사람."""
         w, h = self.overview_size
         if self.counter is not None and products is not None:
             self.counter.update(frame.pts_ms, products, [o.bbox for o in identities])
@@ -332,8 +338,8 @@ class DualJudge:
                 self.fuser.note_band(frame.pts_ms, pid)
         if self.holders is not None and products is not None:
             self.holders.update(frame.pts_ms, products, hands, self.counter.region)
-        if not self.config.overview_dwell:
-            takes = []   # 전체 카메라의 '선반 앞 머묾'은 판정에 안 넣는다 (fusion.overview_dwell)
+            if self.config.overview_instant:
+                self._count_held(frame)
         self._note_boxes("overview", frame.pts_ms, boxes)
         self.linker.update(frame.pts_ms)
         if self.config.swap_repair and self.linker.closed != self._closed_seen:
@@ -345,22 +351,22 @@ class DualJudge:
         # 손 접촉과 방문이 같은 손님으로 해석된다 (2차 C1: 일찍 정하면 손 접촉과 방문의 주인이 갈렸다)
         delay = self.config.release_delay_seconds * 1000.0
         fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.VISIT_DELAY_MS)
+        self._settle_held()
         fused_visits += self.fuser.sensor_only(frame.pts_ms, self._waiting)
         if not self.config.overview_reach_takes:
             reach_takes = []   # 주인 정하기 근거로만 (note_reach 는 위에서 이미 적음)
         merges = self._note_merges(merges)
-        takes = list(takes)
         if self._store:
             # 손님 장부에는 매장 신원으로 (팔 뻗기 감지기는 위에서 화면 신원 그대로 봤다 — 그쪽은 _reach_takes 가 바꾼다)
             identities = [self._renamed(o, resolve) for o in identities]
-            takes = [self._renamed(t, resolve) for t in takes]
-        events, records = self.risk.update(frame, identities, takes + reach_takes + fused_takes, merges, fused_visits)
+        events, records = self.risk.update(frame, identities, reach_takes + fused_takes, merges, fused_visits)
         self.events.extend(events)
         return events, records
 
     def finish(self, frame: Frame, resolve: Callable[[int], int] | None = None) -> list[RiskEvent]:
         reach_takes = self._reach_takes(self.reach.flush(), resolve) if self.reach else []
         fused_takes, fused_visits = self._release(float("inf"), float("inf"))
+        self._settle_held()
         if self.config.overview_reach_takes:
             fused_takes = reach_takes + fused_takes
         fused_visits += self.fuser.sensor_only(float("inf"))
@@ -370,6 +376,37 @@ class DualJudge:
         done = self.risk.finish(frame, self.overview_size)
         self.events.extend(done)
         return done
+
+    def _count_held(self, frame: Frame) -> None:
+        """전체 카메라가 방금 '손에 들었다'고 확정한 상품을 그 손님의 물건으로 먼저 센다 (fusion.overview_instant).
+
+        선반 방문은 선반을 가린 사람이 비켜야 끝난다 — 그때까지 개수를 기다리지 않는다. 손에서 처음 보기 조금 전에 선반 앞에 있던
+        사람만 센다 (들고 들어온 손님 · 계산대에서 건네받은 일행은 안 센다)."""
+        book = getattr(self.risk, "book", None)
+        if book is None:
+            return
+        near = self.config.overview_instant_near_seconds * 1000.0
+        axis = self.fuser.overview_axis
+        for pid, name, seen_ms, ms in self.holders.fresh():
+            at_shelf = pid in {book.resolve(p) for p in self.fuser.present(seen_ms - near, ms)}
+            self.held.append({"pid": pid, "name": name, "seen_ms": seen_ms, "ms": ms, "counted": at_shelf,
+                              "why": "" if at_shelf else "선반 앞에 있지 않았음", "until_ms": None})
+            if at_shelf:
+                book.add_held(HeldItem(pid, name, axis.to_frame(seen_ms - near), frame.index, seen_ms), frame.pts_ms)
+
+    def _settle_held(self) -> None:
+        """방금 넘긴 선반 방문이 덮는 '든 것'을 지운다 — 그 방문의 개수 · 주인이 대신한다 (방문을 장부에 넣기 바로 전에 부른다)."""
+        settled, self._settled = self._settled, []
+        book = getattr(self.risk, "book", None)
+        if book is None or not self.held:
+            return
+        slack = self.config.event_tolerance_seconds * 1000.0   # 방문의 시작(선반 카메라가 본 가림)과 전체 카메라 시각의 어긋남 (3차 C02: 0.3초 앞)
+        for start_ms, end_ms in settled:
+            gone = book.drop_held(start_ms - slack, end_ms + self.VISIT_DELAY_MS)
+            for h in gone:
+                for row in self.held:
+                    if row["until_ms"] is None and row["counted"] and row["seen_ms"] == h.seen_ms and row["name"] == h.name:
+                        row["until_ms"] = end_ms
 
     def _standing(self, identities: list[IdentityObservation]) -> list[IdentityObservation]:
         """발(상자 아래 가운데)이 화면의 선반 영역 밖인 사람만 — 선반 위 상품 포장의 사람 그림에 관절이 잡힌
@@ -426,6 +463,7 @@ class DualJudge:
                 keepv.append(item)
             elif end_ms <= visits_until_ms:
                 fused = self.fuser.detail_visit(visit, start_ms, stop_ms)
+                self._settled.append((start_ms, stop_ms))
                 visits.append(fused)
                 visits += self.fuser.take_shares()   # 든 사람별로 나눈 방문의 나머지 몫 (fusion.overview_owner)
                 if self.config.unchanged_clears_all and fused.removed == 0 and fused.added == 0                         and fused.slot_change is None:

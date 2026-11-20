@@ -96,11 +96,11 @@ def other_records(monkeypatch):
     return PROFILES[OTHER]
 
 
-def test_previous_view_judges_the_same_records_with_the_overview_dwell():
+def test_previous_view_judges_the_same_records_without_the_instant_count():
     three, prev = PROFILES[3], PROFILES[SHOOT3_PREV]
     assert SHOOT3_PREV == 31 and prev.shoot == 3 and Builder(SHOOT3_PREV).shoot == 3 and Builder(SHOOT3_PREV).key == SHOOT3_PREV
     assert prev.records == three.records and prev.out != three.out          # 같은 기록, 만든 것은 따로
-    assert prev.overrides == ("fusion.overview_owner=false", "fusion.overview_dwell=true")
+    assert prev.overrides == ("fusion.overview_instant=false",)
     for name in ("labels", "zones", "judge_file", "signature_files", "payment"):
         assert getattr(prev, name) == getattr(three, name), name            # 정답표 · 구역 · 적용한 값은 3차 것
     assert three.can_tune and not prev.can_tune and not prev.can_add        # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다

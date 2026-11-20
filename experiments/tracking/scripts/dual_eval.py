@@ -227,7 +227,7 @@ def use_product_records(cfg: AppConfig) -> None:
     """3차 기본: 상품 모델 기록으로 판정한다 (후속 56). 까닭은 dual_config 의 3차 갈래 설명."""
     cfg.shelves.model_path = PRODUCT_MODEL
     cfg.fusion.overview_count = cfg.fusion.overview_owner = True
-    cfg.fusion.overview_dwell = False
+    cfg.fusion.overview_instant = True   # 손에 든 것을 보면 바로 센다 (후속 59) — 방문이 끝나면 그 개수 · 주인으로 바뀐다
 
 
 def missing_model(cfg: AppConfig) -> Path | None:
@@ -280,8 +280,8 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
         # 3차: 기준은 상품 모델 기록이다 (후속 56, 2026-11-20 사용자 결정 — 최종 판정은 상품 모델 기록 + 센서 로그 + 결제 로그).
         #  - 선반 물건 탐지 = 상품 모델. 일반 탐지 모델은 이 상품들을 못 봐 선반 지도가 대부분 '변화 없음'이었다 (개수 맞은 영상 7 → 34 / 39, 후속 50).
         #  - 선반 방문의 개수 = 전체 카메라가 센 상품 개수 (후속 54), 주인을 못 정한 방문의 주인 = 그 상품을 먼저 든 사람 (후속 55).
-        #  - 전체 카메라의 '선반 앞 머묾'은 판정에 안 넣는다 (D-1 — 상품 · 관절 인식 전의 임시 근거). --set fusion.overview_dwell=true 로 되돌린다.
-        # 2차에서는 안 켠다: 2차 상품용 모델이 없다 (머묾을 빼면 T9 를 놓친다, 32 → 31).
+        # 전체 카메라의 '선반 앞 머묾'은 2차 · 3차 모두 판정에 없다 (후속 58 — 상품 · 관절 인식 전의 임시 근거라 코드를 지웠다).
+        # 2차에는 상품용 모델이 없어 개수 · 든 사람을 못 켠다 — 그래서 2차 T9 를 놓친다 (32 → 31, 한계 D-1).
         use_product_records(cfg)
     # 한 장면에 같은 신원은 상자 하나만 — 둘이 겹치면 그 신원의 평균 외형과 더 닮은 상자가 지키고 나머지는 다시 판정 (후속 48, 2026-11-16).
     # 3차 T09: 창가 그림 상자의 신원을 문 앞 손님이 받아 가 창가 상자가 손님으로 그려지던 것 — 0.27초 뒤 창가 상자가 신원을 되찾고 손님은 새 신원.
@@ -625,7 +625,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
                 merges_seen.append(pending_merges.pop(0))
             frame = Frame(index=idx, timestamp="", pts_ms=ms, image=None, camera_id="angle1")
             now_frame["idx"] = idx
-            judge.overview_step(frame, log.ids["angle1"].get(idx, []), take_at["angle1"].get(idx, []),
+            judge.overview_step(frame, log.ids["angle1"].get(idx, []),
                                 merges_seen, log.appearance("angle1", 0.0, ms), log.resolver("angle1", idx),
                                 products.get(idx, []) if products is not None else None)
             last = frame
@@ -647,6 +647,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
         "unmatched_payments": sum(1 for p in risk.book.payments if p.method == "unmatched"),
         "cancels": sum(1 for p in risk.book.payments if p.method == "cancel"),
         "shelf_events": [r.to_dict() for r in judge.fuser.records],
+        "held": [{**h, "pid": judge.final_id(h["pid"], resolve_end)} for h in judge.held],
     }
 
 
@@ -658,7 +659,7 @@ def overview_products(pair: str) -> dict[int, list]:
         raise FileNotFoundError(f"{pair}: angle1/product_items.jsonl 없음 — fusion.overview_count (3차 기본) 는 "
                                 "scripts/product_overview_items.py 로 전체 카메라 상품을 찾아 둔 기록에서만. "
                                 "예전 기록(일반 탐지 모델)을 판정하려면 --set fusion.overview_count=false "
-                                "--set fusion.overview_owner=false --set fusion.overview_dwell=true")
+                                "--set fusion.overview_owner=false")
     return {r["frame"]: r["items"] for r in PairLog._jsonl(path)}
 
 

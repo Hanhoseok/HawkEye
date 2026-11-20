@@ -25,7 +25,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 
 SCORE = 0.25
@@ -222,6 +222,8 @@ HOLD_FRAMES = 5
 3차 정상(N) 영상에서 **그 방문에서 줄지 않은 종류**가 손에 붙은 장면은 방문마다 최대 1장이었다 — 그 위로 잡았다.
 복합 · 절도 영상에는 6 ~ 7장 붙은 방문이 셋 있다 (C01 · C19 · T05) — 줄지 않은 종류는 묻지 않으므로 결과에는 안 들어갔다.
 3 ~ 20장에서 3차 39편의 판정 점수는 같았다 (docs/shelf-map.md)."""
+HOLD_WITHIN_MS = 2000.0
+"""바로 세기(fresh): HOLD_FRAMES 장면이 이 시간 안에 모여야 '지금 들었다'로 본다. 맞춰 정한 값이 아니다."""
 REACH = 1.5
 """상품 상자 가운데에서 손목까지의 거리가 상품 상자 대각선의 이 배수 안이면 그 사람이 든 것으로 본다.
 맞춰 정한 값이 아니다 — 0(손목을 안 쓰고 상자만) · 1 · 1.5 · 2.5 에서 3차 39편의 판정 점수는 같았다."""
@@ -271,6 +273,9 @@ class HolderTracker:
     def reset(self) -> None:
         self.samples: list[tuple[float, int, str]] = []
         """(ms, 신원, 종류) — 그 장면에서 그 사람이 그 종류를 들고 있었다."""
+        self._recent: dict[tuple[int, str], deque] = {}
+        self._fresh: list[tuple[int, str, float, float]] = []
+        self._told: set[tuple[int, str]] = set()
 
     def update(self, ms: float, items: list, people: list, region) -> None:
         """전체 카메라 한 장면. people = [(신원, 사람 상자, 관절), …]. region = 선반 자리 (아직 없으면 아무것도 안 적는다)."""
@@ -284,6 +289,25 @@ class HolderTracker:
             pid = holder_of(it, people, self.reach)
             if pid is not None:
                 self.samples.append((ms, pid, it[0]))
+                recent = self._recent.setdefault((pid, it[0]), deque(maxlen=self.min_frames))
+                recent.append(ms)
+                if len(recent) == self.min_frames and ms - recent[0] <= HOLD_WITHIN_MS:
+                    self._fresh.append((pid, it[0], recent[0], ms))
+
+    def fresh(self) -> list[tuple[int, str, float, float]]:
+        """지난번 물은 뒤로 '들었다'고 확정된 것 — (신원, 종류, 손에서 처음 본 ms, 확정한 ms).
+
+        그 사람 손에서 그 종류를 HOLD_WITHIN_MS 안에 min_frames 장면 본 순간 한 번 나온다 ('처음 본 ms'는 그 장면들의 첫 장면 —
+        한참 전에 한 장면 스친 것은 안 친다: 3차 N06 은 1.1초에 한 장면, 7.5초부터 이어서 보였다). 같은 사람 · 같은 종류는 다시 안 나온다
+        (같은 종류 둘째 것은 여기서 못 센다 — 선반 방문이 끝나면 그 개수로 바뀐다). fusion.overview_instant 가 쓴다."""
+        out = []
+        for pid, name, first, ms in self._fresh:
+            key = (self.resolve(pid), name)
+            if key not in self._told:
+                self._told.add(key)
+                out.append((key[0], name, first, ms))
+        self._fresh = []
+        return out
 
     def first_holders(self, name: str, start_ms: float, until_ms: float) -> list[int]:
         """[start_ms, until_ms] 에 그 종류를 든 사람들 — 먼저 든 순서. 방문 전에 이미 들고 있던 사람은 뺀다."""

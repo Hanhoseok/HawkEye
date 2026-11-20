@@ -34,7 +34,7 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 13
+VERSION = 14
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -42,7 +42,9 @@ VERSION = 13
 11: 전체 카메라에서 찾은 상품 (overview_items, 후속 52) — 보기만 하고 판정은 그대로다.
 12: 전체 카메라의 선반 앞 머묾을 판정에 넣었는지 (overview_dwell, 후속 55) — 뺀 보기는 그 줄에 '판정에 안 씀'이 붙는다.
 13: 3차의 기본 기록이 상품 모델 기록으로, 3차 기본 판정이 전체 카메라 개수 · 든 사람 · 머묾 안 씀으로 (후속 56). 보기 31 · 32 의 뜻이 바뀌고 33 은 없어졌다.
-(같은 날, 후속 57) 보기는 회차마다 최신 2개만 둔다 — 31 = 3차의 바로 전 판정, 32 는 없앴다. 만드는 내용은 그대로라 번호를 안 올렸다."""
+(같은 날, 후속 57) 보기는 회차마다 최신 2개만 둔다 — 31 = 3차의 바로 전 판정, 32 는 없앴다. 만드는 내용은 그대로라 번호를 안 올렸다.
+14: 전체 카메라의 '선반 앞 머묾' 줄을 없앴다 (코드에서 지움, 후속 58). 손에 든 것을 보면 바로 세는 기록(held)과 그 줄이 생겼다 (후속 59).
+    31 = 바로 세기를 끈 판정."""
 RUN_KEY = "current"
 
 
@@ -104,14 +106,14 @@ MAX_VIEWS = 2
 더 옛 판정은 점수만 본다: `scripts/dual_eval.py judge --out <기록> --set …` (docs/shelf-map.md)."""
 
 SHOOT3_PREV = 31
-"""바로 전 판정: 지금 기록(상품 모델)을 '선반 앞 머묾'을 쓰던 판정으로 본 것 — 전체 카메라 개수는 쓰고, 든 사람으로 주인 정하기는 끄고,
-머묾은 켠다 (후속 54 까지의 판정). 머묾을 뺀 것이 무엇을 바꿨는지 견줘 보는 용도다.
+"""바로 전 판정: 지금 기록(상품 모델)을 '손에 든 것을 보면 바로 세기'(fusion.overview_instant, 후속 59) 없이 본 것 —
+물건 개수가 선반 방문이 끝난 뒤에야 오른다. 최종 판정은 같고 개수가 오르는 때만 다르다.
 정답표 · 시차 · 결제 · 구역 · 적용한 값은 3차 것을 그대로 쓴다 — 여기서 정답을 고치면 3차의 정답이 바뀐다."""
 PROFILES[SHOOT3_PREV] = replace(
-    PROFILES[3], name="3차 · 바로 전 판정 (머묾을 씀)", out=OUT / "shoot3_prev", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
-    overrides=("fusion.overview_owner=false", "fusion.overview_dwell=true"),
-    note="'3차 촬영'과 같은 기록입니다. 전체 카메라의 '선반 앞 머묾'을 집기 동작으로 쓰고, 주인을 못 정한 방문은 '모름'으로 두던 판정입니다 "
-         "(2026-11-20 후속 55 전). 수치 조정은 3차 촬영에서 합니다.")
+    PROFILES[3], name="3차 · 바로 전 판정 (방문이 끝나야 셈)", out=OUT / "shoot3_prev", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
+    overrides=("fusion.overview_instant=false",),
+    note="'3차 촬영'과 같은 기록입니다. 손에 든 것을 봐도 바로 세지 않고, 선반 방문이 끝나야 물건 개수가 오르던 판정입니다 "
+         "(2026-11-21 후속 59 전). 수치 조정은 3차 촬영에서 합니다.")
 
 
 def views_of(shoot: int) -> list[int]:
@@ -363,7 +365,6 @@ class Builder:
                 data["sync"] = {"offset_ms": row.offset_ms if row else 0.0, "method": row.method if row else "none",
                                 "checked_by": row.checked_by if row else "", "note": row.note if row else ""}
                 cfg = de.dual_config(base, pair)   # 방금 판정에 쓴 값 그대로 (적용한 값·초안 포함)
-                data["overview_dwell"] = cfg.fusion.overview_dwell   # 전체 카메라의 선반 앞 머묾을 판정에 넣었나
                 dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" else None
                 summary = analyze(data, result, dwell)
                 data["summary"] = summary

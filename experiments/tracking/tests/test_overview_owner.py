@@ -1,5 +1,5 @@
 """주인을 못 정한 방문의 주인 = 전체 카메라에서 그 상품을 먼저 든 사람 (fusion.overview_owner),
-전체 카메라의 '선반 앞 머묾'을 판정에서 빼는 설정 (fusion.overview_dwell), 늦게 들어온 방문의 계산대 결제 (후속 55)."""
+늦게 들어온 방문의 계산대 결제 (후속 55). 전체 카메라의 '선반 앞 머묾'은 코드에서 지웠다 (후속 58)."""
 
 from __future__ import annotations
 
@@ -206,32 +206,22 @@ def test_owner_setting_is_off_by_default_and_needs_the_count():
         return DualJudge(FusionConfig(**cfg), RecordingRisk(), floor, (1.0, 0.0), TimeAxis(30.0), TimeAxis(60.0),
                          1920, (1920, 1080), {}, None)
 
-    assert FusionConfig().overview_owner is False and FusionConfig().overview_dwell is True
+    assert FusionConfig().overview_owner is False and not hasattr(FusionConfig(), "overview_dwell")   # 머묾 설정은 없다 (후속 58)
     assert judge().holders is None and judge(overview_owner=True).holders is None
     both = judge(overview_count=True, overview_owner=True, overview_owner_frames=7)
     assert both.holders.min_frames == 7 and both.fuser.holders is both.holders and both.fuser.hold_wait_ms == DualJudge.VISIT_DELAY_MS
 
 
-# ---------------------------------------------------------------------- 선반 앞 머묾을 판정에서 빼기
+# ---------------------------------------------------------------------- 선반 앞 머묾은 없다 (후속 58)
 
-def test_overview_dwell_off_keeps_the_overview_takes_out_of_the_judge():
+def test_overview_camera_has_no_dwell_takes():
+    """전체 카메라의 '선반 앞 머묾'(선반 구역에 느리게 3초)은 상품 · 관절 인식 전의 임시 근거였다 — 판정에 넣는 길 자체가 없다."""
+    import inspect
+
     from src.fusion.judge import DualJudge
-    from src.zones.floor import FloorMap
 
-    floor = FloorMap.load(ROOT / "zones" / "store01_dual" / "floor.yaml")
-
-    def run(**cfg):
-        risk = RecordingRisk()
-        judge = DualJudge(FusionConfig(**cfg), risk, floor, (1.0, 0.0), TimeAxis(30.0), TimeAxis(60.0),
-                          1920, (1920, 1080), {}, None)
-        judge.reset()
-        frame = Frame(index=0, timestamp="", pts_ms=0.0, image=None, camera_id="angle1")
-        obs = IdentityObservation(person_id=3, track_id=3, bbox=(600, 200, 800, 900), frame=0, timestamp="")
-        judge.overview_step(frame, [obs], [take(3)], [])
-        return risk.takes
-
-    assert len(run()) == 1                           # 기본: 선반 앞 머묾이 집기 동작으로 들어간다
-    assert run(overview_dwell=False) == []
+    assert "takes" not in inspect.signature(DualJudge.overview_step).parameters
+    assert "takes" in inspect.signature(DualJudge.detail_step).parameters      # 선반 카메라의 손-칸 접촉은 그대로
 
 
 # ---------------------------------------------------------------------- 늦게 들어온 방문의 계산대 결제

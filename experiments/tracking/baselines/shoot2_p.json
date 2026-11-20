@@ -110,7 +110,7 @@
   "pair": "C2",
   "verdicts": [
    "HIGH_RISK",
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 2,
@@ -143,9 +143,9 @@
   "pair": "C3",
   "verdicts": [
    "CLEAR",
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -247,7 +247,7 @@
  {
   "pair": "N4",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -386,7 +386,7 @@
  {
   "pair": "T9",
   "verdicts": [
-   "HIGH_RISK",
+   "CLEAR",
    "HIGH_RISK"
   ],
   "correct": true,

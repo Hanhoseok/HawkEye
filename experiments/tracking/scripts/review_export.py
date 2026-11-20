@@ -367,8 +367,9 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
               "app": None if l.appearance is None else round(l.appearance, 2)} for l in judge.linker.links]
     takes0 = [{"pid": t.person_id, "zone": t.zone, "start": detail_ms(t.start_frame), "end": detail_ms(t.end_frame)}
               for t in log.takes["angle0"]]
-    takes1 = [{"pid": t.person_id, "zone": t.zone, "start": ov_ms(t.start_frame), "end": ov_ms(t.end_frame)}
-              for t in log.takes["angle1"]]
+    # 전체 카메라가 손에 든 상품을 본 기록 (fusion.overview_instant): 확정한 때부터, 그 시간을 덮는 선반 방문이 끝날 때까지 먼저 센 것
+    held = [{"pid": h["pid"], "name": h["name"], "seen": round(h["seen_ms"]), "ms": round(h["ms"]), "counted": h["counted"],
+             "why": h["why"], "until": None if h["until_ms"] is None else round(h["until_ms"])} for h in result.get("held", [])]
     visits = [{"pid": v["person_id"], "start": round(v["start_ms"] + offset), "end": round(v["end_ms"] + offset),
                "removed": v["removed"], "added": v["added"], "detail": v.get("detail", ""),
                "slot_change": v.get("slot_change")} for v in log.visits]
@@ -400,7 +401,7 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
         "births": {"angle1": _births(log, "angle1"), "angle0": _births(log, "angle0")},
         "revivals": {"angle1": _revivals(log, "angle1"), "angle0": _revivals(log, "angle0")},
         "events": events, "actions": actions, "customers": customers, "payments": payments, "links": links,
-        "takes0": takes0, "takes1": takes1, "visits": visits, "merges": merges,
+        "takes0": takes0, "held": held, "visits": visits, "merges": merges,
         "swaps": [{**s, "ms": round(s["ms"]), "found_ms": round(s["found_ms"])} for s in judge.swaps],
         "shelf_events": result["shelf_events"],
         "shelf_items": _shelf_items(run_dir, pair, m0["width"], m0["height"], f0, offset, lambda f: log.ms("angle0", f)),

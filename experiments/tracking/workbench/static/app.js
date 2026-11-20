@@ -564,6 +564,14 @@ class Player {
   itemsOf(pid) {
     let n = 0;
     for (const a of this.data.actions) if (a.pid === pid && a.end <= this.t) n += a.count;
+    // 손에 든 것을 보고 먼저 센 것: 확정한 때부터, 그 시간을 덮는 선반 방문이 끝날 때까지 (그 뒤는 위 행동의 개수가 대신한다).
+    // 끝까지 방문으로 안 바뀐 것은 행동 목록에 '든 것을 봄'으로 이미 들어 있다.
+    for (const h of this.data.held || []) {
+      if (h.pid !== pid || !h.counted || h.until === null || h.ms > this.t || this.t >= h.until) continue;
+      // 방문의 끝과 행동의 끝은 반올림이 달라 몇 ms 어긋난다 — 그 방문의 행동이 이미 세어졌으면 겹쳐 세지 않는다
+      if (this.data.actions.some(a => a.pid === pid && a.end <= this.t && Math.abs(a.end - h.until) < 100)) continue;
+      n += 1;
+    }
     return n;
   }
   paidOf(pid) {

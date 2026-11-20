@@ -90,9 +90,29 @@ class ShelfVisit:
         return take.start_frame <= self.end_frame and take.end_frame >= self.start_frame
 
 
+@dataclass(frozen=True)
+class HeldItem:
+    """전체 카메라가 본 '손에 든 상품' 하나 — 선반 방문이 끝나 개수가 확정되기 전에 먼저 세는 것 (fusion.overview_instant).
+
+    그 시간을 덮는 선반 방문이 장부에 들어오면 지워지고 방문의 개수 · 주인으로 바뀐다 (CustomerBook.drop_held)."""
+
+    person_id: int
+    name: str
+    """상품 종류."""
+    start_frame: int
+    """이 장면부터의 손 뻗기는 이 '든 것'이 대신한다 (손에서 처음 본 때의 조금 앞)."""
+    end_frame: int
+    """든 것으로 확정한 장면 — 이때부터 개수에 들어간다."""
+    seen_ms: float
+    """손에서 처음 본 시각. 선반 방문의 시간과 견주는 데 쓴다."""
+
+    def covers(self, take: TakeCandidate) -> bool:
+        return take.start_frame <= self.end_frame and take.end_frame >= self.start_frame
+
+
 KIND_NAMES = {
     "TAKE": "집음", "RETURN": "놓음", "MOVE": "자리 바뀜",
-    "TOUCH": "만지기만", "LOOK": "구경", "UNVERIFIED": "확인 못 한 집기 동작",
+    "TOUCH": "만지기만", "LOOK": "구경", "UNVERIFIED": "확인 못 한 집기 동작", "HELD": "든 것을 봄",
 }
 
 
@@ -103,7 +123,7 @@ class ShelfAction:
     person_id: int
     kind: str
     count: int
-    """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1."""
+    """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1, 든 것을 봄 +1."""
     start_frame: int
     end_frame: int
     evidence: str
@@ -181,6 +201,8 @@ class Customer:
     last_seen_ms: float
     takes: list[TakeCandidate] = field(default_factory=list)
     shelf_visits: list[ShelfVisit] = field(default_factory=list)
+    held: list[HeldItem] = field(default_factory=list)
+    """전체 카메라가 손에 든 것을 봐서 먼저 센 상품 (아직 선반 방문으로 안 바뀐 것)."""
     paid_items: int = 0
 
     # 계산대 구역
@@ -236,7 +258,8 @@ class Customer:
     @property
     def uncovered_takes(self) -> list[TakeCandidate]:
         """선반 기록이 대신하지 않은 집기 동작 (지켜보지 않는 선반, 또는 선반 기록이 없는 시간)."""
-        return [t for t in self.takes if not any(v.covers(t) for v in self.shelf_visits)]
+        return [t for t in self.takes
+                if not any(v.covers(t) for v in self.shelf_visits) and not any(h.covers(t) for h in self.held)]
 
     @property
     def shelf_net(self) -> int:
@@ -254,6 +277,9 @@ class Customer:
                 evidence="동작만", shelf=group[0].zone,
                 reach_frames=tuple((t.start_frame, t.end_frame) for t in group),
             ))
+        for h in self.held:
+            acts.append(ShelfAction(person_id=self.person_id, kind="HELD", count=1, start_frame=h.end_frame, end_frame=h.end_frame,
+                                    evidence="전체 카메라", detail=h.name))
         return sorted(acts, key=lambda a: a.start_frame)
 
     @property
@@ -267,13 +293,16 @@ class Customer:
 
     def count_detail(self) -> str:
         """물건 수의 근거 (판정 문구용). 선반 기록이 없으면 빈 문자열."""
-        if not self.shelf_visits:
+        if not self.shelf_visits and not self.held:
             return ""
         acts = self.actions
         parts = []
         took = sum(a.count for a in acts if a.kind == "TAKE")
         if took:
             parts.append(f"집음 {took}개")
+        held = sum(a.count for a in acts if a.kind == "HELD")
+        if held:
+            parts.append(f"든 것을 봄 {held}개")
         put = -sum(a.count for a in acts if a.kind == "RETURN")
         if put:
             parts.append(f"놓음 {put}개")
@@ -343,6 +372,7 @@ class CustomerBook:
             return
         dst.takes = sorted(dst.takes + src.takes, key=lambda c: c.start_frame)
         dst.shelf_visits = sorted(dst.shelf_visits + src.shelf_visits, key=lambda v: v.start_frame)
+        dst.held = sorted(dst.held + src.held, key=lambda h: h.end_frame)
         dst.paid_items += src.paid_items
         dst.dwell_paid_items += src.dwell_paid_items
         dst.first_seen_ms = min(dst.first_seen_ms, src.first_seen_ms)
@@ -372,6 +402,21 @@ class CustomerBook:
         customer.takes.append(candidate)
         return customer
 
+    def add_held(self, item: HeldItem, now_ms: float) -> Customer:
+        """전체 카메라가 그 손님 손에 든 상품을 봤다 — 선반 방문을 기다리지 않고 먼저 센다 (fusion.overview_instant)."""
+        customer = self._get(item.person_id, now_ms)
+        customer.held.append(item)
+        return customer
+
+    def drop_held(self, start_ms: float, until_ms: float) -> list[HeldItem]:
+        """[start_ms, until_ms] 에 손에서 처음 본 '든 것'을 모든 손님에게서 지운다 — 그 시간을 덮는 선반 방문이 대신한다."""
+        gone = []
+        for c in self.customers.values():
+            keep = [h for h in c.held if not start_ms <= h.seen_ms <= until_ms]
+            gone += [h for h in c.held if start_ms <= h.seen_ms <= until_ms]
+            c.held = keep
+        return gone
+
     def add_shelf_visit(self, visit: ShelfVisit, now_ms: float) -> Customer | None:
         """선반 방문 결과를 그 손님에게 붙인다. 누구 것인지 모르는(번호 0 이하) 변화는 세기만 한다."""
         if visit.person_id <= 0:
@@ -394,7 +439,11 @@ class CustomerBook:
         if (self.config.payment_mode != "dwell" or visit.held_ms is None or net <= 0
                 or c.stood_until_ms is None or c.stood_until_ms < visit.held_ms):
             return
-        # 아직 서 있는 손님이어도 여기서 센다 — dwell_payments 는 이미 센 만큼(dwell_paid_items)은 다시 세지 않는다
+        # 아직 서 있는 손님이어도 여기서 센다 — dwell_payments 는 이미 센 만큼(dwell_paid_items)은 다시 세지 않는다.
+        # 이미 결제된 만큼은 뺀다: 손에 든 것을 먼저 세어 둔 물건(HeldItem)은 계산대에서 이미 결제됐을 수 있다 (fusion.overview_instant)
+        net = min(net, c.unpaid)
+        if net <= 0:
+            return
         c.paid_items += net
         c.dwell_paid_items += net
         self.payments.append(PaymentRecord(round(now_ms / 1000.0, 3), net, c.person_id, "dwell", 1))

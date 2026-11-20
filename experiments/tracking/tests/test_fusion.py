@@ -260,7 +260,7 @@ def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
             x = wrist if 0.5 <= frame.pts_ms / 1000 <= 1.2 else 0.43 * w   # 0.5~1.2초 동안 손목이 선반 안
             obs = IdentityObservation(person_id=3, track_id=3, bbox=bbox, frame=i, timestamp="",
                                       keypoints=kp_with_wrist(x, 0.5 * h))
-            judge.overview_step(frame, [obs], [], [])
+            judge.overview_step(frame, [obs], [])
             last = frame
         judge.finish(last)
         return risk.takes, judge
@@ -295,7 +295,7 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
         frame = Frame(index=i, timestamp="", pts_ms=i * 1000.0 / 60, image=None, camera_id="angle1")
         obs = IdentityObservation(person_id=9, track_id=9, bbox=ghost, frame=i, timestamp="",
                                   keypoints=kp_with_wrist(0.2 * w, 0.55 * h))
-        judge.overview_step(frame, [obs], [], [])
+        judge.overview_step(frame, [obs], [])
         last = frame
     judge.finish(last)
     assert risk.takes == [] and not any(r.kind == "reach" for r in judge.fuser.records)
@@ -487,10 +487,10 @@ def test_dual_judge_marks_only_customers_and_people_standing_on_the_store_floor(
     # 장면을 넣으면 표본은 모두 쌓이고, 후보 표시만 다르다
     people = [obs(1, near, ankles(500.0, 980.0)), obs(4, far), obs(5, near)]
     frame = Frame(index=0, timestamp="", pts_ms=0.0, image=None, camera_id="angle1")
-    judge.overview_step(frame, people, [], [])
+    judge.overview_step(frame, people, [])
     assert set(judge.linker._overview) == {1, 4, 5} and judge.linker.overview_candidates(0.0) == [1]
     off, _ = judge_with(False)                                                         # 기본(꺼짐): 보인 신원 전부
-    off.overview_step(frame, people, [], [])
+    off.overview_step(frame, people, [])
     assert off.linker.overview_candidates(0.0) == [1, 4, 5]
 
 
