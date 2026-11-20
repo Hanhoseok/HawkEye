@@ -26,7 +26,7 @@ from ..risk.customers import ShelfVisit
 from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
-from .overview_count import OverviewCounter
+from .overview_count import HolderTracker, OverviewCounter
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
 
 
@@ -65,7 +65,14 @@ class DualJudge:
                                         late_ms=config.overview_count_wait_seconds * 1000.0)
                         if config.overview_count else None)
         """전체 카메라 상품 개수 (fusion.overview_count). overview_step 에 상품 탐지 결과(products)가 들어와야 센다."""
-        self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors, self.counter)
+        self.holders = (HolderTracker(min_frames=config.overview_owner_frames, score=config.overview_count_score)
+                        if config.overview_owner and self.counter is not None else None)
+        """전체 카메라에서 상품을 든 사람 (fusion.overview_owner). 주인을 못 정한 방문의 주인을 여기서 묻는다."""
+        self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors, self.counter,
+                                     self.holders)
+        self.fuser.hold_wait_ms = self.VISIT_DELAY_MS
+        if self.holders is not None and getattr(risk, "book", None) is not None:
+            self.holders.resolve = risk.book.resolve   # 든 뒤에 합쳐진 신원은 한 사람으로
         self.shelf_image = shelf_image
         self.reach = None
         """전체 카메라 팔 뻗기 (손목이 화면의 선반 영역 안). 손목 기록만 있으면 되므로 기록 재실행에서도 같이 돈다."""
@@ -85,6 +92,8 @@ class DualJudge:
         self.fuser.reset()
         if self.counter is not None:
             self.counter.reset()
+        if self.holders is not None:
+            self.holders.reset()
         self.risk.reset()
         if self.reach is not None:
             self.reach.reset()
@@ -299,12 +308,14 @@ class DualJudge:
         if self.counter is not None and products is not None:
             self.counter.update(frame.pts_ms, products, [o.bbox for o in identities])
         boxes = {}
+        hands = []
         for obs in identities:
             if obs.person_id <= 0:
                 continue
             screen = resolve(obs.person_id) if resolve else obs.person_id
             pid = self._store.get(screen, screen)   # 매장 신원 — 번호 맞바뀜을 되돌린 신원만 화면 신원과 다르다
             boxes[pid] = obs.bbox
+            hands.append((pid, obs.bbox, getattr(obs, "keypoints", None)))
             point = self.floor.foot_on_floor(obs.bbox, w, h)
             band = self.floor.band_position(point)   # 띠는 band_map 을 맞춘 상자 기준 그대로
             foot = self.floor.foot_on_floor(obs.bbox, w, h, obs.keypoints) if self.floor.foot_mode != "bbox" else point
@@ -319,6 +330,10 @@ class DualJudge:
                                 candidate)
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
+        if self.holders is not None and products is not None:
+            self.holders.update(frame.pts_ms, products, hands, self.counter.region)
+        if not self.config.overview_dwell:
+            takes = []   # 전체 카메라의 '선반 앞 머묾'은 판정에 안 넣는다 (fusion.overview_dwell)
         self._note_boxes("overview", frame.pts_ms, boxes)
         self.linker.update(frame.pts_ms)
         if self.config.swap_repair and self.linker.closed != self._closed_seen:
@@ -412,6 +427,7 @@ class DualJudge:
             elif end_ms <= visits_until_ms:
                 fused = self.fuser.detail_visit(visit, start_ms, stop_ms)
                 visits.append(fused)
+                visits += self.fuser.take_shares()   # 든 사람별로 나눈 방문의 나머지 몫 (fusion.overview_owner)
                 if self.config.unchanged_clears_all and fused.removed == 0 and fused.added == 0                         and fused.slot_change is None:
                     # 물건 탐지도 칸 그림도 '그대로'인 방문: 그 시간 선반 앞에 있던 다른 손님의 손 뻗기도
                     # 아무것도 안 가져간 것이다 (설계 M-7 — 둘 다 그대로일 때만 집기를 지운다)

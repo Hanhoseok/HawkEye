@@ -287,9 +287,12 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
     for c in slot:
         log.append({"ms": c["end"], "level": "info", "text": f"칸 그림: '{c['slot']}' {c['ratio'] * 100:.1f}% 바뀜 ({c['direction']})"})
 
-    rows.append({"label": "선반 앞 머묾", "group": "전체 카메라", "marks": [], "who": None,
+    used = data.get("overview_dwell", True)   # fusion.overview_dwell — 끄면 이 줄은 보기만 하고 판정에는 안 들어간다
+    rows.append({"label": "선반 앞 머묾" if used else "선반 앞 머묾 (판정에 안 씀)", "group": "전체 카메라", "marks": [], "who": None,
                  "segs": [{"s": t["start"], "e": t["end"], "who": t["pid"] if t["pid"] in customers else None,
-                           "tip": f"{_who(t['pid'], customers)} 선반 앞 {(t['end'] - t['start']) / 1000:.1f}초"}
+                           "tone": None if used else "quiet",
+                           "tip": f"{_who(t['pid'], customers)} 선반 앞 {(t['end'] - t['start']) / 1000:.1f}초"
+                                  + ("" if used else " · 판정에 안 씀")}
                           for t in data["takes1"]]})
 
     actions = [a for a in data["actions"] if a["kind"] != "LOOK"]

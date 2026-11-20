@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from workbench import intake  # noqa: E402
 from workbench.analyze import _duration, lens_link, locate, presence  # noqa: E402
-from workbench.data import PROFILES, SHOOT3_COUNT, SHOOT3_PRODUCT, Builder, main_views  # noqa: E402
+from workbench.data import PROFILES, SHOOT3_COUNT, SHOOT3_OWNER, SHOOT3_PRODUCT, Builder, main_views  # noqa: E402
 from workbench.tune import changed_values, knobs_for  # noqa: E402
 
 
@@ -90,6 +90,15 @@ def test_count_view_judges_the_product_records_with_the_overview_count():
     assert count.overrides == ("fusion.overview_count=true",) and prod.overrides == () and PROFILES[3].overrides == ()
     assert count.shoot == 3 and not count.can_tune and count.note and count.thumbs == prod.thumbs
     assert Builder(SHOOT3_COUNT).signature("C01") != Builder(SHOOT3_PRODUCT).signature("C01")      # 얹는 값이 다르면 다시 만든다
+    assert main_views() == [2, 3]
+
+
+def test_owner_view_adds_the_holder_owner_and_drops_the_overview_dwell():
+    count, owner = PROFILES[SHOOT3_COUNT], PROFILES[SHOOT3_OWNER]
+    assert owner.records == count.records and owner.out not in (count.out, PROFILES[SHOOT3_PRODUCT].out)
+    assert owner.overrides == ("fusion.overview_count=true", "fusion.overview_owner=true", "fusion.overview_dwell=false")
+    assert owner.shoot == 3 and not owner.can_tune and owner.note
+    assert Builder(SHOOT3_OWNER).signature("C01") != Builder(SHOOT3_COUNT).signature("C01")
     assert main_views() == [2, 3]
 
 

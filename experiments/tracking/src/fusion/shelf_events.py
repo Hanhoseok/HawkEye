@@ -81,10 +81,14 @@ class FusedRecord:
 class ShelfEventFuser:
     def __init__(self, config: FusionConfig, linker: CrossViewLinker, detail_axis: TimeAxis,
                  overview_axis: TimeAxis, slot_shelf: dict[str, str] | None = None,
-                 sensors: list[SensorEvent] | None = None, overview=None) -> None:
+                 sensors: list[SensorEvent] | None = None, overview=None, holders=None) -> None:
         self.config = config
         self.overview = overview
         """전체 카메라 상품 개수 (OverviewCounter, fusion.overview_count). 있으면 방문의 개수를 그쪽 것으로 바꾼다."""
+        self.holders = holders
+        """전체 카메라에서 상품을 든 사람 (HolderTracker, fusion.overview_owner). 있으면 주인을 못 정한 방문의 주인을 여기서 묻는다."""
+        self.hold_wait_ms = 0.0
+        """방문이 끝난 뒤 이만큼까지 든 사람을 본다 — 판정이 방문을 넘기기 전에 기다리는 시간 (그때까지는 반드시 본 장면)."""
         self.linker = linker
         self.detail_axis = detail_axis
         self.overview_axis = overview_axis
@@ -94,6 +98,7 @@ class ShelfEventFuser:
         self.reset()
 
     def reset(self) -> None:
+        self.shares: list[ShelfVisit] = []
         self._touches: list[tuple[float, float, int, str]] = []
         """선반 카메라의 손-칸 접촉: (시작 ms, 끝 ms, 선반 카메라 신원, 칸)."""
         self._band: list[tuple[float, int]] = []
@@ -203,11 +208,63 @@ class ShelfEventFuser:
                     detail = self._count_detail(detail, count)
         elif self.overview is not None and self.overview.fed:
             extra += " / 전체 카메라 개수 못 봄"
+        held: list[tuple[str, int | None]] = []
+        if owner is None and self.holders is not None and count is not None and count.removed:
+            # 주인을 못 정했는데 전체 카메라가 어느 종류가 줄었는지 봤다 — 그 종류를 먼저 든 사람이 꺼낸 사람
+            held = self.holders.owners(count.removed_by, start_ms, end_ms + self.hold_wait_ms)
+            who = {p for _, p in held}
+            if None not in who and len(who) == 1:
+                owner, how = who.pop(), f"전체 카메라에서 먼저 든 사람 ({how})"
+                held = []
+            elif who == {None} or (removed, added) != (count.removed, count.added):
+                # 아무도 든 것을 못 봤다 / 센서 개수와 달라 종류별로 나눌 수 없다 — 모름 그대로
+                held = []
         out = replace(visit, person_id=owner if owner is not None else -1, removed=removed, added=added,
                       source=source, zone=self.config.shelf_zone, slot_change=slot_change,
                       start_frame=self.overview_axis.to_frame(start_ms), end_frame=self.overview_axis.to_frame(end_ms),
                       detail=detail + extra)
-        self.records.append(FusedRecord("visit", start_ms, end_ms, out.person_id, how, out.detail))
+        if held:
+            out, how = self._share(out, held, how, start_ms, end_ms)
+        elif owner is not None and self.holders is not None and count is not None and count.removed:
+            out = replace(out, held_ms=self._held_ms(sorted(count.removed_by), owner, start_ms, end_ms))
+        self.records.append(FusedRecord("visit", start_ms, end_ms, out.person_id, how,
+                                        out.detail if not held else detail + extra + " / 든 사람: " + self._held_text(held)))
+        return out
+
+    @staticmethod
+    def _held_text(held: list[tuple[str, int | None]]) -> str:
+        return ", ".join(f"{name} → {'손님 ' + str(p) if p is not None else '모름'}" for name, p in held)
+
+    def _held_ms(self, names: list[str], owner: int, start_ms: float, end_ms: float) -> float | None:
+        """그 사람이 이 종류들 가운데 하나라도 든 것으로 처음 본 시각 (못 봤으면 None)."""
+        times = [t for name in names
+                 for pid, t in self.holders.first_held(name, start_ms, end_ms + self.hold_wait_ms).items() if pid == owner]
+        return min(times) if times else None
+
+    def _share(self, out: ShelfVisit, held: list[tuple[str, int | None]], how: str,
+               start_ms: float, end_ms: float) -> tuple[ShelfVisit, str]:
+        """종류마다 든 사람이 다른 방문 → 사람별 방문으로 나눈다. 첫 사람의 방문을 돌려주고 나머지는 shares 에 쌓는다
+        (든 사람을 못 본 상품은 '주인 모름' 방문으로 남는다). 놓은 개수는 첫 사람의 방문에 둔다."""
+        head, sep, _ = out.detail.partition("] ")
+        tail = out.detail.partition(" / ")[2]
+        by: dict[int | None, list[str]] = {}
+        for name, p in held:
+            by.setdefault(p, []).append(name)
+        people = sorted(by, key=lambda p: (p is None, [h[1] for h in held].index(p)))
+        parts = []
+        for i, p in enumerate(people):
+            names = by[p]
+            text = (f"{head}{sep}" if sep else "") + f"꺼냄: {', '.join(names)} (전체 카메라에서 먼저 든 사람)"
+            text += (f" -> 손님 {p}" if p is not None else "") + (f" / {tail}" if tail else "")
+            parts.append(replace(out, person_id=p if p is not None else -1, removed=len(names),
+                                 added=out.added if i == 0 else 0, detail=text,
+                                 held_ms=self._held_ms(names, p, start_ms, end_ms) if p is not None else None))
+        self.shares.extend(parts[1:])
+        return parts[0], f"전체 카메라에서 먼저 든 사람 — 사람별로 나눔 ({how})"
+
+    def take_shares(self) -> list[ShelfVisit]:
+        """방금 나눈 방문의 나머지 사람 몫 (detail_visit 바로 뒤에 꺼내 간다)."""
+        out, self.shares = self.shares, []
         return out
 
     @staticmethod

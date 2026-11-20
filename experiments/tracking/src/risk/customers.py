@@ -76,6 +76,9 @@ class ShelfVisit:
     source: str = "vision"
     """근거 출처: vision (카메라) / sensor (선반 센서만) / sensor+vision (둘 다, 개수는 센서) /
     overview+vision (방문은 선반 카메라, 개수는 전체 카메라가 센 상품 — fusion.overview_count)."""
+    held_ms: float | None = None
+    """이 방문에서 꺼낸 상품이 이 손님 손에 들린 것을 전체 카메라가 처음 본 시각 (fusion.overview_owner 일 때만 채운다).
+    방문은 선반을 가린 사람이 모두 비켜야 끝나 판정에 늦게 들어온다 — 그 사이 계산대에 다녀온 손님의 결제를 맞춰 보는 데 쓴다."""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -213,6 +216,8 @@ class Customer:
     """
     dwell_paid_items: int = 0
     """payment_mode="dwell": 계산대 체류로 결제한 물건 수 (취소되면 0). paid_items 에 포함돼 있다."""
+    stood_until_ms: float | None = None
+    """payment_mode="dwell": 계산대에 dwell_pay_seconds 이상 서 있던 마지막 시각 (늦게 들어온 선반 기록의 결제를 맞춰 보는 데 쓴다)."""
     at_shelf_overlap: float = 0.0
     """지금 SHELF 구역과 몸이 겹친 비율 (가장 큰 값)."""
     seen_inside: bool = False
@@ -354,6 +359,8 @@ class CustomerBook:
         # 보류한 나감 판정은 어느 쪽 것이든 남긴다 — 매장 안으로 돌아온 게 확인(departed 해제)됐을 때만 버린다
         dst.held_since_ms, dst.held_how = min(holds) if holds and dst.departed else (None, "")
         dst.seen_inside = dst.seen_inside or src.seen_inside
+        if src.stood_until_ms is not None and (dst.stood_until_ms is None or src.stood_until_ms > dst.stood_until_ms):
+            dst.stood_until_ms = src.stood_until_ms
         for t in (src.last_checkout_ms, dst.last_checkout_ms):
             if t is not None and (dst.last_checkout_ms is None or t > dst.last_checkout_ms):
                 dst.last_checkout_ms = t
@@ -374,7 +381,23 @@ class CustomerBook:
             return None
         customer = self._get(visit.person_id, now_ms)
         customer.shelf_visits.append(visit)
+        self._late_dwell_payment(customer, visit, now_ms)
         return customer
+
+    def _late_dwell_payment(self, c: Customer, visit: ShelfVisit, now_ms: float) -> None:
+        """payment_mode="dwell": 상품을 손에 든 뒤(held_ms) 계산대에 섰다 떠났는데 선반 기록이 그 뒤에야 들어온 경우 — 그 물건도 결제한 것.
+
+        계산대 체류 결제는 '서 있는 동안 가진 것'만 센다. 두 사람이 함께 선반을 가리면 방문이 늦게 끝나, 먼저 계산하고 떠난 손님의
+        물건이 계산 뒤에 장부에 들어온다 (3차 C19). 든 시각을 모르는 방문(held_ms 없음)은 지금처럼 둔다.
+        """
+        net = visit.removed - visit.added
+        if (self.config.payment_mode != "dwell" or visit.held_ms is None or net <= 0
+                or c.stood_until_ms is None or c.stood_until_ms < visit.held_ms):
+            return
+        # 아직 서 있는 손님이어도 여기서 센다 — dwell_payments 는 이미 센 만큼(dwell_paid_items)은 다시 세지 않는다
+        c.paid_items += net
+        c.dwell_paid_items += net
+        self.payments.append(PaymentRecord(round(now_ms / 1000.0, 3), net, c.person_id, "dwell", 1))
 
     def observe(self, now_ms: float, identities: list[IdentityObservation]) -> list[Customer]:
         """이번 프레임에 보인 손님들의 위치·구역 상태를 갱신한다. 보인 손님 목록을 돌려준다."""
@@ -455,6 +478,7 @@ class CustomerBook:
         records = []
         for c in visible:
             if c.checkout_since_ms is not None and now_ms - c.checkout_since_ms >= pay_ms:
+                c.stood_until_ms = now_ms
                 # 서 있는 동안 늘어난 것(늦게 확정된 선반 기록 등)까지 결제에 포함한다
                 owed = max(0, c.taken - (c.paid_items - c.dwell_paid_items))
                 if owed > c.dwell_paid_items:

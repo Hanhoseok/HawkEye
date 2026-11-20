@@ -34,12 +34,13 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 11
+VERSION = 12
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
 10: 전체 카메라 번호 맞바뀜 되돌리기 (fusion.swap_repair, 후속 49) — 보기 데이터에 swaps 가 생기고 3차 C20 의 번호·짝이 달라진다.
-11: 전체 카메라에서 찾은 상품 (overview_items, 후속 52) — 보기만 하고 판정은 그대로다."""
+11: 전체 카메라에서 찾은 상품 (overview_items, 후속 52) — 보기만 하고 판정은 그대로다.
+12: 전체 카메라의 선반 앞 머묾을 판정에 넣었는지 (overview_dwell, 후속 55) — 뺀 보기(33)는 그 줄에 '판정에 안 씀'이 붙는다."""
 RUN_KEY = "current"
 
 
@@ -113,6 +114,17 @@ PROFILES[SHOOT3_COUNT] = replace(
     note="'3차 · 상품 모델'과 같은 기록입니다. 선반 방문의 꺼냄 · 놓음 개수만 전체 카메라가 센 상품 개수(방문 전 - 방문 뒤)로 바꿔 판정했습니다. "
          "바뀐 방문은 행동 설명에 '전체 카메라 개수 … — 선반 지도는 …'으로 나옵니다. 모델이 이 영상들로 학습했으므로 점수는 낙관적입니다. "
          "수치 조정은 3차 촬영에서 합니다.")
+
+
+SHOOT3_OWNER = 33
+"""보기 32 에 더해: 주인을 못 정한 방문의 주인을 전체 카메라에서 그 상품을 먼저 든 사람으로 정하고 (fusion.overview_owner),
+전체 카메라의 '선반 앞 머묾'을 판정에서 뺀 것 (fusion.overview_dwell=false, 후속 55)."""
+PROFILES[SHOOT3_OWNER] = replace(
+    PROFILES[SHOOT3_PRODUCT], name="3차 · 상품 모델 + 전체 카메라 개수 · 든 사람, 머묾 뺌", out=OUT / "shoot3_owner",
+    overrides=("fusion.overview_count=true", "fusion.overview_owner=true", "fusion.overview_dwell=false"),
+    note="'3차 · 상품 모델'과 같은 기록입니다. 전체 카메라의 '선반 앞 머묾'을 판정에서 빼고, 두 사람이 함께 선반을 가려 주인을 못 정한 방문은 "
+         "전체 카메라에서 그 상품을 먼저 든 사람을 주인으로 했습니다 ('전체 카메라에서 먼저 든 사람', 종류마다 든 사람이 다르면 사람별로 나눔). "
+         "모델이 이 영상들로 학습했으므로 점수는 낙관적입니다. 수치 조정은 3차 촬영에서 합니다.")
 
 
 def main_views() -> list[int]:
@@ -339,6 +351,7 @@ class Builder:
                 data["sync"] = {"offset_ms": row.offset_ms if row else 0.0, "method": row.method if row else "none",
                                 "checked_by": row.checked_by if row else "", "note": row.note if row else ""}
                 cfg = de.dual_config(base, pair)   # 방금 판정에 쓴 값 그대로 (적용한 값·초안 포함)
+                data["overview_dwell"] = cfg.fusion.overview_dwell   # 전체 카메라의 선반 앞 머묾을 판정에 넣었나
                 dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" else None
                 summary = analyze(data, result, dwell)
                 data["summary"] = summary
@@ -422,7 +435,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="바뀌지 않은 짝도 다시 만든다")
     ap.add_argument("--only", help="짝 이름 (쉼표)")
     ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
-                    help=f"보기 번호 — 2 · 3 은 촬영 회차, {SHOOT3_PRODUCT} 은 3차에 상품 모델을 끼운 기록, {SHOOT3_COUNT} 는 거기에 전체 카메라 개수를 넣은 판정 (기본 2)")
+                    help=f"보기 번호 — 2 · 3 은 촬영 회차, {SHOOT3_PRODUCT} 은 3차에 상품 모델을 끼운 기록, {SHOOT3_COUNT} 는 거기에 전체 카메라 개수를 넣은 판정, {SHOOT3_OWNER} 은 든 사람으로 주인을 정하고 머묾을 뺀 판정 (기본 2)")
     args = ap.parse_args()
     b = Builder(args.shoot)
     state = b.build(args.only.split(",") if args.only else None, args.force)

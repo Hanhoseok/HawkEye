@@ -112,6 +112,11 @@ class CountChange:
     def text(self) -> str:
         return f"{self.before.text()} → {self.after.text()}"
 
+    @property
+    def removed_by(self) -> dict[str, int]:
+        """종류별로 줄어든 개수."""
+        return dict(Counter(dict(self.before.counts)) - Counter(dict(self.after.counts)))
+
 
 class OverviewCounter:
     def __init__(self, score: float = SCORE, merge_iou: float = MERGE, stable_ms: float = STABLE_MS,
@@ -208,3 +213,103 @@ class OverviewCounter:
         before, after = seen[picked[0]], seen[picked[1]]
         b, a = Counter(dict(before.counts)), Counter(dict(after.counts))
         return CountChange(sum((b - a).values()), sum((a - b).values()), before, after)
+
+
+# ---------------------------------------------------------------------- 상품을 든 사람
+
+HOLD_FRAMES = 5
+"""그 종류의 상품을 든 것으로 보려면 이만큼의 장면에서 그 사람 손에 있어야 한다 (초당 15장이면 0.3초).
+3차 정상(N) 영상에서 **그 방문에서 줄지 않은 종류**가 손에 붙은 장면은 방문마다 최대 1장이었다 — 그 위로 잡았다.
+복합 · 절도 영상에는 6 ~ 7장 붙은 방문이 셋 있다 (C01 · C19 · T05) — 줄지 않은 종류는 묻지 않으므로 결과에는 안 들어갔다.
+3 ~ 20장에서 3차 39편의 판정 점수는 같았다 (docs/shelf-map.md)."""
+REACH = 1.5
+"""상품 상자 가운데에서 손목까지의 거리가 상품 상자 대각선의 이 배수 안이면 그 사람이 든 것으로 본다.
+맞춰 정한 값이 아니다 — 0(손목을 안 쓰고 상자만) · 1 · 1.5 · 2.5 에서 3차 39편의 판정 점수는 같았다."""
+WRIST_CONF = 0.3
+WRISTS = (9, 10)
+
+
+def holder_of(item: list, people: list, reach: float = REACH) -> int | None:
+    """이 상품 상자를 든 사람. people = [(신원, 사람 상자, 관절 또는 None), …]
+
+    ① 손목이 가장 가까운 사람 (reach 안). 둘째로 가까운 사람도 reach 안이고 첫째의 1.5배보다 가까우면 못 정한다.
+    ② 손목이 아무도 안 닿으면, 상품 가운데가 **한 사람의 상자 안에만** 있을 때 그 사람.
+    """
+    cx, cy = center(item)
+    diag = ((item[3] - item[1]) ** 2 + (item[4] - item[2]) ** 2) ** 0.5 or 1.0
+    near = []
+    for pid, _, kp in people:
+        ds = [((kp[k][0] - cx) ** 2 + (kp[k][1] - cy) ** 2) ** 0.5 for k in WRISTS
+              if kp is not None and len(kp) > k and kp[k][2] >= WRIST_CONF]
+        if ds:
+            near.append((min(ds) / diag, pid))
+    near.sort()
+    if near and near[0][0] <= reach:
+        if len(near) > 1 and near[1][0] <= reach and near[1][0] < near[0][0] * 1.5:
+            return None
+        return near[0][1]
+    boxed = [pid for pid, b, _ in people if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]]
+    return boxed[0] if len(boxed) == 1 else None
+
+
+class HolderTracker:
+    """전체 카메라에서 선반 자리 **밖**에 보인 상품이 누구 손에 있었는지 적어 둔다 → 선반에서 사라진 상품을 처음 든 사람.
+
+    쓰임 (fusion.overview_owner): 두 사람이 함께 선반을 가려 주인을 못 정한 방문의 주인.
+    '들고 있다'는 '이 매장 선반에서 꺼냈다'가 아니다 (들고 들어온 손님, 건네받은 일행) — 그래서
+      - 전체 카메라 개수로 **그 종류가 줄어든 방문**에서만 묻고,
+      - 방문 전에 이미 그 종류를 들고 있던 사람은 뺀다.
+    여러 사람이 들었으면 **먼저 든 사람**이 꺼낸 사람이다 (나중에 든 사람은 건네받았다 — 3차 T09).
+    """
+
+    def __init__(self, min_frames: int = HOLD_FRAMES, reach: float = REACH, score: float = SCORE, merge_iou: float = MERGE) -> None:
+        self.min_frames, self.reach, self.score, self.merge_iou = min_frames, reach, score, merge_iou
+        self.resolve = lambda pid: pid
+        """적어 둔 신원 → 지금의 신원 (그 뒤 합쳐진 신원을 한 사람으로 보게). 판정이 손님 장부의 것을 넣는다."""
+        self.reset()
+
+    def reset(self) -> None:
+        self.samples: list[tuple[float, int, str]] = []
+        """(ms, 신원, 종류) — 그 장면에서 그 사람이 그 종류를 들고 있었다."""
+
+    def update(self, ms: float, items: list, people: list, region) -> None:
+        """전체 카메라 한 장면. people = [(신원, 사람 상자, 관절), …]. region = 선반 자리 (아직 없으면 아무것도 안 적는다)."""
+        if region is None:
+            return
+        x1, y1, x2, y2 = region
+        for it in merge([i for i in items if i[5] >= self.score], self.merge_iou):
+            cx, cy = center(it)
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                continue
+            pid = holder_of(it, people, self.reach)
+            if pid is not None:
+                self.samples.append((ms, pid, it[0]))
+
+    def first_holders(self, name: str, start_ms: float, until_ms: float) -> list[int]:
+        """[start_ms, until_ms] 에 그 종류를 든 사람들 — 먼저 든 순서. 방문 전에 이미 들고 있던 사람은 뺀다."""
+        when = self.first_held(name, start_ms, until_ms)
+        return sorted(when, key=lambda pid: when[pid])
+
+    def first_held(self, name: str, start_ms: float, until_ms: float) -> dict[int, float]:
+        """[start_ms, until_ms] 에 그 종류를 든 사람 → 든 것으로 본 시각 (min_frames 번째 장면). 방문 전에 이미 들고 있던 사람은 뺀다."""
+        seen: dict[int, list[float]] = {}
+        had: Counter = Counter()
+        for ms, pid, cls in self.samples:
+            if cls != name or ms > until_ms:
+                continue
+            pid = self.resolve(pid)
+            if ms < start_ms:
+                had[pid] += 1
+            else:
+                seen.setdefault(pid, []).append(ms)
+        return {pid: sorted(times)[self.min_frames - 1] for pid, times in seen.items()
+                if len(times) >= self.min_frames and had[pid] < self.min_frames}
+
+    def owners(self, removed_by: dict[str, int], start_ms: float, until_ms: float) -> list[tuple[str, int | None]]:
+        """줄어든 상품 하나마다 (종류, 꺼낸 사람 또는 None). 한 종류가 여럿 줄었으면 먼저 든 사람부터 하나씩, 남으면 첫 사람에게."""
+        out: list[tuple[str, int | None]] = []
+        for name in sorted(removed_by):
+            who = self.first_holders(name, start_ms, until_ms)
+            for i in range(removed_by[name]):
+                out.append((name, (who[i] if i < len(who) else who[0]) if who else None))
+        return out
