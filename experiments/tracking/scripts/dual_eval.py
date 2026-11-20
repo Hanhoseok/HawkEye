@@ -25,6 +25,7 @@ import argparse
 import csv
 import fnmatch
 import json
+import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -53,6 +54,12 @@ OUT = ROOT / "outputs" / "dual_eval_pose3"
 ZONES = ROOT / "zones" / "store01_dual"
 LABELS = ROOT / "labels" / "store01_dual"
 STRIDE = {"angle1": 4, "angle0": 2}
+RECORDS = {2: "dual_eval_pose3", 3: "dual_eval_shoot3_prod"}
+"""회차의 기본 실행 기록 (outputs/ 아래) — 회귀 검사 기준 · 분석 도구의 회차 보기가 이것을 읽는다.
+3차는 **상품 모델 기록**이다 (후속 56, 2026-11-20 사용자 결정): 최종 판정은 상품 모델 기록 + 센서 로그 + 결제 로그로 낸다.
+일반 탐지 모델로 만든 예전 기준 기록은 outputs/dual_eval_shoot3 (상품 모델 기록을 만드는 재료로 남아 있다)."""
+PRODUCT_MODEL = "training/products/handoff/products-model-v2/yolov8n_1280_v2.pt"
+"""3차 상품 탐지 모델 (2차 yolov8n, 3종). 저장소에 없다 (handoff/ 는 올리지 않는다) — 기록을 새로 만들 때만 필요하고 판정(judge)에는 필요 없다."""
 JUDGE_FILES = {2: "store01_dual_judge.yaml", 3: "store01_shoot3_judge.yaml"}
 JUDGE_FILE: Path | None = ROOT / "configs" / JUDGE_FILES[2]
 """분석 도구의 '수치 조정'에서 적용한 판정 값 (절.키: 값). 없으면 코드의 기본 그대로. None 이면 읽지 않는다.
@@ -83,11 +90,11 @@ def set_profile(shoot: int) -> None:
     SHOOT = shoot
     _PAIR_ZONES.clear()
     if shoot == 3:
-        OUT = ROOT / "outputs" / "dual_eval_shoot3"
+        OUT = ROOT / "outputs" / RECORDS[3]
         ZONES = ROOT / "zones" / "store01_shoot3"
         LABELS = ROOT / "labels" / "store01_shoot3"
     else:
-        OUT = ROOT / "outputs" / "dual_eval_pose3"
+        OUT = ROOT / "outputs" / RECORDS[2]
         ZONES = ROOT / "zones" / "store01_dual"
         LABELS = ROOT / "labels" / "store01_dual"
     # 수치 조정에서 적용한 값은 그 촬영의 카메라 자리에 맞춘 것 — 회차마다 따로 둔다 (2026-11-13)
@@ -216,6 +223,32 @@ def pairs(pattern: str | None) -> list[str]:
 _UNSET = object()
 
 
+def use_product_records(cfg: AppConfig) -> None:
+    """3차 기본: 상품 모델 기록으로 판정한다 (후속 56). 까닭은 dual_config 의 3차 갈래 설명."""
+    cfg.shelves.model_path = PRODUCT_MODEL
+    cfg.fusion.overview_count = cfg.fusion.overview_owner = True
+    cfg.fusion.overview_dwell = False
+
+
+def missing_model(cfg: AppConfig) -> Path | None:
+    """선반 물건 탐지 모델 파일이 없으면 그 경로 (있으면 None). 상대 경로는 experiments/tracking 기준."""
+    model = Path(cfg.shelves.model_path)
+    return None if (model if model.is_absolute() else ROOT / model).exists() else model
+
+
+def copy_overview_products(source: Path, out: Path) -> list[str]:
+    """전체 카메라 상품 기록(<짝>/angle1/product_items.*)을 다른 실행 폴더의 같은 짝으로 가져온다. 가져온 파일 이름들.
+    영상과 상품 모델에만 달린 기록이라(신원 · 구역 설정과 무관) 저장분으로 다시 계산할 때 그대로 쓴다."""
+    done = []
+    for name in OVERVIEW_PRODUCT_FILES:
+        src = source / "angle1" / name
+        if src.exists():
+            (out / "angle1").mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, out / "angle1" / name)
+            done.append(name)
+    return done
+
+
 def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_UNSET, overrides=_UNSET) -> AppConfig:
     """judge_file·overrides 를 안 주면 모듈 값(JUDGE_FILE·OVERRIDES)을 쓴다. 주면 그 값으로만 — 모듈 값을 건드리지 않고
     '적용한 값 없이'·'--set 없이' 설정을 보고 싶을 때 (분석 도구의 수치 조정)."""
@@ -244,6 +277,12 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
         cfg.fusion.position_mode = "floor"
         cfg.fusion.link_customers_only = True
         cfg.identity.nested_hold_overlap, cfg.identity.nested_pose_gap = 0.7, 0.5
+        # 3차: 기준은 상품 모델 기록이다 (후속 56, 2026-11-20 사용자 결정 — 최종 판정은 상품 모델 기록 + 센서 로그 + 결제 로그).
+        #  - 선반 물건 탐지 = 상품 모델. 일반 탐지 모델은 이 상품들을 못 봐 선반 지도가 대부분 '변화 없음'이었다 (개수 맞은 영상 7 → 34 / 39, 후속 50).
+        #  - 선반 방문의 개수 = 전체 카메라가 센 상품 개수 (후속 54), 주인을 못 정한 방문의 주인 = 그 상품을 먼저 든 사람 (후속 55).
+        #  - 전체 카메라의 '선반 앞 머묾'은 판정에 안 넣는다 (D-1 — 상품 · 관절 인식 전의 임시 근거). --set fusion.overview_dwell=true 로 되돌린다.
+        # 2차에서는 안 켠다: 2차 상품용 모델이 없다 (머묾을 빼면 T9 를 놓친다, 32 → 31).
+        use_product_records(cfg)
     # 한 장면에 같은 신원은 상자 하나만 — 둘이 겹치면 그 신원의 평균 외형과 더 닮은 상자가 지키고 나머지는 다시 판정 (후속 48, 2026-11-16).
     # 3차 T09: 창가 그림 상자의 신원을 문 앞 손님이 받아 가 창가 상자가 손님으로 그려지던 것 — 0.27초 뒤 창가 상자가 신원을 되찾고 손님은 새 신원.
     # 같은 신원 두 상자 장면 3차 92 → 0 · 2차 1 → 0, 판정 점수·손님 수 그대로. 기준값 없는 규칙. --set identity.one_box_per_identity=false 로 끈다.
@@ -322,6 +361,8 @@ def cache_fingerprints(cfg: AppConfig) -> dict[str, dict]:
 OBSERVATION_FILES = ("identities.jsonl", "take_candidates.jsonl", "identity_merges.jsonl", "shelf_visits.jsonl",
                      "slot_changes.jsonl", "shelf_items.jsonl", "consistency.jsonl")
 """카메라 폴더에 관찰 층이 쓰는 기록 — replay 가 시작 전에 지운다(이전 실행 것이 남아 섞이지 않게)."""
+OVERVIEW_PRODUCT_FILES = ("product_items.jsonl", "product_items.meta.json")
+"""전체 카메라에서 찾은 상품 (scripts/product_overview_items.py 가 angle1 폴더에 쓴다). replay 는 저장분 폴더의 것을 그대로 가져온다."""
 
 
 def run_pair(pair: str, base: AppConfig, out: Path, *, record: bool = False, replay_from: Path | None = None) -> str:
@@ -361,6 +402,7 @@ def run_pair(pair: str, base: AppConfig, out: Path, *, record: bool = False, rep
         (out / "meta.json").write_text(src_meta.read_text(encoding="utf-8"), encoding="utf-8")
         for f in (replay_from / pair).glob("times_*.json"):
             (out / f.name).write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+        copy_overview_products(replay_from / pair, out)   # fusion.overview_count (3차 기본) 가 읽는다
     else:
         meta = {}
         for cam in cfg.cameras:
@@ -395,7 +437,13 @@ def run(pattern: str | None, record: bool = False, replay_from: Path | None = No
 
     base = AppConfig.load(ROOT / "config.yaml")
     LAST_RUN["done"], LAST_RUN["failed"] = [], []
-    for pair in pairs(pattern):
+    names = pairs(pattern)
+    if replay_from is None and names:
+        model = missing_model(dual_config(base, names[0])) if SHOOT == 3 else None
+        if model is not None:
+            raise SystemExit(f"선반 물건 탐지 모델이 없습니다: {model} — 3차 기록은 상품 모델로 만듭니다 (저장소에 없는 파일, "
+                             "docs/shelf-map.md '3차 기준을 상품 모델 기록으로'). 다른 모델로 돌리려면 --set shelves.model_path=…")
+    for pair in names:
         out = OUT / pair
         if replay_from is None and (out / ".done").exists():
             print(f"{pair}: 이미 있음 (건너뜀)", flush=True)
@@ -607,8 +655,10 @@ def overview_products(pair: str) -> dict[int, list]:
     fusion.overview_count 를 켰을 때만 읽는다. 없으면 그 짝은 실패로 적힌다 — 조용히 선반 지도 개수로 돌아가지 않게."""
     path = OUT / pair / "angle1" / "product_items.jsonl"
     if not path.exists():
-        raise FileNotFoundError(f"{pair}: angle1/product_items.jsonl 없음 — fusion.overview_count 는 "
-                                "scripts/product_overview_items.py 로 전체 카메라 상품을 찾아 둔 기록에서만")
+        raise FileNotFoundError(f"{pair}: angle1/product_items.jsonl 없음 — fusion.overview_count (3차 기본) 는 "
+                                "scripts/product_overview_items.py 로 전체 카메라 상품을 찾아 둔 기록에서만. "
+                                "예전 기록(일반 탐지 모델)을 판정하려면 --set fusion.overview_count=false "
+                                "--set fusion.overview_owner=false --set fusion.overview_dwell=true")
     return {r["frame"]: r["items"] for r in PairLog._jsonl(path)}
 
 

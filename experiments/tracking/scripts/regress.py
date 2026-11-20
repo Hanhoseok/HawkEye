@@ -7,7 +7,7 @@
 
 - 기준: baselines/shoot<N>_<방식>.json — 짝별 판정·맞음·손님 수 (작은 파일, 커밋함).
   방식: 3차 v(영상만)·s(센서 L1,L2)·p(결제 라벨)·ps(센서+결제), 2차 v·p.
-- 실행 기록: 기본 실행 폴더(3차 outputs/dual_eval_shoot3, 2차 outputs/dual_eval_pose3). --replay 는 그 폴더의 저장분(cache)으로
+- 실행 기록: 기본 실행 폴더(3차 outputs/dual_eval_shoot3_prod — 상품 모델 기록 (후속 56), 2차 outputs/dual_eval_pose3). --replay 는 그 폴더의 저장분(cache)으로
   outputs/regress_tmp_shoot<N> 에 관찰 층을 다시 계산한 뒤 거기서 판정한다 (docs/replay-cache.md).
 - 종료 코드: 0 = 기준과 같거나 좋아짐, 1 = 나빠진 짝 있음(맞던 짝이 틀림·손님 수가 틀려짐), 2 = 검사가 불완전(빠진 짝·실패한 짝).
 - update 는 결과가 불완전하면(실패·건너뜀·빈 결과·기준에 있던 짝이 빠짐) 기준을 쓰지 않는다. 일부러 짝을 뺄 때만 --allow-remove.

@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from workbench import intake  # noqa: E402
 from workbench.analyze import _duration, lens_link, locate, presence  # noqa: E402
-from workbench.data import PROFILES, SHOOT3_COUNT, SHOOT3_OWNER, SHOOT3_PRODUCT, Builder, main_views  # noqa: E402
+from workbench.data import OLD_JUDGE, PROFILES, SHOOT3_DWELL, SHOOT3_GENERIC, Builder, main_views  # noqa: E402
 from workbench.tune import changed_values, knobs_for  # noqa: E402
 
 
@@ -73,50 +73,51 @@ def test_pair_zone_files_are_left_alone_when_nothing_changed(tmp_path):
 
 # ---------------------------------------------------------------------- 견줘 보기 (같은 회차의 다른 기록)
 
-def test_product_view_is_shoot3_with_other_records_and_no_tuning():
-    three, prod = PROFILES[3], PROFILES[SHOOT3_PRODUCT]
-    assert prod.shoot == 3 and Builder(SHOOT3_PRODUCT).shoot == 3 and Builder(SHOOT3_PRODUCT).key == SHOOT3_PRODUCT
-    assert prod.records != three.records and prod.out != three.out          # 기록과 만든 것은 따로
+def test_shoot3_reads_the_product_model_records_like_the_judge_script():
+    import dual_eval as de
+    assert PROFILES[3].records == de.ROOT / "outputs" / de.RECORDS[3] and de.RECORDS[3] == "dual_eval_shoot3_prod"
+    assert PROFILES[2].records == de.ROOT / "outputs" / de.RECORDS[2]
+    assert PROFILES[3].overrides == () and PROFILES[3].can_tune           # 3차 기본 판정 값은 판정 코드(dual_config)에 있다
+
+
+def test_generic_view_is_the_old_baseline_with_other_records_and_no_tuning():
+    three, old = PROFILES[3], PROFILES[SHOOT3_GENERIC]
+    assert old.shoot == 3 and Builder(SHOOT3_GENERIC).shoot == 3 and Builder(SHOOT3_GENERIC).key == SHOOT3_GENERIC
+    assert old.records.name == "dual_eval_shoot3" and old.records != three.records and old.out != three.out
     for name in ("labels", "zones", "judge_file", "signature_files", "payment"):
-        assert getattr(prod, name) == getattr(three, name), name            # 정답표 · 구역 · 적용한 값은 3차 것
-    assert three.can_tune and not prod.can_tune and not prod.can_add        # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
-    assert prod.note and not three.note
+        assert getattr(old, name) == getattr(three, name), name             # 정답표 · 구역 · 적용한 값은 3차 것
+    assert three.can_tune and not old.can_tune and not old.can_add          # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
+    assert old.note and not three.note
+    # 예전 기록에는 전체 카메라 상품 기록이 없다 — 3차 기본(개수 · 든 사람 켬, 머묾 끔)을 예전 값으로 되돌려 판정한다
+    assert old.overrides == OLD_JUDGE == ("fusion.overview_count=false", "fusion.overview_owner=false", "fusion.overview_dwell=true")
     assert main_views() == [2, 3]
 
 
-def test_count_view_judges_the_product_records_with_the_overview_count():
-    prod, count = PROFILES[SHOOT3_PRODUCT], PROFILES[SHOOT3_COUNT]
-    assert count.records == prod.records and count.out != prod.out          # 같은 기록, 만든 것은 따로
-    assert count.overrides == ("fusion.overview_count=true",) and prod.overrides == () and PROFILES[3].overrides == ()
-    assert count.shoot == 3 and not count.can_tune and count.note and count.thumbs == prod.thumbs
-    assert Builder(SHOOT3_COUNT).signature("C01") != Builder(SHOOT3_PRODUCT).signature("C01")      # 얹는 값이 다르면 다시 만든다
-    assert main_views() == [2, 3]
-
-
-def test_owner_view_adds_the_holder_owner_and_drops_the_overview_dwell():
-    count, owner = PROFILES[SHOOT3_COUNT], PROFILES[SHOOT3_OWNER]
-    assert owner.records == count.records and owner.out not in (count.out, PROFILES[SHOOT3_PRODUCT].out)
-    assert owner.overrides == ("fusion.overview_count=true", "fusion.overview_owner=true", "fusion.overview_dwell=false")
-    assert owner.shoot == 3 and not owner.can_tune and owner.note
-    assert Builder(SHOOT3_OWNER).signature("C01") != Builder(SHOOT3_COUNT).signature("C01")
+def test_dwell_view_judges_the_same_records_with_the_overview_dwell():
+    three, dwell = PROFILES[3], PROFILES[SHOOT3_DWELL]
+    assert dwell.records == three.records and dwell.out != three.out        # 같은 기록, 만든 것은 따로
+    assert dwell.overrides == ("fusion.overview_owner=false", "fusion.overview_dwell=true")
+    assert dwell.shoot == 3 and not dwell.can_tune and dwell.note and dwell.thumbs == PROFILES[SHOOT3_GENERIC].thumbs
+    assert Builder(SHOOT3_DWELL).signature("C01") != Builder(3).signature("C01")      # 얹는 값이 다르면 다시 만든다
+    assert set(PROFILES) == {2, 3, SHOOT3_GENERIC, SHOOT3_DWELL}
     assert main_views() == [2, 3]
 
 
 def test_engine_points_the_judge_at_the_views_records():
     import dual_eval as de
     try:
-        with Builder(SHOOT3_PRODUCT).engine():
-            assert de.SHOOT == 3 and de.OUT == PROFILES[SHOOT3_PRODUCT].records and de.LABELS == PROFILES[3].labels
+        with Builder(SHOOT3_GENERIC).engine():
+            assert de.SHOOT == 3 and de.OUT == PROFILES[SHOOT3_GENERIC].records and de.LABELS == PROFILES[3].labels
         with Builder(3).engine():
             assert de.SHOOT == 3 and de.OUT == PROFILES[3].records          # 같은 회차라도 기록 폴더가 다르면 다시 맞춘다
-        with Builder(SHOOT3_PRODUCT).engine():
-            assert de.OUT == PROFILES[SHOOT3_PRODUCT].records
+        with Builder(SHOOT3_GENERIC).engine():
+            assert de.OUT == PROFILES[SHOOT3_GENERIC].records
     finally:
         de.set_profile(2)
 
 
 def test_thumbnail_is_copied_from_the_base_view(tmp_path):
-    builder = Builder(SHOOT3_PRODUCT)
+    builder = Builder(SHOOT3_GENERIC)
     ready = tmp_path / "base"
     ready.mkdir()
     (ready / "C01.jpg").write_bytes(b"jpg")
@@ -129,12 +130,12 @@ def test_thumbnail_is_copied_from_the_base_view(tmp_path):
 
 def test_server_never_opens_on_a_compare_view_and_has_no_tuner_for_it(monkeypatch):
     from workbench import server
-    assert SHOOT3_PRODUCT in server.BUILDERS and SHOOT3_PRODUCT not in server.TUNERS
+    assert SHOOT3_GENERIC in server.BUILDERS and SHOOT3_GENERIC not in server.TUNERS
     assert set(server.TUNERS) == {2, 3}
     for key, b in server.BUILDERS.items():
         monkeypatch.setattr(b, "pairs", lambda key=key: ["C01"])            # 모든 보기에 기록이 있다고 치고
     assert server.shoot_of(None, None) == 3                                 # 처음 여는 화면은 가장 최근 회차
-    assert server.shoot_of(str(SHOOT3_PRODUCT)) == SHOOT3_PRODUCT           # 골라서 여는 것은 된다
+    assert server.shoot_of(str(SHOOT3_GENERIC)) == SHOOT3_GENERIC           # 골라서 여는 것은 된다
     with pytest.raises(ValueError):
         server.shoot_of("30")
 

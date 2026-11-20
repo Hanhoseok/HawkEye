@@ -7,7 +7,7 @@
 - tiles: 바닥 지도 자체. 보정에 쓴 것은 노란 메모지 4장의 중심뿐이라, 메모지와 상관없는 타일 줄눈이 두 카메라에서 같은 자리에 오는지는
   독립된 확인이다. area_setting 장면 한 장으로 재므로 '그 장면의 카메라 자리'에서만 맞다는 뜻이다.
 - feet: 영상마다 카메라가 조금씩 돌아간 것을 되돌리는 단계(sync_floor.py register)와 시차까지 포함한 끝에서 끝 확인. 사람이 실제로 다닌 자리만 본다.
-  기록(outputs/dual_eval_shoot3)이 있어야 한다 — python scripts/dual_eval.py --shoot 3 run
+  기록(outputs/dual_eval_shoot3_prod)이 있어야 한다 — python scripts/dual_eval.py --shoot 3 run
 
 아무것도 고치지 않는다. 확인 그림은 outputs/floor_check/ 에.
 """
@@ -203,7 +203,7 @@ def feet(only: str | None) -> None:
             per_pair.append((pair, len(d), float(np.median(d)), float(np.percentile(d, 90))))
             everything += rows
     if not everything:
-        print("견줄 순간이 없다 — 기록(outputs/dual_eval_shoot3)이 있는지 확인")
+        print("견줄 순간이 없다 — 기록(outputs/dual_eval_shoot3_prod)이 있는지 확인")
         return
     print("영상마다: 두 카메라에 한 명씩, 둘 다 발목이 보인 순간의 발 거리 (같은 사람, cm)")
     for pair, n, med, p90 in per_pair:

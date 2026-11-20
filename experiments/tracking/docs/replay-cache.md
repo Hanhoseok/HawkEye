@@ -21,11 +21,11 @@
 
 ```bash
 # 1) 저장하며 직접 실행 (촬영당 한 번, 약 1시간)
-python scripts/dual_eval.py --shoot 3 run --record-cache        # → outputs/dual_eval_shoot3/<짝>/cache/*.pkl.gz
+python scripts/dual_eval.py --shoot 3 run --record-cache        # → outputs/dual_eval_shoot3_prod/<짝>/cache/*.pkl.gz (3차 기본 기록 = 상품 모델 기록, 후속 56)
 python scripts/dual_eval.py --shoot 2 run --record-cache        # → outputs/dual_eval_pose3/...
 
 # 2) 설정을 바꿔 다시 계산 (초 단위) 후 판정
-python scripts/dual_eval.py --shoot 3 replay --from dual_eval_shoot3 --out try1 --set identity.late_merge_threshold=0.875
+python scripts/dual_eval.py --shoot 3 replay --from dual_eval_shoot3_prod --out try1 --set identity.late_merge_threshold=0.875
 python scripts/dual_eval.py --shoot 3 judge --out try1
 
 # 3) 회귀 검사 — 2·3차 × 모든 판정 방식을 한 번에 (14초)
@@ -53,7 +53,7 @@ python scripts/regress.py update                                                
 
 - 기준: `baselines/shoot<N>_<방식>.json` — 짝별 판정·맞음·손님 수 (작은 파일, 커밋함).
   3차 v(영상만)·s(센서 L1·L2)·p(결제 라벨)·ps(센서+결제), 2차 v·p.
-- 지금 기준 (2026-11-14): 3차 28·29·29·29 / 39, 2차 32·32 / 38, 손님 수 38/39·38/38.
+- 지금 기준 (2026-11-20, 후속 56 — 3차는 상품 모델 기록): 3차 32·30·32·31 / 39, 2차 32·32 / 38. 그 전 기준 (2026-11-14, 3차는 일반 탐지 모델 기록): 3차 28·29·29·29 / 39, 2차 32·32 / 38, 손님 수 38/39·38/38.
   → 같은 날 후속 46(포개진 상자 보류 + 관절로 가르기, 3차 기본)로 3차 기준을 갱신: 점수 그대로, **손님 수 39/39**(C03), 판정 목록만 바뀐 짝 C03 · C14. 2차 기준은 그대로.
 - 종료 코드: 0 = 같거나 좋아짐, 1 = 나빠진 짝 있음 (맞던 짝이 틀림·손님 수가 틀려짐), 2 = 검사 불완전 (빠진 짝·실패).
 - `update` 는 결과가 불완전하면(실패·건너뜀·빈 결과·기준에 있던 짝이 빠짐) 기준을 쓰지 않는다. 일부러 짝을 뺄 때만 `--allow-remove`.

@@ -1,6 +1,6 @@
 """기록 → 분석 도구 데이터 (outputs/workbench/).
 
-저장된 기록(2차 outputs/dual_eval_pose3/<짝>/ · 3차 outputs/dual_eval_shoot3/<짝>/)을 지금 설정으로 다시 판정하며 보기 데이터를 만들고,
+저장된 기록(2차 outputs/dual_eval_pose3/<짝>/ · 3차 outputs/dual_eval_shoot3_prod/<짝>/ — 상품 모델 기록)을 지금 설정으로 다시 판정하며 보기 데이터를 만들고,
 질문별 요약(analyze.py)을 붙여 짝마다 한 파일로 둔다. 영상을 다시 돌리지 않는다 — 짝당 1초 안팎.
 
     python workbench/data.py              # 바뀐 짝만 다시 만들기 (2차)
@@ -34,13 +34,14 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 12
+VERSION = 13
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
 10: 전체 카메라 번호 맞바뀜 되돌리기 (fusion.swap_repair, 후속 49) — 보기 데이터에 swaps 가 생기고 3차 C20 의 번호·짝이 달라진다.
 11: 전체 카메라에서 찾은 상품 (overview_items, 후속 52) — 보기만 하고 판정은 그대로다.
-12: 전체 카메라의 선반 앞 머묾을 판정에 넣었는지 (overview_dwell, 후속 55) — 뺀 보기(33)는 그 줄에 '판정에 안 씀'이 붙는다."""
+12: 전체 카메라의 선반 앞 머묾을 판정에 넣었는지 (overview_dwell, 후속 55) — 뺀 보기는 그 줄에 '판정에 안 씀'이 붙는다.
+13: 3차의 기본 기록이 상품 모델 기록으로, 3차 기본 판정이 전체 카메라 개수 · 든 사람 · 머묾 안 씀으로 (후속 56). 보기 31 · 32 의 뜻이 바뀌고 33 은 없어졌다."""
 RUN_KEY = "current"
 
 
@@ -85,7 +86,9 @@ PROFILES = {
                 ROOT / "zones" / "store01_dual" / "angle0.yaml"), True),
     # 3차는 영상마다 카메라가 조금씩 움직여, 기본 구역을 영상별 화면으로 옮겨 쓴다 (outputs/sync_floor/register.csv).
     # 새 영상을 넣으려면 그 맞추기부터 해야 해서 도구에서 추가하지 못한다.
-    3: Profile(3, "3차 촬영", ROOT / "outputs" / "dual_eval_shoot3", ROOT / "labels" / "store01_shoot3",
+    # 3차의 기본 기록은 상품 모델 기록이다 (후속 56 — scripts/dual_eval.py RECORDS 와 같은 폴더). 판정 값도 그쪽 3차 기본 그대로:
+    # 전체 카메라 개수 · 든 사람으로 주인 · 선반 앞 머묾 안 씀.
+    3: Profile(3, "3차 촬영", ROOT / "outputs" / "dual_eval_shoot3_prod", ROOT / "labels" / "store01_shoot3",
                ROOT / "zones" / "store01_shoot3", OUT / "shoot3", ROOT / "configs" / "store01_shoot3_judge.yaml",
                (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot3" / n for n in
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
@@ -94,37 +97,26 @@ PROFILES = {
 """열쇠는 보기 번호 — 주소(#/3)와 요청(?shoot=3)에 쓴다. 회차의 기본 기록은 회차 번호 그대로이고,
 같은 회차의 다른 기록(견줘 보기)은 다른 번호를 쓴다 (Profile.shoot 는 그대로 회차)."""
 
-SHOOT3_PRODUCT = 31
-"""3차 기록에서 선반 물건 탐지만 상품 모델로 바꿔 다시 계산한 것 (docs/shelf-map.md '상품 모델을 끼워 봄').
-기록은 scripts/product_shelf_cache.py → dual_eval.py replay 로 만든다. 없으면 화면에 안 나온다.
+SHOOT3_GENERIC = 31
+"""예전 기준: 일반 탐지 모델로 만든 3차 기록(outputs/dual_eval_shoot3)을 예전 판정 값으로 본 것 (후속 56 전까지의 '3차 촬영').
+선반 물건을 일반 YOLO 로 찾아 선반 지도가 대부분 '변화 없음'이고, 전체 카메라의 선반 앞 머묾을 집기 동작으로 쓴다.
 정답표 · 시차 · 결제 · 구역 · 적용한 값은 3차 것을 그대로 쓴다 — 여기서 정답을 고치면 3차의 정답이 바뀐다."""
-PROFILES[SHOOT3_PRODUCT] = replace(
-    PROFILES[3], name="3차 · 상품 모델", records=ROOT / "outputs" / "dual_eval_shoot3_prod", out=OUT / "shoot3_prod",
-    can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
-    note="3차 기록에서 선반 물건 탐지만 상품 모델(2차 yolov8n)로 바꿔 다시 계산한 것입니다. 사람 · 추적 · 구역 · 판정 값은 3차 촬영과 같습니다. "
-         "모델이 이 영상들의 장면으로 학습했으므로(39편 중 25편) 점수는 낙관적입니다. 수치 조정은 3차 촬영에서 합니다.")
+OLD_JUDGE = ("fusion.overview_count=false", "fusion.overview_owner=false", "fusion.overview_dwell=true")
+PROFILES[SHOOT3_GENERIC] = replace(
+    PROFILES[3], name="3차 · 예전 기준 (일반 탐지 모델)", records=ROOT / "outputs" / "dual_eval_shoot3", out=OUT / "shoot3_generic",
+    can_tune=False, thumbs=OUT / "shoot3" / "thumbs", overrides=OLD_JUDGE,
+    note="2026-11-20 까지의 기준입니다. 선반 물건을 일반 탐지 모델로 찾은 기록을, 선반 지도 개수와 '선반 앞 머묾'으로 판정했습니다. "
+         "지금의 '3차 촬영'은 상품 모델 기록입니다. 수치 조정은 3차 촬영에서 합니다.")
 
 
-SHOOT3_COUNT = 32
-"""상품 모델 기록(31)과 같은 기록을, 선반 방문의 개수만 전체 카메라가 센 상품 개수로 바꿔 판정한 것 (fusion.overview_count, 후속 54).
-scripts/product_overview_items.py 로 전체 카메라 상품을 찾아 둔 기록이어야 한다 — 없는 짝은 만들기에 실패한다."""
-PROFILES[SHOOT3_COUNT] = replace(
-    PROFILES[SHOOT3_PRODUCT], name="3차 · 상품 모델 + 전체 카메라 개수", out=OUT / "shoot3_count",
-    overrides=("fusion.overview_count=true",),
-    note="'3차 · 상품 모델'과 같은 기록입니다. 선반 방문의 꺼냄 · 놓음 개수만 전체 카메라가 센 상품 개수(방문 전 - 방문 뒤)로 바꿔 판정했습니다. "
-         "바뀐 방문은 행동 설명에 '전체 카메라 개수 … — 선반 지도는 …'으로 나옵니다. 모델이 이 영상들로 학습했으므로 점수는 낙관적입니다. "
-         "수치 조정은 3차 촬영에서 합니다.")
-
-
-SHOOT3_OWNER = 33
-"""보기 32 에 더해: 주인을 못 정한 방문의 주인을 전체 카메라에서 그 상품을 먼저 든 사람으로 정하고 (fusion.overview_owner),
-전체 카메라의 '선반 앞 머묾'을 판정에서 뺀 것 (fusion.overview_dwell=false, 후속 55)."""
-PROFILES[SHOOT3_OWNER] = replace(
-    PROFILES[SHOOT3_PRODUCT], name="3차 · 상품 모델 + 전체 카메라 개수 · 든 사람, 머묾 뺌", out=OUT / "shoot3_owner",
-    overrides=("fusion.overview_count=true", "fusion.overview_owner=true", "fusion.overview_dwell=false"),
-    note="'3차 · 상품 모델'과 같은 기록입니다. 전체 카메라의 '선반 앞 머묾'을 판정에서 빼고, 두 사람이 함께 선반을 가려 주인을 못 정한 방문은 "
-         "전체 카메라에서 그 상품을 먼저 든 사람을 주인으로 했습니다 ('전체 카메라에서 먼저 든 사람', 종류마다 든 사람이 다르면 사람별로 나눔). "
-         "모델이 이 영상들로 학습했으므로 점수는 낙관적입니다. 수치 조정은 3차 촬영에서 합니다.")
+SHOOT3_DWELL = 32
+"""지금 기록(상품 모델)을 '선반 앞 머묾'을 쓰던 판정으로 본 것 — 전체 카메라 개수는 쓰고, 든 사람으로 주인 정하기는 끄고, 머묾은 켠다
+(후속 54 까지의 판정). 머묾을 뺀 것이 무엇을 바꿨는지 견줘 보는 용도다."""
+PROFILES[SHOOT3_DWELL] = replace(
+    PROFILES[3], name="3차 · 머묾을 쓰던 판정", out=OUT / "shoot3_dwell", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
+    overrides=("fusion.overview_owner=false", "fusion.overview_dwell=true"),
+    note="'3차 촬영'과 같은 기록입니다. 전체 카메라의 '선반 앞 머묾'을 집기 동작으로 쓰고, 주인을 못 정한 방문은 '모름'으로 두던 판정입니다 "
+         "(2026-11-20 후속 55 전). 수치 조정은 3차 촬영에서 합니다.")
 
 
 def main_views() -> list[int]:
@@ -435,7 +427,8 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="바뀌지 않은 짝도 다시 만든다")
     ap.add_argument("--only", help="짝 이름 (쉼표)")
     ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
-                    help=f"보기 번호 — 2 · 3 은 촬영 회차, {SHOOT3_PRODUCT} 은 3차에 상품 모델을 끼운 기록, {SHOOT3_COUNT} 는 거기에 전체 카메라 개수를 넣은 판정, {SHOOT3_OWNER} 은 든 사람으로 주인을 정하고 머묾을 뺀 판정 (기본 2)")
+                    help=f"보기 번호 — 2 · 3 은 촬영 회차 (3차는 상품 모델 기록), {SHOOT3_GENERIC} 은 3차의 예전 기준(일반 탐지 모델), "
+                         f"{SHOOT3_DWELL} 는 3차를 머묾을 쓰던 판정으로 본 것 (기본 2)")
     args = ap.parse_args()
     b = Builder(args.shoot)
     state = b.build(args.only.split(",") if args.only else None, args.force)

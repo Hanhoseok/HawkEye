@@ -111,7 +111,6 @@
   "pair": "C14",
   "verdicts": [
    "CLEAR",
-   "CLEAR",
    "CLEAR"
   ],
   "correct": true,
@@ -133,9 +132,9 @@
  {
   "pair": "C16",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -183,9 +182,9 @@
   "pair": "C21",
   "verdicts": [
    "CLEAR",
-   "CLEAR"
+   "HIGH_RISK"
   ],
-  "correct": true,
+  "correct": false,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -243,9 +242,9 @@
  {
   "pair": "N06",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -291,9 +290,9 @@
  {
   "pair": "N11",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -392,9 +391,9 @@
  {
   "pair": "T10",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": true,
+  "correct": false,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
