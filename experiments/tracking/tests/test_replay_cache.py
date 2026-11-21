@@ -206,9 +206,9 @@ def test_detail_interaction_override_reaches_the_config(tmp_path, monkeypatch):
 
     cfg = AppConfig()
     assert cfg.detail_interaction is None
-    dual_eval._apply_set(cfg, ["detail_interaction.dwell_seconds=0.5", "identity.late_merge_threshold=0.9"], early=True)
+    dual_eval._apply_set(cfg, ["detail_interaction.min_seconds=0.5", "identity.late_merge_threshold=0.9"], early=True)
     assert cfg.identity.late_merge_threshold == 0.9
     from src.core.config import InteractionConfig
     cfg.detail_interaction = InteractionConfig()
-    dual_eval._apply_set(cfg, ["detail_interaction.dwell_seconds=0.5"])
-    assert cfg.detail_interaction.dwell_seconds == 0.5
+    dual_eval._apply_set(cfg, ["detail_interaction.min_seconds=0.5"])
+    assert cfg.detail_interaction.min_seconds == 0.5

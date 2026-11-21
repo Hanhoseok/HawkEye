@@ -303,7 +303,7 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     ]
     # 선반 카메라 손 뻗기 = 손목이 칸(SHELF 구역) 안에 0.3초 이상 (설계 M-6). 기준값은 N 으로 다시 본다.
     cfg.detail_interaction = InteractionConfig(**{**cfg.interaction.__dict__, "signal": "hand",
-                                                  "dwell_seconds": 0.3, "hand_conf": 0.3})
+                                                  "min_seconds": 0.3, "hand_conf": 0.3})
     cfg.risk.payment_mode = "dwell"   # 결제 기록 없음: 계산대 체류 = 결제 (사용자 확인 규칙)
     # 매장 안 바닥(선반 앞·계산대·통로)에 1초 이상 들어온 사람만 손님 — 문 앞·창밖 행인·입장 순간 겹친 상자 제외 (C-20)
     cfg.risk.inside_zones, cfg.risk.inside_seconds = ["shelf", "counter", "aisle"], 1.0
@@ -503,7 +503,7 @@ class PairLog:
 
     @classmethod
     def _takes(cls, path: Path) -> list[TakeCandidate]:
-        return [TakeCandidate(**r) for r in cls._jsonl(path)]
+        return [TakeCandidate.from_dict(r) for r in cls._jsonl(path)]
 
     def fps(self, cam: str) -> float:
         return self.meta[cam]["fps"]

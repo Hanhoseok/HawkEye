@@ -67,7 +67,7 @@ class FusedRecord:
     """shelf_events.jsonl 한 줄 — 어떻게 주인을 정했는지 남긴다."""
 
     kind: str
-    """visit (선반 변화) / take (손 접촉·머묾) / sensor."""
+    """visit (선반 변화) / take (손 접촉) / sensor."""
     start_ms: float
     end_ms: float
     owner: int

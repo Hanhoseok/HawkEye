@@ -98,7 +98,7 @@ def test_fuser_assigns_unowned_visit_through_hand_touch_and_converts_frames():
     detail_axis, overview_axis = TimeAxis(30.0, -300.0), TimeAxis(60.0)
     fuser = ShelfEventFuser(cfg, linker, detail_axis, overview_axis, {"card": "shelf"})
     # 선반 카메라 4번이 card 칸에 손을 댐 (선반 카메라 장면 90~105 = 3.0~3.5초 → 시차 -0.3초 → 공통 2.7~3.2초)
-    take = TakeCandidate(4, "card", 90, 105, "", "", 0.5, 8, 0.0, 0.0)
+    take = TakeCandidate(4, "card", 90, 105, "", "", 0.5, 8, 0.0)
     fused_take = fuser.detail_take(take)
     assert fused_take.person_id == 11 and fused_take.zone == "shelf"
     assert fused_take.start_frame == overview_axis.to_frame(3000.0 - 300.0) == 162
@@ -136,7 +136,7 @@ def test_sensor_only_event_becomes_visit_after_waiting():
 
 def test_slot_change_keeps_take_when_detector_sees_nothing():
     # 물건 탐지 '변화 없음' + 칸 줄어듦 → 집음 1개 / 칸 바뀜(방향 모름) + 손 뻗기 → 확인 못 함(+1) / 칸 그대로 → 만지기만
-    take = TakeCandidate(1, "shelf", 10, 40, "", "", 1.0, 5, 0.0, 0.0)
+    take = TakeCandidate(1, "shelf", 10, 40, "", "", 1.0, 5, 0.0)
     base = dict(person_id=1, shelf="shelf", start_frame=0, end_frame=50, removed=0, added=0, zone="shelf")
     assert classify_visit(ShelfVisit(**base, slot_change="줄어듦"), [take]).kind == "TAKE"
     unsure = classify_visit(ShelfVisit(**base, slot_change="바뀜"), [take])

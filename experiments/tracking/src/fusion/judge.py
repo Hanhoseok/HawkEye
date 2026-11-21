@@ -79,7 +79,7 @@ class DualJudge:
         if config.overview_reach_seconds > 0 and shelf_image:
             shelf_image.resolve(*overview_size)
             self.reach = InteractionDetector(
-                InteractionConfig(signal="hand", dwell_seconds=config.overview_reach_seconds,
+                InteractionConfig(signal="hand", min_seconds=config.overview_reach_seconds,
                                   hand_conf=config.overview_reach_conf), shelf_image)
         if getattr(risk, "consistency", None) is not None:
             # 신원 확인 값은 화면 신원으로 재 둔 것이다 — 손님 장부가 매장 신원으로 물으면 화면 신원으로 바꿔 묻는다

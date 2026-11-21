@@ -161,7 +161,7 @@ python run_tracking.py --source data/videos/store-aisle-detection.mp4   --start-
 영상 한 장면
  ├─ ① 사람 찾기·잇기   YOLO(사람) → BoT-SORT                   → TrackObservation (추적 번호)
  ├─ ② 매장 단위 신원   끊겨도·번호가 바뀌어도 같은 손님          → IdentityObservation (손님 번호)
- ├─ ③ 손 뻗기          선반 구역 앞 멈춤 / 손목-선반 거리        → TakeCandidate
+ ├─ ③ 손 뻗기          손목이 선반 구역 안 / 손목-선반 거리 (관절) → TakeCandidate
  └─ ④ 선반 지도        YOLO(물건) → 지도 → 가림 → 떠난 뒤 비교   → ShelfVisit (사라짐·생김·변화 없음)
       ⑤ 손님 장부      ③+④ → 집음/놓음/만지기만, 물건 수, 결제(기록 또는 계산대 체류)
       ⑥ 위험 판정      출구 접근 WARNING → 나감 확정 → HIGH_RISK / REVIEW / CLEAR → RiskEvent
@@ -233,7 +233,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | **1차 매장 영상 (카메라 1대)** | `store_eval.py` | 1차 촬영 40편 일괄 평가: `run` · `judge` |
 | | `transfer_zones.py` · `screen_videos.py` | 카메라가 조금 움직였을 때 구역 옮기기 · 검증 영상 고르기(사람·물건이 얼마나 보이나) |
 | **기록으로 다시 돌리기 (영상 없이)** | `replay_identity.py` · `replay_risk.py` | 저장된 추적 기록으로 신원만 · 신원 기록으로 판정만 다시 |
-| | `take_sweep.py` · `identity_calibration.py` · `remap_identities.py` | 손 뻗기 기준값 훑기 · 신원 판정 방식 비교 · 두 실행 사이 손님 번호 대응표 |
+| | `identity_calibration.py` · `remap_identities.py` | 신원 판정 방식 비교 · 두 실행 사이 손님 번호 대응표 |
 | **공개 데이터 평가** | `merl_to_labels.py` · `merl_batch.py` · `merl_eval.py` · `merl_feature_check.py` | MERL: 라벨 변환 · 묶어 돌리기 · train/test 평가 · 자세 특징 판별력 |
 | | `retailaction_eval.py` · `retailaction_hands.py` · `eval_takes.py` | RetailAction: 자세만으로 집기 · 손 사진으로 집음/놓음 · 손 뻗기 후보를 라벨과 대조 |
 | **라벨·구역 준비** | `label_actions.py` · `export_frame.py` · `zone_report.py` | 행동 구간 라벨링 · 격자 입힌 장면 저장 · 신원별 구역 체류 집계 |
@@ -268,7 +268,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | **`docs/identity-registry.md`** | **계층 2 — 매장 단위 신원. tracker 가 끊겨도 person_id 유지** |
 | **`docs/zones.md`** | **구역 인프라 — SHELF/EXIT 정의와 판정 방식** |
 | **`docs/zones-store01.md`** | **카메라 2대 구역 — 구역마다 코드에서 하는 일, 구역 편집 페이지(`scripts/zone_editor.html`)** |
-| **`docs/take-candidates.md`** | **계층 3 — 선반 앞 멈춤으로 TAKE 후보 판정, 그 한계** |
+| **`docs/take-candidates.md`** | **계층 3 — 선반 앞 멈춤으로 TAKE 후보 판정, 그 한계** (그 근거는 2026-11-21 코드에서 지움 — 측정 기록) |
 | **`docs/labeling.md`** | **행동 라벨링 — 무엇을 왜 어떻게 찍는가** |
 | **`docs/pose-signals.md`** | **Pose 신호 — 손 높이는 되고 팔 뻗음·손 위치는 안 된다** |
 | **`docs/merl-evaluation.md`** | **MERL 공개 데이터로 train/test 분리 평가. 특징이 화각에 종속적임을 확인** |

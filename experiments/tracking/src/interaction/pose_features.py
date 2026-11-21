@@ -67,33 +67,6 @@ def arm_extension(keypoints: Keypoints | None, min_conf: float, body_height: flo
     return best
 
 
-def hand_height(keypoints: Keypoints | None, min_conf: float, body_height: float) -> float | None:
-    """손목이 엉덩이보다 얼마나 위에 있는지. 체구 높이로 나눈 값. 양수면 위.
-
-    라벨 기준 실측: TAKE 중앙값 0.146 / BROWSE 0.036 (약 4배 차이).
-    구경할 때는 손이 내려가 있고, 집을 때만 선반 높이로 올라간다.
-
-    참고로 '팔 뻗음'(어깨-손목 거리)은 판별력이 없었다
-    (TAKE 0.296 vs BROWSE 0.315 로 오히려 역전). 위치도 자세도 아무거나
-    되는 것이 아니라, 실제로 갈리는 것을 골라야 한다.
-    """
-    if not keypoints or body_height <= 0:
-        return None
-    best = None
-    for wrist_idx, _elbow, _shoulder, hip_idx in WRISTS:
-        if max(wrist_idx, hip_idx) >= len(keypoints):
-            continue
-        wx, wy, wc = keypoints[wrist_idx]
-        hx, hy, hc = keypoints[hip_idx]
-        if wc < min_conf or hc < min_conf:
-            continue
-        if (wx == 0 and wy == 0) or (hx == 0 and hy == 0):
-            continue
-        value = (hy - wy) / body_height  # 이미지 y 는 아래로 증가하므로 뺄셈 방향이 이렇다
-        best = value if best is None else max(best, value)
-    return best
-
-
 def hands_in_zones(zone_map, keypoints: Keypoints | None, min_conf: float) -> set[str]:
     """손목이 안에 들어간 구역 이름들.
 

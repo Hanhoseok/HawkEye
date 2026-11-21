@@ -77,7 +77,7 @@ class RunStats:
             people = {c.person_id for c in self.take_candidates}
             total = sum(c.duration_sec for c in self.take_candidates)
             lines.append(f"TAKE 후보       : {len(self.take_candidates)}건 / {len(people)}명")
-            lines.append(f"  └ 총 체류 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
+            lines.append(f"  └ 손이 닿은 시간 합 {total:.1f}초, 평균 {total/len(self.take_candidates):.1f}초")
         if self.shelf_summary:
             lines.append(self.shelf_summary)
         if self.shelf_visits and not self.risk_summary:

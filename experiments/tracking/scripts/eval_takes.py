@@ -6,9 +6,7 @@
     # 저장된 후보를 평가
     python scripts/eval_takes.py labels/store-aisle.csv --takes outputs/take-base/take_candidates.jsonl
 
-    # 임계값을 스윕하면서 평가 (정답 기준으로 최적점 찾기)
-    python scripts/eval_takes.py labels/store-aisle.csv \
-        --identities outputs/take-base/identities.jsonl --fps 59.9 --sweep
+(머묾 기준값을 훑는 --sweep 은 지웠다 — 2026-11-21, 후속 60.)
 
 판정 규칙
     TP  후보가 같은 person 의 TAKE 라벨과 프레임 구간이 겹친다 (라벨 하나당 후보 하나만 인정)
@@ -27,8 +25,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.sinks.observation_log import read_identities  # noqa: E402
-from src.zones.zone_map import ZoneMap  # noqa: E402
 
 
 @dataclass
@@ -108,13 +104,7 @@ def print_result(r: dict, prefix: str = "") -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("labels")
-    parser.add_argument("--takes", help="평가할 take_candidates.jsonl")
-    parser.add_argument("--identities", help="스윕할 때 재생할 identities.jsonl")
-    parser.add_argument("--zones", default="zones/store-aisle.yaml")
-    parser.add_argument("--fps", type=float, default=30.0)
-    parser.add_argument("--width", type=int, default=720)
-    parser.add_argument("--height", type=int, default=404)
-    parser.add_argument("--sweep", action="store_true")
+    parser.add_argument("--takes", required=True, help="평가할 take_candidates.jsonl")
     args = parser.parse_args()
 
     labels = load_labels(args.labels)
@@ -125,45 +115,17 @@ def main() -> None:
     if not takes:
         raise SystemExit("TAKE 라벨이 없습니다. 최소 몇 건은 있어야 평가할 수 있습니다.")
 
-    if args.takes:
-        from src.core.types import TakeCandidate
-        import json
+    import json
 
-        candidates = []
-        with Path(args.takes).open(encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    candidates.append(TakeCandidate(**json.loads(line)))
-        print(f"후보 {len(candidates)}건 평가")
-        print_result(evaluate(candidates, labels), "  ")
-        return
+    from src.core.types import TakeCandidate
 
-    if not args.identities:
-        raise SystemExit("--takes 또는 --identities 중 하나가 필요합니다")
-
-    from take_sweep import replay  # 같은 폴더
-
-    zone_map = ZoneMap.load(args.zones)
-    zone_map.resolve(args.width, args.height)
-    observations = [o for o in read_identities(args.identities) if o.person_id > 0]
-
-    print(f"{'속도':>6} {'체류':>5} {'후보':>5} {'TP':>4} {'FP':>4} {'FN':>4} "
-          f"{'정밀도':>7} {'재현율':>7} {'F1':>6}")
-    print("-" * 58)
-    best = None
-    for speed in (0.30, 0.20, 0.10, 0.05, 0.03):
-        for dwell in (1.0, 2.0, 3.0):
-            cands = replay(observations, zone_map, args.fps, max_speed=speed, dwell_seconds=dwell)
-            r = evaluate(cands, labels)
-            print(f"{speed:>6.2f} {dwell:>5.1f} {len(cands):>5} {r['tp']:>4} {r['fp']:>4} "
-                  f"{r['fn']:>4} {r['precision']:>7.2f} {r['recall']:>7.2f} {r['f1']:>6.2f}")
-            if best is None or r["f1"] > best[0]["f1"]:
-                best = (r, speed, dwell)
-    if best:
-        r, speed, dwell = best
-        print(f"\n최고 F1: max_speed={speed}, dwell_seconds={dwell}")
-        print_result(r, "  ")
-        print("\n주의: 같은 데이터로 고른 값이다. 다른 영상에서도 되는지는 별도 확인이 필요하다.")
+    candidates = []
+    with Path(args.takes).open(encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                candidates.append(TakeCandidate.from_dict(json.loads(line)))
+    print(f"후보 {len(candidates)}건 평가")
+    print_result(evaluate(candidates, labels), "  ")
 
 
 if __name__ == "__main__":

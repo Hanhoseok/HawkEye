@@ -38,8 +38,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--signal",
-        choices=["dwell", "hand", "raise", "stage", "reach"],
-        help="TAKE 후보의 판정 근거. stage = 체류로 거르고 손 올림으로 시점 찍기",
+        choices=["hand", "reach"],
+        help="손 뻗기 후보의 근거. hand = 손목이 선반 구역 안, reach = 손목-선반 거리 (수직 천장 시점). 관절 탐지기 필요",
     )
     parser.add_argument("--tracker", choices=["bytetrack", "botsort"], help="사용할 tracker")
     parser.add_argument("--device", help="cpu / cuda:0")
@@ -102,8 +102,7 @@ def parse_args() -> argparse.Namespace:
                         help="결제 기록 없이 '계산대에 서 있으면 결제, 다시 상품 쪽으로 가면 취소'로 본다")
     parser.add_argument("--shelf-log", action="store_true",
                         help="물건 탐지 결과를 shelf_items.jsonl 로 남긴다 (가리지 않은 장면은 모두 탐지 — 평가용)")
-    parser.add_argument("--dwell", type=float, help="선반 앞 체류 시간 기준(초)")
-    parser.add_argument("--max-speed", type=float, help="'멈춤' 기준 속도 (체구 높이/초)")
+    parser.add_argument("--take-seconds", type=float, help="손이 선반 구역에 닿아 있어야 하는 시간(초)")
     parser.add_argument("--no-zones", action="store_true", help="구역을 쓰지 않는다")
     parser.add_argument(
         "--no-identity", action="store_true", help="매장 단위 신원 레지스트리(계층 2)를 끈다"
@@ -228,10 +227,8 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.risk.enabled = False
     if args.no_takes:
         config.interaction.enabled = False
-    if args.dwell is not None:
-        config.interaction.dwell_seconds = args.dwell
-    if args.max_speed is not None:
-        config.interaction.max_speed = args.max_speed
+    if args.take_seconds is not None:
+        config.interaction.min_seconds = args.take_seconds
     if args.no_zones:
         config.zones.enabled = False
     if args.no_identity:
@@ -290,10 +287,12 @@ def main() -> int:
     if config.interaction.enabled and zone_map and registry is not None:
         interactions = InteractionDetector(config.interaction, zone_map)
         print(
-            f"take     : 선반 앞 체류 {config.interaction.dwell_seconds:g}초 이상, "
-            f"속도 {config.interaction.max_speed:g} 체구/초 이하, "
-            f"겹침 {config.interaction.min_overlap:g} 이상"
+            f"take     : 손목이 선반 구역에 {config.interaction.min_seconds:g}초 이상 "
+            f"({config.interaction.signal})"
         )
+        if config.detector.name != "yolo-pose":
+            print("[warn] 관절 탐지기가 아니라 손 뻗기 후보가 나오지 않습니다 (--detector yolo-pose). "
+                  "선반 앞 머묾 근거는 지웠습니다.")
 
     risk = None
     if config.risk.enabled and interactions is not None:

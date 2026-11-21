@@ -173,7 +173,7 @@ class TakeCandidate:
     """상품을 집었을 '가능성이 있는' 구간. 계층 3의 출력.
 
     이름이 TakeEvent 가 아니라 Candidate 인 이유: 이 판정은 상품이 실제로 옮겨졌는지
-    전혀 알지 못한다. 아는 것은 "선반 앞에서 멈춰 있었다"뿐이다.
+    전혀 알지 못한다. 아는 것은 "손이 선반 구역에 닿아 있었다"뿐이다.
     상품 개별 추적은 측정 결과 실패했고(docs/phase5-take-return-survey.md),
     ReID 로도 고칠 수 없다. 같은 그릇끼리는 외형이 실제로 동일하기 때문이다.
     """
@@ -188,13 +188,15 @@ class TakeCandidate:
     observations: int
 
     max_overlap: float
-    """구간 중 선반과 가장 많이 겹쳤을 때의 비율."""
-
-    min_speed: float
-    """구간 중 가장 느렸을 때의 속도. 체구 높이 대비 초당 이동량이라 거리와 무관하다."""
+    """구간 중 몸 상자가 그 구역과 가장 많이 겹쳤을 때의 비율."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> "TakeCandidate":
+        """기록 한 줄에서. 예전 기록에만 있는 칸(min_speed — 지운 머묾의 속도)은 버린다."""
+        return cls(**{k: v for k, v in row.items() if k in cls.__dataclass_fields__})
 
 
 class RiskLevel(str, Enum):
