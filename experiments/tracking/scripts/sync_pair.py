@@ -39,6 +39,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.inputs.frame_times import end_ms, first_ms, index_at  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import shoots  # noqa: E402
 from src.inputs.sync import SyncRow, SyncTable, best_lag  # noqa: E402
 
 SOURCE = ROOT.parent.parent / "source"
@@ -47,7 +50,7 @@ REF_DIR = SOURCE / "1(angle1)"
 TABLE = ROOT / "labels" / "store01_dual" / "sync.csv"
 SHOOT3 = {"video": SOURCE / "2(angle0)", "ref": SOURCE / "2(angle1)",
           "table": ROOT / "labels" / "store01_shoot3" / "sync.csv"}
-"""3차 촬영: 두 각도 모두 <짝>.mp4 (예: T01.mp4, N08-1.mp4)."""
+"""3차 촬영: 두 각도 모두 <짝>.mp4 (예: T01.mp4, N08-1.mp4). 3차부터의 회차별 폴더는 scripts/shoots.py."""
 ADDED_DIR = SOURCE / "added"
 """분석 도구에서 추가한 영상: <짝>_angle1.<확장자>(전체 카메라) · <짝>_angle0.<확장자>(선반 카메라). 같은 매장·같은 카메라 위치만."""
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".mkv", ".avi")
@@ -56,9 +59,9 @@ HZ = 10.0
 
 def pair_files(pair: str, shoot: int = 2) -> tuple[Path, Path]:
     """짝 이름(N1, T3, C10, N8-1) → (angle0 파일, angle1 파일). 추가한 영상이면 그 파일, 아니면 2차 촬영의 이름 규칙.
-    shoot=3 이면 3차 촬영 폴더의 같은 이름 파일 (T01 → 2(angle0)/T01.mp4, 2(angle1)/T01.mp4)."""
-    if shoot == 3:
-        return SHOOT3["video"] / f"{pair}.mp4", SHOOT3["ref"] / f"{pair}.mp4"
+    shoot 가 3 이상이면 그 촬영 폴더의 같은 이름 파일 (3차 T01 → 2(angle0)/T01.mp4, 2(angle1)/T01.mp4 · 4차는 3(angle*))."""
+    if shoot >= 3:
+        return shoots.get(shoot).video(pair)
     added = added_files(pair)
     if added is not None:
         return added
@@ -88,9 +91,8 @@ def added_pairs() -> list[str]:
 
 
 def all_pairs(shoot: int = 2) -> list[str]:
-    if shoot == 3:
-        return sorted(p.stem for p in SHOOT3["ref"].glob("*.mp4")
-                      if p.stem != "area_setting" and (SHOOT3["video"] / p.name).exists())
+    if shoot >= 3:
+        return shoots.get(shoot).pairs()
     names = []
     for p in sorted(VIDEO_DIR.glob("20261028_*.mp4")):
         name = p.stem.split("_", 1)[1]
@@ -240,13 +242,13 @@ def main() -> int:
     ap.add_argument("--no-suggest", action="store_true", help="자동 추정 없이 표의 값(없으면 0)에서 시작")
     ap.add_argument("--by", default="", help="확인한 사람")
     ap.add_argument("--table", help="시차 표 (기본: 2차 labels/store01_dual/sync.csv, 3차 labels/store01_shoot3/sync.csv)")
-    ap.add_argument("--shoot", type=int, choices=[2, 3], default=2, help="촬영 회차 (기본 2)")
+    ap.add_argument("--shoot", type=int, choices=[2, *sorted(shoots.SHOOTS)], default=2, help="촬영 회차 (기본 2)")
     ap.add_argument("--all", action="store_true", help="짝을 차례로 (아직 manual 이 아닌 짝만)")
     ap.add_argument("--redo", action="store_true", help="--all 에서 manual 짝도 다시")
     ap.add_argument("--status", action="store_true", help="확인 진행 상황만 출력")
     args = ap.parse_args()
-    args.table = args.table or str(SHOOT3["table"] if args.shoot == 3 else TABLE)
-    if args.shoot == 3 and args.suggest_all:
+    args.table = args.table or str(shoots.get(args.shoot).labels / "sync.csv" if args.shoot >= 3 else TABLE)
+    if args.shoot >= 3 and args.suggest_all:
         ap.error("3차 촬영의 자동 추정은 scripts/sync_floor.py estimate 를 쓴다 (발 위치)")
 
     table = SyncTable.load(args.table)
@@ -303,7 +305,7 @@ def main() -> int:
     if not args.pair:
         ap.error("짝 이름, --all, --status 또는 --suggest-all 이 필요합니다")
     start = table.offset_ms(args.pair)
-    if start is None and args.shoot == 3:
+    if start is None and args.shoot >= 3:
         print(f"{args.pair}: 표에 시작값 없음 — 0 에서 시작 (먼저 sync_floor.py estimate 권장)")
         start = 0.0
     if start is None:

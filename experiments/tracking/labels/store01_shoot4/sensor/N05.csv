@@ -1,0 +1,4 @@
+time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+7.17,17:25:57,L2,동과루,REMOVE,3,1,-2,333,1,7.17,7.15
+10.17,17:26:00,L2,동과루,REMOVE,1,0,-1,362,1,10.17,10.15
+10.17,17:26:00,L3,애플사이다,RESYNC,2,2,0,264,1,10.17,10.15

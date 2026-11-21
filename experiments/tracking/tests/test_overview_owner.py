@@ -114,6 +114,21 @@ def test_two_of_a_kind_go_to_the_first_two_holders_and_merged_ids_are_one_person
     assert tracker.owners({"donggwaru": 2}, 3000.0, 9000.0) == [("donggwaru", 1), ("donggwaru", 1)]
 
 
+def test_two_kinds_are_shared_among_the_holders_when_one_item_was_read_as_two_kinds():
+    # 4차 C19: 두 사람이 하나씩 꺼냈다. 1번이 든 애플사이다 하나가 칸타타로도 읽혀 '칸타타를 먼저 든 사람'까지 1번이 됐다
+    tracker = HolderTracker(min_frames=5)
+    people = [someone(1, A_BOX), someone(2, B_BOX)]
+    hold(tracker, 4.0, 6.0, [held("applecider", 680)], people)
+    hold(tracker, 4.5, 6.0, [held("cantata", 680)], people)            # 같은 것이 다른 종류로도 읽혔다
+    hold(tracker, 5.0, 7.0, [held("cantata", 900)], people)            # 2번이 든 칸타타
+    assert tracker.first_holders("cantata", 3000.0, 9000.0) == [1, 2]
+    assert tracker.owners({"applecider": 1, "cantata": 1}, 3000.0, 9000.0) == [("applecider", 1), ("cantata", 2)]
+    # 한 사람만 들었으면 둘 다 그 사람
+    alone = HolderTracker(min_frames=5)
+    hold(alone, 4.0, 6.0, [held("applecider", 680), held("cantata", 700)], [someone(1, A_BOX)])
+    assert alone.owners({"applecider": 1, "cantata": 1}, 3000.0, 9000.0) == [("applecider", 1), ("cantata", 1)]
+
+
 # ---------------------------------------------------------------------- 방문의 주인
 
 def fuser_with(plan, tracker, sensors=None, band=(7, 8)) -> ShelfEventFuser:

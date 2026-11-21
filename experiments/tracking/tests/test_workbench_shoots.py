@@ -106,12 +106,12 @@ def test_previous_view_judges_the_same_records_without_the_instant_count():
     assert three.can_tune and not prev.can_tune and not prev.can_add        # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
     assert prev.note and not three.note and prev.thumbs == three.out / "thumbs"
     assert Builder(SHOOT3_PREV).signature("C01") != Builder(3).signature("C01")       # 얹는 값이 다르면 다시 만든다
-    assert main_views() == [2, 3]
+    assert main_views() == [2, 3, 4]
 
 
 def test_each_shoot_keeps_at_most_two_views(monkeypatch):
     """사용자 규칙 (2026-11-20): 분석 도구의 보기는 회차마다 최신 2개 — 지금 기준과 바로 전 판정."""
-    assert MAX_VIEWS == 2 and set(PROFILES) == {2, 3, SHOOT3_PREV}
+    assert MAX_VIEWS == 2 and set(PROFILES) == {2, 3, 4, SHOOT3_PREV}
     assert views_of(3) == [3, SHOOT3_PREV] and views_of(2) == [2]
     check_views()
     monkeypatch.setitem(PROFILES, 32, dataclasses.replace(PROFILES[SHOOT3_PREV], out=PROFILES[3].out.with_name("shoot3_third")))
@@ -164,7 +164,7 @@ def test_server_never_opens_on_a_compare_view_and_has_no_tuner_for_it(monkeypatc
     assert set(server.TUNERS) == {2, 3}
     for key, b in server.BUILDERS.items():
         monkeypatch.setattr(b, "pairs", lambda key=key: ["C01"])            # 모든 보기에 기록이 있다고 치고
-    assert server.shoot_of(None, None) == 3                                 # 처음 여는 화면은 가장 최근 회차
+    assert server.shoot_of(None, None) == 4                                 # 처음 여는 화면은 가장 최근 회차
     assert server.shoot_of(str(SHOOT3_PREV)) == SHOOT3_PREV           # 골라서 여는 것은 된다
     with pytest.raises(ValueError):
         server.shoot_of("30")

@@ -349,6 +349,7 @@ def main() -> int:
     ap.add_argument("--from", dest="source", default="dual_eval_shoot3", help="저장분이 있는 실행 폴더 (outputs/ 아래) — 장면 번호를 읽는다")
     ap.add_argument("--out", required=True, help="기록을 쓸 실행 폴더 (outputs/ 아래)")
     ap.add_argument("--only", help="짝 이름 패턴 (예: C0*)")
+    ap.add_argument("--shoot", type=int, default=3, help="촬영 회차 (기본 3) — 상품을 찾을 때의 영상 폴더. --report · --count · --visits 는 3차 정답만 안다")
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--conf", type=float, default=0.1, help="이 점수 이상을 기록한다 (화면에는 0.25 이상만 그린다)")
     ap.add_argument("--force", action="store_true", help="이미 만든 짝도 다시 만든다")
@@ -401,7 +402,7 @@ def main() -> int:
     from src.core.config import AppConfig
     from src.replay.cache import CameraCache
 
-    dual_eval.set_profile(3)
+    dual_eval.set_profile(args.shoot)
     base = AppConfig.load(ROOT / "config.yaml")
     want = settings(args.model, args.imgsz, args.conf)
     detector = None
@@ -420,7 +421,7 @@ def main() -> int:
 
             detector = build_item_detector(args.model, args.imgsz, args.conf, base.detector.device, [])
         started = time.time()
-        _video, ref = sync_pair.pair_files(pair, 3)
+        _video, ref = sync_pair.pair_files(pair, args.shoot)
         found = detect_all(Path(ref), cache, detector, dual_eval.STRIDE[CAMERA])
         rows = [row(frame, found[frame]) for frame in sorted(found)]
         write(folder, rows, want)

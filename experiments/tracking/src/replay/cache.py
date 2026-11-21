@@ -60,6 +60,9 @@ def fingerprint(config, cam, *, ignore_image=None, shelf_areas=None, slots=None)
     stat = src.stat() if src.exists() else None
     shelves = _plain(config.shelves)
     shelves.pop("areas", None)   # 영역은 구역 파일에서 온다 (shelf_areas)
+    # 저장한 탐지를 선반 지도가 어떻게 묶는지만 바꾸는 값 — 조건에 안 넣는다 (넣으면 칸을 더한 것만으로 예전 저장분이 다 막힌다).
+    # 이 값을 바꿔 선반 지도가 저장 안 된 장면의 탐지를 찾으면 CacheMiss 로 멈춘다.
+    shelves.pop("top_merge", None)
     return _plain({
         "version": VERSION,
         "video": {"name": src.name, "size": stat.st_size if stat else None, "mtime": int(stat.st_mtime) if stat else None},

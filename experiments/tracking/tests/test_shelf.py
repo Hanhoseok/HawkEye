@@ -159,3 +159,28 @@ def test_watcher_reads_polygon_area():
     mon = w.monitors[0][1]
     assert mon.polygon == ((100.0, 100.0), (500.0, 100.0), (300.0, 300.0))
     assert mon.box == (100.0, 100.0, 500.0, 300.0)            # box 는 다각형 둘레로 다시 계산
+
+
+# ---------------------------------------------------------------- 윗변으로 묶기 (shelves.top_merge, 후속 61)
+
+def box(label: str, x1: float, y1: float, x2: float, y2: float, score: float = 0.8) -> ShelfItem:
+    return ShelfItem(label, (x1, y1, x2, y2), score)
+
+
+FRONT = box("applecider", 144, 132, 172, 186)             # 푸셔 줄 맨 앞 캔 (4차 C20 의 실제 상자에서 가져옴, y 만 옮김)
+REAR_FULL = box("applecider", 138, 123, 163, 178, 0.7)    # 그 뒤 캔 — 전체 상자
+REAR_TOP = box("applecider", 138, 121, 161, 145, 0.46)    # 같은 뒤 캔 — 윗부분만 잡힌 상자
+
+
+def test_two_boxes_of_one_rear_item_are_one_item_with_top_merge():
+    # 뒤 캔 하나에 상자 둘(전체 · 윗부분만) — 윗변이 같으니 한 물건, 앞 캔은 윗변이 달라 다른 물건
+    mon = monitor(top_merge=0.18)
+    run(mon, 0, 2, [REAR_TOP, FRONT, REAR_FULL])
+    assert len(mon.state) == 2
+    run(mon, 2, 2, [], people=[(1, PERSON)])
+    changes = run(mon, 4, 3, [FRONT], people=[(1, AWAY)])      # 앞 캔을 꺼내 뒤 캔이 앞으로 밀려왔다
+    assert len(changes) == 1 and len(changes[0].removed) == 1 and not changes[0].added
+    # 가운데 거리로 묶으면 (기본) 앞 캔과 뒤 캔의 전체 상자가 한 물건이 되고, 윗부분만 잡힌 상자가 따로 한 물건이 된다
+    old = monitor()
+    run(old, 0, 2, [REAR_TOP, FRONT, REAR_FULL])
+    assert not any(s.item.bbox == FRONT.bbox for s in old.state) and any(s.item.bbox == REAR_TOP.bbox for s in old.state)

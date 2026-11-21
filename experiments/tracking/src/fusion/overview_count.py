@@ -117,6 +117,11 @@ class CountChange:
         """종류별로 줄어든 개수."""
         return dict(Counter(dict(self.before.counts)) - Counter(dict(self.after.counts)))
 
+    @property
+    def added_by(self) -> dict[str, int]:
+        """종류별로 늘어난 개수."""
+        return dict(Counter(dict(self.after.counts)) - Counter(dict(self.before.counts)))
+
 
 class OverviewCounter:
     def __init__(self, score: float = SCORE, merge_iou: float = MERGE, stable_ms: float = STABLE_MS,
@@ -330,10 +335,22 @@ class HolderTracker:
                 if len(times) >= self.min_frames and had[pid] < self.min_frames}
 
     def owners(self, removed_by: dict[str, int], start_ms: float, until_ms: float) -> list[tuple[str, int | None]]:
-        """줄어든 상품 하나마다 (종류, 꺼낸 사람 또는 None). 한 종류가 여럿 줄었으면 먼저 든 사람부터 하나씩, 남으면 첫 사람에게."""
-        out: list[tuple[str, int | None]] = []
-        for name in sorted(removed_by):
-            who = self.first_holders(name, start_ms, until_ms)
-            for i in range(removed_by[name]):
-                out.append((name, (who[i] if i < len(who) else who[0]) if who else None))
-        return out
+        """줄어든 상품 하나마다 (종류, 꺼낸 사람 또는 None). 그 종류를 든 사람 가운데 **아직 하나도 못 받은 사람**에게 먼저 든 순서로
+        하나씩, 다 받았으면 첫 사람에게. 든 사람이 적은 종류부터 정한다.
+
+        한 사람이 든 상품 하나가 장면마다 다른 종류로 읽힐 수 있다 (4차 C19: 애플사이다 하나를 든 손님이 칸타타 · 동과루로도 읽혀
+        '칸타타를 먼저 든 사람'까지 됐다 — 두 사람이 하나씩 꺼냈는데 2개가 한 사람에게 붙었다). 그래서 종류마다 따로 '먼저 든 사람'을
+        고르지 않고, 든 사람들에게 하나씩 돌아가게 나눈다. 한 종류만 줄었을 때는 예전과 같다 (먼저 든 사람부터 — 3차 T09)."""
+        holders = {name: self.first_holders(name, start_ms, until_ms) for name in removed_by}
+        given: Counter = Counter()
+        picked: dict[str, list[int | None]] = {}
+        for name in sorted(removed_by, key=lambda n: (len(holders[n]), n)):
+            who = holders[name]
+            for _ in range(removed_by[name]):
+                if not who:
+                    picked.setdefault(name, []).append(None)
+                    continue
+                pid = next((p for p in who if not given[p]), who[0])
+                given[pid] += 1
+                picked.setdefault(name, []).append(pid)
+        return [(name, pid) for name in sorted(picked) for pid in picked[name]]

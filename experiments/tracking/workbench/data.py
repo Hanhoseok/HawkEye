@@ -49,7 +49,7 @@ RUN_KEY = "current"
 
 
 ADDED = ROOT / "labels" / "store01_dual" / "added.csv"
-BATCH_NAME = {"shoot2": "2차 촬영", "added": "추가한 영상", "shoot3": "3차 촬영"}
+BATCH_NAME = {"shoot2": "2차 촬영", "added": "추가한 영상", "shoot3": "3차 촬영", "shoot4": "4차 촬영"}
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,10 @@ class Profile:
     """장면 그림을 여기서 가져다 쓴다 (전체 카메라 추적이 같은 기록이면 그림도 같다 — 영상을 다시 읽지 않는다)."""
     overrides: tuple[str, ...] = ()
     """이 보기에서만 얹는 판정 값 (`절.키=값`, dual_eval.py 의 --set 과 같다) — 같은 기록을 다른 설정으로 판정해 견줄 때."""
+    sensor_lanes: tuple[str, ...] = ()
+    """판정에 넣을 센서 레인 (labels/<회차>/sensor/<짝>.csv). 비면 센서 없이 판정한다."""
+    payments: bool = False
+    """결제 기록(labels/<회차>/payments.csv)을 결제로 쓴다. False 면 계산대 체류 = 결제."""
 
 
 PROFILES = {
@@ -96,6 +100,15 @@ PROFILES = {
                (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot3" / n for n in
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
                 ROOT / "outputs" / "sync_floor" / "register.csv"), False),
+    # 4차(2026-11-19)는 최종 판정 흐름 그대로 본다: 상품 모델 기록 + 센서 로그(L1 · L2) + 결제 로그 (사용자 방향, 2026-11-20).
+    # 수치 조정은 아직 '영상만' 판정으로 돌아서 이 보기와 점수가 다르다 — 붙일 때까지 끈다.
+    4: Profile(4, "4차 촬영", ROOT / "outputs" / "dual_eval_shoot4", ROOT / "labels" / "store01_shoot4",
+               ROOT / "zones" / "store01_shoot4", OUT / "shoot4", ROOT / "configs" / "store01_shoot4_judge.yaml",
+               (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot4" / n for n in
+                                        ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
+                ROOT / "outputs" / "sync_floor_shoot4" / "register.csv"), False,
+               payment="결제 로그 (POS)", can_tune=False, sensor_lanes=("L1", "L2"), payments=True,
+               note="센서 로그(L1 · L2)와 결제 로그를 넣은 판정입니다. 정답표는 3차 이름에서 가져온 초안이고, L1 은 정답을 몰라 채점하지 않습니다."),
 }
 """열쇠는 보기 번호 — 주소(#/3)와 요청(?shoot=3)에 쓴다. 회차의 기본 기록은 회차 번호 그대로이고,
 같은 회차의 다른 기록(견줘 보기)은 다른 번호를 쓴다 (Profile.shoot 는 그대로 회차)."""
@@ -351,6 +364,10 @@ class Builder:
         (out / "cards").mkdir(parents=True, exist_ok=True)
         sets = [*self.profile.overrides, *(overrides or [])]
         opts = {"set": sets} if sets else {}
+        if self.profile.sensor_lanes:
+            opts.update(sensor=True, lanes=self.profile.sensor_lanes)
+        if self.profile.payments:
+            opts["payments"] = True
         for pair in todo:
             self.state["current"] = pair
             try:
@@ -448,7 +465,8 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="바뀌지 않은 짝도 다시 만든다")
     ap.add_argument("--only", help="짝 이름 (쉼표)")
     ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
-                    help=f"보기 번호 — 2 · 3 은 촬영 회차 (3차는 상품 모델 기록), {SHOOT3_PREV} 은 3차의 바로 전 판정 (기본 2)")
+                    help=f"보기 번호 — 2 · 3 · 4 는 촬영 회차 (3차 · 4차는 상품 모델 기록, 4차는 센서 + 결제 로그 판정), "
+                         f"{SHOOT3_PREV} 은 3차의 바로 전 판정 (기본 2)")
     ap.add_argument("--prune", action="store_true", help="없앤 옛 보기가 남긴 보기 데이터 폴더를 지우고 끝낸다 (다시 만들 수 있는 것만 들어 있다)")
     args = ap.parse_args()
     if args.prune:

@@ -168,7 +168,7 @@ def test_shoot3_judges_with_the_product_records_and_counts_held_items_at_once():
     D.use_product_records(cfg)
     assert cfg.shelves.model_path == D.PRODUCT_MODEL
     assert cfg.fusion.overview_count and cfg.fusion.overview_owner and cfg.fusion.overview_instant
-    assert D.RECORDS == {2: "dual_eval_pose3", 3: "dual_eval_shoot3_prod"}
+    assert D.RECORDS == {2: "dual_eval_pose3", 3: "dual_eval_shoot3_prod", 4: "dual_eval_shoot4"}   # 4차도 상품 모델 기록
 
 
 def test_missing_model_names_the_file_that_is_not_there(tmp_path):

@@ -70,7 +70,12 @@ class DualJudge:
         """전체 카메라에서 상품을 든 사람 (fusion.overview_owner). 주인을 못 정한 방문의 주인을 여기서 묻는다."""
         self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors, self.counter,
                                      self.holders)
-        self.fuser.hold_wait_ms = self.VISIT_DELAY_MS
+        self.visit_delay_ms = self.VISIT_DELAY_MS
+        """선반 방문을 끝난 뒤 이만큼 기다렸다 넘긴다. 센서가 늦게 적는 매장(fusion.sensor_lag_seconds)은 그 기록이 올 때까지 더 기다린다."""
+        if sensors and config.sensor_lag_seconds > 0:
+            self.visit_delay_ms = max(self.VISIT_DELAY_MS,
+                                      (config.event_tolerance_seconds + config.sensor_lag_seconds) * 1000.0)
+        self.fuser.hold_wait_ms = self.visit_delay_ms
         if self.holders is not None and getattr(risk, "book", None) is not None:
             self.holders.resolve = risk.book.resolve   # 든 뒤에 합쳐진 신원은 한 사람으로
         self.shelf_image = shelf_image
@@ -104,6 +109,8 @@ class DualJudge:
         why(안 셌으면 까닭) · until_ms(이것을 대신한 선반 방문이 끝난 때 — 아직 안 바뀌었으면 None)."""
         self._settled: list[tuple[float, float]] = []
         self._waiting: list[tuple[float, float, str]] = []
+        self._open_visits: list[tuple[float, str]] = []
+        """선반 카메라가 알려 준, 아직 안 끝난 방문 (시작 ms — 공통 시각, 선반). fusion.sensor_hold_visits 가 그 사이의 센서 기록을 붙든다."""
         """넘길 때가 됐는데 전체 카메라 개수를 기다리느라 붙들고 있는 방문 (시작 ms, 끝 ms, 선반) — fusion.overview_count 일 때만 생긴다."""
         self.events: list[RiskEvent] = []
         self.unowned_takes = 0
@@ -276,7 +283,10 @@ class DualJudge:
         appearance: Callable[[int], np.ndarray | None] | None = None,
         resolve: Callable[[int], int] | None = None,
         slot_changes: list | None = None,
+        open_visits: list[tuple[float, str]] | None = None,
     ) -> None:
+        """open_visits = 지금 선반이 가려져 아직 안 끝난 방문 (시작 ms — 공통 시각, 선반 이름). None 이면 모름 (안 붙든다)."""
+        self._open_visits = list(open_visits or [])
         for sc in slot_changes or []:
             self.fuser.note_slot_change(sc)
         boxes = {}
@@ -350,9 +360,9 @@ class DualJudge:
         # 손 접촉도 방문과 같이 기다렸다 넘긴다 — 그 시간을 덮는 짝 기록이 쌓인 뒤에 주인을 정해야
         # 손 접촉과 방문이 같은 손님으로 해석된다 (2차 C1: 일찍 정하면 손 접촉과 방문의 주인이 갈렸다)
         delay = self.config.release_delay_seconds * 1000.0
-        fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.VISIT_DELAY_MS)
+        fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.visit_delay_ms)
         self._settle_held()
-        fused_visits += self.fuser.sensor_only(frame.pts_ms, self._waiting)
+        fused_visits += self.fuser.sensor_only(frame.pts_ms, self._sensor_hold())
         if not self.config.overview_reach_takes:
             reach_takes = []   # 주인 정하기 근거로만 (note_reach 는 위에서 이미 적음)
         merges = self._note_merges(merges)
@@ -376,6 +386,16 @@ class DualJudge:
         done = self.risk.finish(frame, self.overview_size)
         self.events.extend(done)
         return done
+
+    def _sensor_hold(self) -> list[tuple[float, float, str]]:
+        """센서 기록을 붙들어 둘 방문들 (시작 ms, 끝 ms, 선반): 전체 카메라 개수를 기다리는 방문 + (fusion.sensor_hold_visits)
+        끝났지만 아직 안 넘긴 방문 · 아직 안 끝난 방문 (끝 = 끝 모름)."""
+        lag = self.config.sensor_lag_seconds * 1000.0   # 방문이 끝난 뒤 늦게 온 기록도 그 방문이 먼저 볼 수 있게
+        hold = [(start_ms, stop_ms + lag, shelf) for start_ms, stop_ms, shelf in self._waiting]
+        if self.config.sensor_hold_visits:
+            hold += [(start_ms, stop_ms + lag, visit.shelf) for _, visit, start_ms, stop_ms in self._pending_visits]
+            hold += [(start_ms, float("inf"), shelf) for start_ms, shelf in self._open_visits]
+        return hold
 
     def _count_held(self, frame: Frame) -> None:
         """전체 카메라가 방금 '손에 들었다'고 확정한 상품을 그 손님의 물건으로 먼저 센다 (fusion.overview_instant).
@@ -402,7 +422,7 @@ class DualJudge:
             return
         slack = self.config.event_tolerance_seconds * 1000.0   # 방문의 시작(선반 카메라가 본 가림)과 전체 카메라 시각의 어긋남 (3차 C02: 0.3초 앞)
         for start_ms, end_ms in settled:
-            gone = book.drop_held(start_ms - slack, end_ms + self.VISIT_DELAY_MS)
+            gone = book.drop_held(start_ms - slack, end_ms + self.visit_delay_ms)
             for h in gone:
                 for row in self.held:
                     if row["until_ms"] is None and row["counted"] and row["seen_ms"] == h.seen_ms and row["name"] == h.name:
@@ -433,7 +453,7 @@ class DualJudge:
 
     def _count_ready(self, end_ms: float, until_ms: float) -> bool:
         """전체 카메라 개수를 쓰는 중이면: 방문 뒤의 개수를 봤거나, 더 기다릴 시간(overview_count_wait_seconds)이 지났나."""
-        if self.counter is None or not self.counter.fed or self.counter.ready(end_ms):
+        if self.counter is None or not self.counter.fed or self.counter.ready(end_ms) or self.config.count_source != "overview":
             return True
         return end_ms <= until_ms - self.config.overview_count_wait_seconds * 1000.0
 

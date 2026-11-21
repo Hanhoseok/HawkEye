@@ -79,6 +79,7 @@ def test_shoot3_paths_leave_shoot2_file_untouched(tmp_path, monkeypatch):
     L.save_labels({"N1": [PaymentLabel("N1", 1, 11.2, 1, "paid", "me")]})
     before = two.read_bytes()
     L.set_shoot(3)
+    assert L.OUT.is_relative_to(tmp_path)     # ROOT 를 바꾸면 3차 · 4차 라벨도 그 아래 — 실제 라벨 파일을 덮어쓰지 않는다
     L.save_labels({"N01": [PaymentLabel("N01", 1, 12.8, 1, "paid", L.DRAFT_BY)]})
     assert two.read_bytes() == before
     assert list(L.load_labels()) == ["N01"]

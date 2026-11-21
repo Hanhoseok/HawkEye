@@ -382,7 +382,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action", choices=["grid", "try", "who", "links", "held", "gaps", "posegrid"])
     ap.add_argument("args", nargs="*")
-    ap.add_argument("--shoot", type=int, choices=[2, 3], default=3)
+    ap.add_argument("--shoot", type=int, choices=[2, 3, 4], default=3)
     ap.add_argument("--base", default="", help="견줄 기준 조합 (쉼표로 이음, 예: nested=0.7,pose=0.5). 없으면 모두 끔")
     a = ap.parse_args()
     base = parse_combo([x for x in a.base.split(",") if x])

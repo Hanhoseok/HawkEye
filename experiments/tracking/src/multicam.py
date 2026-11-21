@@ -203,7 +203,7 @@ class MultiCameraPipeline:
                     for sc in step.slot_changes:
                         slot_file.write(json.dumps(sc.to_dict(), ensure_ascii=False) + "\n")
                     self.judge.detail_step(frame.pts_ms, ids, step.takes, visits, appearance, resolve,
-                                           step.slot_changes)
+                                           step.slot_changes, step.open_visits)
                 else:
                     events, records = self.judge.overview_step(frame, ids, worker.registry.merges,
                                                                appearance, resolve)

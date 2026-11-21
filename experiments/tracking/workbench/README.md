@@ -13,17 +13,18 @@ python workbench/server.py          # http://127.0.0.1:8770/  (내 컴퓨터에�
 
 ## 촬영 회차
 
-화면 맨 위에서 **2차 촬영 · 3차 촬영**을 고른다. 처음 열면 기록이 있는 가장 최근 회차. 회차마다 모든 것이 따로다 (`data.py` 의 `PROFILES`):
+화면 맨 위에서 **2차 촬영 · 3차 촬영 · 4차 촬영**을 고른다. 처음 열면 기록이 있는 가장 최근 회차. 회차마다 모든 것이 따로다 (`data.py` 의 `PROFILES`):
 
-| | 2차 촬영 | 3차 촬영 |
-|---|---|---|
-| 기록 | `outputs/dual_eval_pose3/` | `outputs/dual_eval_shoot3_prod/` (상품 모델 기록, 2026-11-20 부터) |
-| 정답표·시차·결제·적은 정답 | `labels/store01_dual/` | `labels/store01_shoot3/` |
-| 보기 데이터 | `outputs/workbench/` | `outputs/workbench/shoot3/` |
-| 수치 조정에서 적용한 값 | `configs/store01_dual_judge.yaml` | `configs/store01_shoot3_judge.yaml` |
-| 두 화면 짝 맺는 법 | 선반 앞 띠 한 줄 | 바닥 위 거리 (바닥 지도가 보인다) |
-| 수치 칸 | 16개 | 17개 |
-| 새 영상 추가 | 됨 | 안 됨 (영상마다 카메라 움직임 보정·시차 맞추기가 먼저) |
+| | 2차 촬영 | 3차 촬영 | 4차 촬영 (2026-11-21 더함) |
+|---|---|---|---|
+| 기록 | `outputs/dual_eval_pose3/` | `outputs/dual_eval_shoot3_prod/` (상품 모델 기록, 2026-11-20 부터) | `outputs/dual_eval_shoot4/` (상품 모델 기록) |
+| 정답표·시차·결제·적은 정답 | `labels/store01_dual/` | `labels/store01_shoot3/` | `labels/store01_shoot4/` (정답표는 초안) |
+| 보기 데이터 | `outputs/workbench/` | `outputs/workbench/shoot3/` | `outputs/workbench/shoot4/` |
+| 판정에 넣는 것 | 영상만 (계산대에 서 있기 = 결제) | 영상만 | **센서 로그(L1 · L2) + 결제 로그** — 최종 흐름 |
+| 수치 조정에서 적용한 값 | `configs/store01_dual_judge.yaml` | `configs/store01_shoot3_judge.yaml` | 없음 (수치 조정 꺼 둠) |
+| 두 화면 짝 맺는 법 | 선반 앞 띠 한 줄 | 바닥 위 거리 (바닥 지도가 보인다) | 바닥 위 거리 |
+| 수치 칸 | 16개 | 17개 | — |
+| 새 영상 추가 | 됨 | 안 됨 (영상마다 카메라 움직임 보정·시차 맞추기가 먼저) | 안 됨 |
 
 아래 설명의 경로는 2차 것으로 적었다 — 3차는 위 표의 자리로 읽는다. 짝 이름이 두 회차에 겹쳐서(C12) 주소도 회차를 품는다: `#/3/pair/C01/link`.
 새 촬영을 더하려면 `PROFILES` 에 한 줄과 `scripts/dual_eval.py` 의 `set_profile` 갈래.

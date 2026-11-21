@@ -1,0 +1,3 @@
+time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+12.61,17:59:17,L2,동과루,REMOVE,3,2,-1,273,1,12.61,12.59
+26.61,17:59:31,L2,동과루,ADD,2,3,1,207,0,26.61,26.59

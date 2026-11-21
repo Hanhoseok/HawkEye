@@ -90,7 +90,10 @@ def judge_with(run_dir: str, opts: dict, pair: str, base: AppConfig, table: Sync
             b.fusion.overview_reach_takes = True
         for k, v in (opts.get("fusion") or {}).items():
             setattr(b.fusion, k, v)
-    result = dual_eval.judge_pair(pair, b, table.offset_ms(pair) or 0.0, band)
+    # sensor · lanes · payments: 센서 로그 · 결제 기록을 넣은 판정 (4차 보기). 안 주면 지금까지처럼 영상만.
+    dual_eval.SENSOR_LANES = tuple(opts["lanes"]) if opts.get("lanes") else None
+    result = dual_eval.judge_pair(pair, b, table.offset_ms(pair) or 0.0, band,
+                                  sensor=bool(opts.get("sensor")), payments=bool(opts.get("payments")))
     return result, _Capture.judge
 
 

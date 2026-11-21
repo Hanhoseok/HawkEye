@@ -83,7 +83,7 @@ class PacedCapture:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("only", nargs="?", help="짝 이름 패턴 (dual_eval 과 같음)")
-    ap.add_argument("--shoot", type=int, choices=[2, 3], default=2)
+    ap.add_argument("--shoot", type=int, choices=[2, 3, 4], default=2)
     ap.add_argument("--out", help="outputs/ 아래 폴더 (기본 live_sim_shoot<N>)")
     ap.add_argument("--set", action="append", default=[], metavar="절.키=값",
                     help="설정 덮어쓰기 (dual_eval 과 같음, 여러 번) — 예: --set tracker.name=bytetrack --set detector.imgsz=480")
@@ -114,9 +114,9 @@ def main() -> int:
         offset = table.offset_ms(pair) or 0.0
         skip = {"angle1": max(0.0, offset), "angle0": max(0.0, -offset)}
         times = {}
-        if args.shoot == 3:
+        if args.shoot >= 3:
             import shoot3_eval
-            video, ref = sync_pair.pair_files(pair, 3)
+            video, ref = sync_pair.pair_files(pair, args.shoot)
             for cam, path in (("angle0", video), ("angle1", ref)):
                 times[cam] = shoot3_eval.cached_times(path, dual_eval.OUT / pair / f"times_{cam}.json")
         live: dict[str, LiveSource] = {}
@@ -132,7 +132,7 @@ def main() -> int:
                                        build_embedder=build_embedder, build_item_detector=build_item_detector,
                                        IdentityRegistry=IdentityRegistry, InteractionDetector=InteractionDetector,
                                        ShelfWatcher=ShelfWatcher, RiskEngine=RiskEngine, PaymentFeed=PaymentFeed)
-        if args.shoot == 3:
+        if args.shoot >= 3:
             pipe.judge.detail_point = dual_eval.detail_point_for(pair)   # judge 단계와 같게 (카메라 움직임 되돌림)
         lag: dict[str, list[float]] = {}
 

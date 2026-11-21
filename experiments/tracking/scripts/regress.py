@@ -1,13 +1,13 @@
 """회귀 검사 — 모든 촬영·모든 판정 방식을 한 번에 돌려 기준(baselines/)과 달라진 짝을 뽑는다.
 
-    python scripts/regress.py check                       # 2·3차 전부, 기준과 비교
+    python scripts/regress.py check                       # 2·3·4차 전부, 기준과 비교
     python scripts/regress.py check --set risk.exit_hold_seconds=0        # 판정 단계 설정을 바꿔 보기
     python scripts/regress.py check --replay --set identity.late_merge_threshold=0.875   # 신원·손 뻗기 설정은 저장분으로 다시 계산
     python scripts/regress.py update                      # 지금 결과를 기준으로
 
 - 기준: baselines/shoot<N>_<방식>.json — 짝별 판정·맞음·손님 수 (작은 파일, 커밋함).
-  방식: 3차 v(영상만)·s(센서 L1,L2)·p(결제 라벨)·ps(센서+결제), 2차 v·p.
-- 실행 기록: 기본 실행 폴더(3차 outputs/dual_eval_shoot3_prod — 상품 모델 기록 (후속 56), 2차 outputs/dual_eval_pose3). --replay 는 그 폴더의 저장분(cache)으로
+  방식: 3차 · 4차 v(영상만)·s(센서 L1,L2)·p(결제 — 3차 사람이 찍은 라벨, 4차 결제 로그)·ps(센서+결제), 2차 v·p.
+- 실행 기록: 기본 실행 폴더(4차 outputs/dual_eval_shoot4, 3차 outputs/dual_eval_shoot3_prod — 상품 모델 기록 (후속 56), 2차 outputs/dual_eval_pose3). --replay 는 그 폴더의 저장분(cache)으로
   outputs/regress_tmp_shoot<N> 에 관찰 층을 다시 계산한 뒤 거기서 판정한다 (docs/replay-cache.md).
 - 종료 코드: 0 = 기준과 같거나 좋아짐, 1 = 나빠진 짝 있음(맞던 짝이 틀림·손님 수가 틀려짐), 2 = 검사가 불완전(빠진 짝·실패한 짝).
 - update 는 결과가 불완전하면(실패·건너뜀·빈 결과·기준에 있던 짝이 빠짐) 기준을 쓰지 않는다. 일부러 짝을 뺄 때만 --allow-remove.
@@ -28,11 +28,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 BASELINES = ROOT / "baselines"
 MODES = {
+    4: {"v": {}, "s": {"sensor": True, "lanes": ("L1", "L2")}, "p": {"payments": True},
+        "ps": {"sensor": True, "lanes": ("L1", "L2"), "payments": True}},
     3: {"v": {}, "s": {"sensor": True, "lanes": ("L1", "L2")}, "p": {"payments": True},
         "ps": {"sensor": True, "lanes": ("L1", "L2"), "payments": True}},
     2: {"v": {}, "p": {"payments": True}},
 }
-MODE_NAMES = {"v": "영상만", "s": "센서 L1·L2", "p": "결제 라벨", "ps": "센서+결제"}
+MODE_NAMES = {"v": "영상만", "s": "센서 L1·L2", "p": "결제 기록", "ps": "센서+결제"}
 JUDGE_SECTIONS = {"risk", "fusion"}
 """판정 단계만 다시 돌려도 반영되는 설정 절."""
 REPLAY_SECTIONS = {"identity", "interaction", "detail_interaction", "zones"}

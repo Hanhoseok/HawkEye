@@ -112,9 +112,14 @@ SCENARIO = {
 
 
 def set_shoot(shoot: int) -> None:
-    """라벨 폴더를 촬영 회차에 맞춘다 (2: store01_dual, 3: store01_shoot3)."""
+    """라벨 폴더를 촬영 회차에 맞춘다 (2: store01_dual, 3: store01_shoot3, 4: store01_shoot4 — scripts/shoots.py)."""
     global LABELS, OUT, BEEPS, SHOOT
-    LABELS = ROOT / "labels" / ("store01_dual" if shoot == 2 else "store01_shoot3")
+    if shoot == 2:
+        LABELS = ROOT / "labels" / "store01_dual"
+    else:
+        import shoots
+
+        LABELS = ROOT / "labels" / shoots.get(shoot).labels.name   # ROOT 기준 — 테스트가 ROOT 를 바꿔 실제 라벨을 안 건드리게
     OUT, BEEPS, SHOOT = LABELS / "payments.csv", LABELS / "beeps.csv", shoot
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -389,7 +394,7 @@ def draw_hud(img, pair, idx, player: PairPlayer, rows, pending_items, playing, d
     put("SPACE play | <- -> 1 frame | up/down -1s/+1s | [ ] offset 1 frame   { } 10 frames   0 reset offset",
         10, 50, (170, 170, 170), 0.45)
     put("1-9 items | p paid  f failed  i incomplete  x cancelled  n none | u undo | TAB next  BKSP prev | "
-        "s save  q quit" + ("  | g/h next/prev mark  v verified" if SHOOT == 3 else ""), 10, 70, (170, 170, 170), 0.45)
+        "s save  q quit" + ("  | g/h next/prev mark  v verified" if SHOOT >= 3 else ""), 10, 70, (170, 170, 170), 0.45)
     y = 96
     if not rows:
         put("(no label yet)", 10, y, (120, 120, 255))
@@ -450,7 +455,7 @@ def label_pair(pair: str, row, labels, checked_by: str, done: int, total: int, w
     mark_at: float | None = None   # g/h 로 마지막에 간 표시 시각
     win = "label_payments"
     hint = scenario_hint(pair)
-    beeps = load_beeps(pair) if SHOOT == 3 else []
+    beeps = load_beeps(pair) if SHOOT >= 3 else []
     print(f"\n== {pair}  시나리오: {hint}   시차 {row.offset_ms:+.0f}ms ({row.method})")
     for r in rows:
         if r.note:
@@ -461,7 +466,7 @@ def label_pair(pair: str, row, labels, checked_by: str, done: int, total: int, w
             idx = max(0, min(idx, player.n - 1))  # 다 읽고 나면 실제 장면 수가 메타값보다 적을 수 있다
             img = player.frame(idx)  # OpenCV 는 한글을 못 그린다 — 시나리오 힌트는 터미널에 출력
             cv2.imshow(win, draw_hud(img, pair, idx, player, rows, pending, playing, done, total, row.offset_ms,
-                                     beeps, label_state(labels, pair) if SHOOT == 3 else ""))
+                                     beeps, label_state(labels, pair) if SHOOT >= 3 else ""))
             key = normalize_key(cv2.waitKeyEx(int(1000 / player.fps) if playing else 0))
             now = player.time_sec(idx)
             t = round(now, 2)
@@ -553,7 +558,7 @@ def step_mark(now: float, mark_at: float | None, idx: int, index_at, times: list
 def summary(labels: dict[str, list[PaymentLabel]], pairs: list[str]) -> None:
     missing = [p for p in pairs if p not in labels]
     print(f"라벨 {len(pairs) - len(missing)}/{len(pairs)}  (없음: {', '.join(missing) or '-'})")
-    if SHOOT == 3:
+    if SHOOT >= 3:
         drafts = [p for p in pairs if label_state(labels, p) == "draft"]
         print(f"확인 안 한 초안 {len(drafts)}  ({', '.join(drafts) or '-'})")
     for p in pairs:
@@ -568,7 +573,7 @@ def summary(labels: dict[str, list[PaymentLabel]], pairs: list[str]) -> None:
 
 
 def open_player(row, width: int) -> PairPlayer:
-    return PairPlayer(SOURCE / row.reference, SOURCE / row.video, row.offset_ms, width, real_times=SHOOT == 3)
+    return PairPlayer(SOURCE / row.reference, SOURCE / row.video, row.offset_ms, width, real_times=SHOOT >= 3)
 
 
 def main() -> None:
@@ -582,14 +587,14 @@ def main() -> None:
     ap.add_argument("--summary", action="store_true", help="요약만 출력")
     ap.add_argument("--by", default=os.environ.get("USERNAME", ""), help="checked_by 에 남길 이름")
     ap.add_argument("--width", type=int, default=800, help="카메라 한 화면 폭(px)")
-    ap.add_argument("--shoot", type=int, choices=(2, 3), default=2, help="촬영 회차 (3: 2026-11-11 삑 소리 초안 검증)")
+    ap.add_argument("--shoot", type=int, choices=(2, 3, 4), default=2, help="촬영 회차 (3: 2026-11-11 삑 소리 초안 검증, 4: 2026-11-19 결제 로그)")
     args = ap.parse_args()
     set_shoot(args.shoot)
 
     sync = SyncTable.load(LABELS / "sync.csv")
     table = dict(sync.rows)
     all_pairs = sorted(table, key=lambda p: (p[0], int(re.match(r"[A-Z](\d+)", p).group(1)), p))
-    if SHOOT == 3:
+    if SHOOT >= 3:
         all_pairs = [p for p in all_pairs if p != "area_setting"]
     labels = load_labels()
 
@@ -601,7 +606,7 @@ def main() -> None:
         sys.exit(f"sync.csv 에 없는 짝: {unknown}")
     # 3차: 줄이 없거나 초안이 남은 짝 (소리를 못 읽어 초안이 없는 짝도 빠지지 않게)
     todo = args.pairs or [p for p in all_pairs if args.all or (
-        label_state(labels, p) != "verified" if SHOOT == 3 else p not in labels)]
+        label_state(labels, p) != "verified" if SHOOT >= 3 else p not in labels)]
     if not todo:
         print("모든 짝을 찍었다. 다시 보려면 --all 또는 짝 이름을 준다.")
         summary(labels, all_pairs)
