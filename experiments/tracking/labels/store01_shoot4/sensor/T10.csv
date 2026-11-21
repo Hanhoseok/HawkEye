@@ -1,0 +1,4 @@
+time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+6.49,18:00:35,L1,칸타타 275ml 스위트 아메리카노,REMOVE,2,1,-1,326,1,6.49,6.47
+7.49,18:00:36,L2,동과루,REMOVE,3,2,-1,278,1,7.49,7.47
+8.49,18:00:37,L1,칸타타 275ml 스위트 아메리카노,ADD,1,2,1,255,1,8.49,8.47

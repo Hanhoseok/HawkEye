@@ -12,6 +12,11 @@
     python scripts/sync_floor.py check              # 짝마다 두 화면 나란히 그림 + 비용 곡선 + 카메라 이동 확인
     python scripts/sync_floor.py estimate --only T01,C04
 
+4차 촬영(2026-11-19, source/3)은 --shoot 4: 카메라 맞추기와 소리 시차만 쓴다 (발 위치 extract·estimate 는 3차용 바닥 보정 파일이 있어야 한다).
+    python scripts/sync_floor.py --shoot 4 register      # → outputs/sync_floor4/register.csv
+    python scripts/sync_floor.py --shoot 4 audio-sync    # 소리 시차 → labels/store01_shoot4/sync.csv (manual 줄은 그대로)
+3차에서 소리 시차는 사람이 확정한 값과 39쌍 중 37쌍이 같았다 (나머지 2쌍 약 90ms). 피크가 약한 짝은 audio-fallback 으로 표시한다.
+
 발 위치만으로는 39쌍 중 8쌍만 믿을 만했다 (사람이 선반·계산대 앞에 오래 서 있어 비용 골이 넓다). 그래서 소리 시차를
 두 번째 독립 신호로 더해, 둘이 맞을 때만 믿는다 (floor+audio). 맞지 않으면 floor-low 로 두고 note 에 두 후보를 적는다.
 추정값은 sync_pair.py --shoot 3 <짝> 으로 눈으로 확인·수정한다 (저장하면 manual).
@@ -57,6 +62,7 @@ ROUGH = {
     "angle0": [(432, 820), (349, 1025), (1135, 785), (1213, 1037)],
     "angle1": [(1125, 604), (942, 604), (1192, 1070), (847, 1068)],
 }
+"""3차 메모지 대략 위치 (기본). 회차별 값은 아래 SHOOTS — set_shoot 이 바꾼다."""
 FLOOR_CM = [(0.0, 0.0), (64.0, 0.0), (0.0, 74.0), (64.0, 74.0)]
 HZ = {"angle0": 10.0, "angle1": 20.0}
 POSE_MODEL = "yolov8n-pose.pt"
@@ -305,6 +311,37 @@ def extract(only: str | None, force: bool) -> None:
 # ---------------------------------------------------------------------- 추정
 
 REGISTER = OUT / "register.csv"
+SHOOT = 3
+SHOOTS = {
+    3: {"source": "2", "labels": "store01_shoot3", "out": "sync_floor",
+        "rough": {"angle0": [(432, 820), (349, 1025), (1135, 785), (1213, 1037)],
+                  "angle1": [(1125, 604), (942, 604), (1192, 1070), (847, 1068)]}},
+    # 4차: 바닥 표시가 흰 테이프 조각 — 영상 안 카메라 이동(drift)을 재는 자리로만 쓴다 (area_setting 장면의 대략 위치)
+    4: {"source": "3", "labels": "store01_shoot4", "out": "sync_floor4",
+        "rough": {"angle0": [(320, 830), (246, 1024), (1090, 754), (1154, 906)],
+                  "angle1": [(1010, 603), (880, 605), (1065, 1035), (865, 1045)]}},
+}
+"""촬영 회차 → source 폴더 번호·라벨(구역) 폴더·결과 폴더·바닥 표시 4곳의 대략 위치."""
+
+
+def set_shoot(shoot: int) -> None:
+    """회차별 경로로 바꾼다 (기본 3 — 모듈을 읽은 그대로)."""
+    global SHOOT, CAMS, ZONES, LABELS, OUT, FEET, REGISTER, AUDIO, ROUGH
+    spec = SHOOTS[shoot]
+    SHOOT = shoot
+    CAMS = {cam: SOURCE / f"{spec['source']}({cam})" for cam in ("angle0", "angle1")}
+    ZONES = ROOT / "zones" / spec["labels"]
+    LABELS = ROOT / "labels" / spec["labels"]
+    OUT = ROOT / "outputs" / spec["out"]
+    FEET, REGISTER, AUDIO = OUT / "feet", OUT / "register.csv", OUT / "audio.csv"
+    ROUGH = spec["rough"]
+
+
+def rel(cam: str, pair: str) -> str:
+    """시차 표에 남기는 경로 (source 아래 '폴더/파일')."""
+    return f"{CAMS[cam].name}/{pair}.mp4"
+
+
 REG_FIELDS = ["pair", "camera", "h", "inliers", "matches", "drift_px"]
 MIN_INLIERS = 100
 DRIFT_WARN_PX = 5.0
@@ -515,11 +552,53 @@ def estimate(only: str | None) -> dict[str, FloorSyncResult]:
         if row and row.method == "manual":
             print(f"        (manual {row.offset_ms:+.0f}ms 그대로 둠)")
             continue
-        table.upsert(SyncRow(pair, f"2(angle0)/{pair}.mp4", f"2(angle1)/{pair}.mp4", round(d.offset_ms, 1),
+        table.upsert(SyncRow(pair, rel("angle0", pair), rel("angle1", pair), round(d.offset_ms, 1),
                              d.method, "", note))
     table.save(LABELS / "sync.csv")
     print(f"믿을 만함 {trusted}/{len(found)} → {LABELS / 'sync.csv'}")
     return {p: f[0] for p, f in found.items()}
+
+
+def audio_rows(sounds: dict[str, tuple[float, float]], names: list[str]) -> list[SyncRow]:
+    """소리 시차만으로 시차 표 줄을 만든다 (발 위치 없이).
+
+    피크가 쓸 만하면(audio_sync.usable) method=audio. 아니면(소리 없음·무음·피크 약함) 쓸 만한 짝들의 중앙값을 넣고
+    method=audio-fallback — 그 값은 띠 축 맞추기(dual_eval calibrate)에 쓰지 않는다.
+    """
+    good = [off for off, peak in (sounds.get(p, (None, 0.0)) for p in names) if audio_sync.usable(off, peak)]
+    fallback = float(np.median(good)) if good else 0.0
+    rows = []
+    for pair in names:
+        off, peak = sounds.get(pair, (None, 0.0))
+        if audio_sync.usable(off, peak):
+            rows.append(SyncRow(pair, rel("angle0", pair), rel("angle1", pair), round(float(off), 1), "audio", "",
+                                f"소리 {off:+.0f}ms 피크 {peak:.2f} — 눈으로 확인 전"))
+        else:
+            seen = "소리 없음" if off is None or not np.isfinite(off) else f"소리 {off:+.0f}ms 피크 {peak:.2f} (약함)"
+            rows.append(SyncRow(pair, rel("angle0", pair), rel("angle1", pair), round(fallback, 1), "audio-fallback", "",
+                                f"{seen} — 믿기 어려워 다른 짝 중앙값 {fallback:+.0f}ms 사용, 확인 필요"))
+    return rows
+
+
+def audio_sync_table(only: str | None) -> list[SyncRow]:
+    """소리 시차를 시차 표에 쓴다. 사람이 확정한 줄(manual)은 건드리지 않는다."""
+    names = pairs(only)
+    sounds = audio(only)
+    table = SyncTable.load(LABELS / "sync.csv")
+    rows = audio_rows(sounds, names)
+    for row in rows:
+        old = table.rows.get(row.pair)
+        if old and old.method == "manual":
+            print(f"  {row.pair:6s} (manual {old.offset_ms:+.0f}ms 그대로 둠)")
+            continue
+        table.upsert(row)
+        print(f"{'  ' if row.method == 'audio' else '? '}{row.pair:6s} {row.offset_ms:+7.0f}ms {row.method:14s} {row.note}")
+    (LABELS).mkdir(parents=True, exist_ok=True)
+    table.save(LABELS / "sync.csv")
+    weak = [r.pair for r in rows if r.method != "audio"]
+    print(f"소리 시차 {len(rows) - len(weak)}/{len(rows)} → {LABELS / 'sync.csv'}"
+          + (f"  (약함: {', '.join(weak)})" if weak else ""))
+    return rows
 
 
 # ---------------------------------------------------------------------- 확인
@@ -600,13 +679,15 @@ def check(only: str | None) -> None:
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("stage", choices=["calibrate", "extract", "retime", "register", "audio", "estimate", "check"])
+    ap.add_argument("stage", choices=["calibrate", "extract", "retime", "register", "audio", "audio-sync", "estimate", "check"])
+    ap.add_argument("--shoot", type=int, choices=sorted(SHOOTS), default=3, help="촬영 회차 (기본 3). 4 = 2026-11-19 4차")
     ap.add_argument("--only", help="짝 이름 쉼표 구분 (예: T01,C04)")
     ap.add_argument("--force", action="store_true", help="extract·register: 캐시가 있어도 다시")
     ap.add_argument("--floor", help="calibrate: 메모지 P1~P4 바닥 cm 'x,y;x,y;x,y;x,y' (실측 시)")
     ap.add_argument("--points0", help="calibrate: angle0 메모지 대략 위치 픽셀 'x,y;...' (P1~P4 순)")
     ap.add_argument("--points1", help="calibrate: angle1 메모지 대략 위치 픽셀")
     args = ap.parse_args()
+    set_shoot(args.shoot)
 
     def parse(spec):
         return [tuple(float(v) for v in p.split(",")) for p in spec.split(";") if p.strip()]
@@ -627,6 +708,8 @@ def main() -> int:
         register(args.only, args.force)
     elif args.stage == "audio":
         audio(args.only, args.force)
+    elif args.stage == "audio-sync":
+        audio_sync_table(args.only)
     elif args.stage == "estimate":
         estimate(args.only)
     else:

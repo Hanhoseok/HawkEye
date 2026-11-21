@@ -69,7 +69,7 @@ def test_make_pair_zones_merges_band_map(tmp_path, monkeypatch):
                                                      "zones": []}), encoding="utf-8")
     (base / "angle0.yaml").write_text(yaml.safe_dump({"shelves": [], "zones": []}), encoding="utf-8")
     S.save_band_map(2.0, 0.1, "", base / "band_map.yaml")
-    monkeypatch.setattr(S, "homographies", lambda cam: {"N01": np.eye(3)})
+    monkeypatch.setattr(S, "homographies", lambda cam, shoot=3: {"N01": np.eye(3)})
     d = S.make_pair_zones("N01", tmp_path / "out", base)
     assert yaml.safe_load((d / "angle0.yaml").read_text(encoding="utf-8"))["band_map"] == [2.0, 0.1]
     with pytest.raises(KeyError):

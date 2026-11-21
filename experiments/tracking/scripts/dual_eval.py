@@ -5,6 +5,7 @@
     python scripts/dual_eval.py calibrate  # 정상(N) 영상으로 선반 카메라 x → 선반 앞 띠 위치 변환을 맞춤 → angle0.yaml
     python scripts/dual_eval.py judge      # 저장된 기록으로 합치기·판정만 다시 (몇 초)
     python scripts/dual_eval.py --shoot 3 run|calibrate|judge   # 3차 촬영 (source/2(angle*), 영상별 구역·실제 장면 시각 — scripts/shoot3_eval.py)
+    python scripts/dual_eval.py --shoot 4 run|calibrate|judge   # 4차 촬영 (source/3(angle*), 2026-11-19) — 3차와 같은 길, 준비는 scripts/shoot4_setup.py
         --only "N*,T1"   짝 이름 패턴     --detail-off  선반 카메라 없이 (전체 카메라만, 1-2 기준선)
         --sensor          가짜 센서 기록(labels/store01_dual/fake_sensor/<짝>.csv)을 함께 (1-6)
         --payments        계산대 체류 대신 결제 라벨(<라벨 폴더>/payments.csv)을 결제 기록으로 (E-13).
@@ -59,7 +60,13 @@ OVERRIDES: list[str] = []
 OVERVIEW_POSE = False
 OVERVIEW_DETECTOR = "yolo-pose"   # 발목 발 점에 관절이 필요 (2026-11-09 채택). 그 전 기본은 "yolo"
 SHOOT = 2
-"""촬영 회차. 3 이면 set_profile(3) 이 경로를 바꾸고, 영상별 구역·실제 장면 시각·카메라 움직임을 되돌린 선반 카메라 위치를 쓴다."""
+"""촬영 회차. 3·4 면 set_profile 이 경로를 바꾸고, 영상별 구역·실제 장면 시각·카메라 움직임을 되돌린 선반 카메라 위치를 쓴다."""
+PROFILES = {
+    2: ("dual_eval_pose3", "store01_dual", "store01_dual"),
+    3: ("dual_eval_shoot3", "store01_shoot3", "store01_shoot3"),
+    4: ("dual_eval_shoot4", "store01_shoot4", "store01_shoot4"),
+}
+"""촬영 회차 → (outputs 아래 기록 폴더, zones 아래 구역 폴더, labels 아래 라벨 폴더)."""
 _PAIR_ZONES: dict[str, Path] = {}
 PAIR_ERRORS = (KeyError, ValueError, FileNotFoundError)
 SENSOR_LANES: tuple[str, ...] | None = None
@@ -75,38 +82,43 @@ EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "
 def set_profile(shoot: int) -> None:
     """촬영 회차별 경로. 2 는 지금까지 그대로."""
     global SHOOT, OUT, ZONES, LABELS
+    out, zones, labels = PROFILES[shoot]
     SHOOT = shoot
     _PAIR_ZONES.clear()
-    if shoot == 3:
-        OUT = ROOT / "outputs" / "dual_eval_shoot3"
-        ZONES = ROOT / "zones" / "store01_shoot3"
-        LABELS = ROOT / "labels" / "store01_shoot3"
-    else:
-        OUT = ROOT / "outputs" / "dual_eval_pose3"
-        ZONES = ROOT / "zones" / "store01_dual"
-        LABELS = ROOT / "labels" / "store01_dual"
+    OUT = ROOT / "outputs" / out
+    ZONES = ROOT / "zones" / zones
+    LABELS = ROOT / "labels" / labels
+
+
+def phone_shoot() -> bool:
+    """3·4차 촬영(휴대폰 2대, source/2·source/3): 영상별 구역·실제 장면 시각·실제 센서. 2차는 False."""
+    return SHOOT in sync_pair.PHONE_SHOOTS
 
 
 def zones_dir(pair: str) -> Path:
-    """그 짝이 쓸 구역 폴더. 3차는 기본 구역을 그 영상의 카메라 위치로 옮긴 파일을 (한 번 실행에 한 번) 새로 만든다."""
-    if SHOOT != 3:
+    """그 짝이 쓸 구역 폴더. 3·4차는 기본 구역을 그 영상의 카메라 위치로 옮긴 파일을 (한 번 실행에 한 번) 새로 만든다."""
+    if not phone_shoot():
         return ZONES
     if pair not in _PAIR_ZONES:
         import shoot3_eval
-        _PAIR_ZONES[pair] = shoot3_eval.make_pair_zones(pair, OUT / "zones", ZONES)
+        _PAIR_ZONES[pair] = shoot3_eval.make_pair_zones(pair, OUT / "zones", ZONES, SHOOT)
     return _PAIR_ZONES[pair]
 
 
 def detail_point_for(pair: str):
-    """3차: 선반 카메라 사람 위치를 area_setting 좌표로 (band_map 입력). 2차: None (상자 가운데 x 그대로)."""
-    if SHOOT != 3:
+    """3·4차: 선반 카메라 사람 위치를 area_setting 좌표로 (band_map 입력). 2차: None (상자 가운데 x 그대로)."""
+    if not phone_shoot():
         return None
     import shoot3_eval
-    return shoot3_eval.detail_point(shoot3_eval.homographies("angle0")[pair])
+    return shoot3_eval.detail_point(shoot3_eval.homographies("angle0", SHOOT)[pair])
+
+
+KINDS = {"N": "정상", "T": "절도", "C": "복합 정상", "L": "긴 영상", "S": "짧은 영상"}
+"""짝 이름 첫 글자 → 세트 이름 (점수를 세트별로 나눠 찍는 데만 쓴다 — 정답은 정답표). L·S 는 4차의 L1(3명, 1명 절도)·S1(빠른 절도)."""
 
 
 def kind(pair: str) -> str:
-    return {"N": "정상", "T": "절도", "C": "복합 정상"}[pair[0]]
+    return KINDS[pair[0]]
 
 
 # ---------------------------------------------------------------------- 채점
@@ -169,7 +181,7 @@ def summarize(rows: list[dict]) -> dict:
             "correct_last": sum(r["correct_last"] for r in sel),
             "wrong": [r["pair"] for r in sel if not r["correct"]],
         }
-    out = {k: part([r for r in rows if r["kind"] == k]) for k in ("정상", "절도", "복합 정상")}
+    out = {k: part([r for r in rows if r["kind"] == k]) for k in KINDS.values()}
     out["전체"] = part(rows)
     counted = [r for r in rows if r.get("people_ok") is not None]
     out["people"] = {"n": len(counted), "ok": sum(r["people_ok"] for r in counted),
@@ -180,7 +192,7 @@ def summarize(rows: list[dict]) -> dict:
 
 def print_summary(summary: dict, label: str = "") -> None:
     head = f"[{label.strip()}] " if label.strip() else ""
-    for k in ("정상", "절도", "복합 정상", "전체"):
+    for k in (*KINDS.values(), "전체"):
         s = summary[k]
         if not s["n"]:
             continue
@@ -204,6 +216,49 @@ def pairs(pattern: str | None) -> list[str]:
         return names
     pats = [p.strip() for p in pattern.split(",")]
     return [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
+
+
+STRICT_INPUTS = {4}
+"""이 회차는 run·judge 를 시작할 때 영상 짝과 정답표가 정확히 맞는지 검사한다 (input_problems). 4차는 시험용 세트라
+한쪽 카메라 파일이 빠져 짝이 조용히 줄어든 채 점수가 나오면 안 된다. 2·3차는 지금까지 그대로."""
+
+
+def input_problems(pattern: str | None) -> list[str]:
+    """3·4차: 두 카메라 폴더의 영상 짝 집합과 정답표(truth.csv) 짝 집합이 같은가. 다르면 사유 목록 (같으면 빈 목록).
+
+    pattern(--only)을 주면 고른 짝이 정답표에 있고 두 영상이 다 있는지만 본다.
+    """
+    dirs = sync_pair.PHONE_SHOOTS[SHOOT]
+    cams = {name: {p.stem for p in folder.glob("*.mp4") if p.stem != "area_setting"}
+            for name, folder in (("angle0", dirs["video"]), ("angle1", dirs["ref"]))}
+    truth = set(load_truth())
+    out = []
+    if not truth:
+        return [f"정답표 없음: {LABELS / 'truth.csv'}"]
+    if pattern:
+        for pair in pairs(pattern):
+            if pair not in truth:
+                out.append(f"{pair}: 정답표에 없음")
+        pats = [p.strip() for p in pattern.split(",")]
+        for pair in sorted(truth):
+            if any(fnmatch.fnmatch(pair, p) for p in pats):
+                out += [f"{pair}: {cam} 영상 없음" for cam in ("angle0", "angle1") if pair not in cams[cam]]
+        return out
+    for cam in ("angle0", "angle1"):
+        other = "angle1" if cam == "angle0" else "angle0"
+        out += [f"{pair}: {cam} 영상만 있음 ({other} 없음)" for pair in sorted(cams[cam] - cams[other])]
+    both = cams["angle0"] & cams["angle1"]
+    out += [f"{pair}: 영상은 있는데 정답표에 없음" for pair in sorted(both - truth)]
+    out += [f"{pair}: 정답표에 있는데 영상이 없음" for pair in sorted(truth - both)]
+    return out
+
+
+def require_inputs(pattern: str | None) -> None:
+    if SHOOT not in STRICT_INPUTS:
+        return
+    problems = input_problems(pattern)
+    if problems:
+        raise SystemExit(f"{SHOOT}차 입력이 정답표와 맞지 않아 멈춤 — " + "; ".join(problems))
 
 
 _UNSET = object()
@@ -362,6 +417,7 @@ LAST_RUN: dict = {"done": [], "failed": []}
 def run(pattern: str | None, record: bool = False, replay_from: Path | None = None) -> None:
     from src.replay.cache import CacheMiss, FingerprintMismatch
 
+    require_inputs(pattern)
     base = AppConfig.load(ROOT / "config.yaml")
     LAST_RUN["done"], LAST_RUN["failed"] = [], []
     for pair in pairs(pattern):
@@ -376,7 +432,7 @@ def run(pattern: str | None, record: bool = False, replay_from: Path | None = No
             print(f"{pair}: 저장분으로 다시 계산 실패 — {e}", flush=True)
             continue
         except PAIR_ERRORS as e:
-            if SHOOT != 3:
+            if not phone_shoot():
                 raise
             LAST_RUN["failed"].append({"pair": pair, "error": f"{type(e).__name__}: {e}"})
             print(f"{pair}: 실패 {type(e).__name__}: {e} — 건너뜀", flush=True)
@@ -398,8 +454,8 @@ class PairLog:
         self.visits = self._jsonl(d / "angle0" / "shelf_visits.jsonl")
         self.slot_changes = self._jsonl(d / "angle0" / "slot_changes.jsonl")
         self.times: dict[str, list[float] | None] = {"angle0": None, "angle1": None}
-        """3차: 카메라별 실제 장면 시각(ms). 2차: None (번호 ÷ fps)."""
-        if SHOOT == 3:
+        """3·4차: 카메라별 실제 장면 시각(ms). 2차: None (번호 ÷ fps)."""
+        if phone_shoot():
             import shoot3_eval
             video, ref = sync_pair.pair_files(pair, SHOOT)
             for cam, path in (("angle0", video), ("angle1", ref)):
@@ -495,8 +551,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     detail_setup = yaml.safe_load((zdir / "angle0.yaml").read_text(encoding="utf-8"))
     slot_shelf = {z["name"]: detail_setup["shelves"][0]["name"] for z in detail_setup["zones"]}
     sensors = []
-    if sensor and SHOOT == 3:
-        # 3차: 실제 센서 (angle0 시각 → +시차 = 공통 시각). SENSOR_LANES 로 레인 고름
+    if sensor and phone_shoot():
+        # 3·4차: 실제 센서 (angle0 시각 → +시차 = 공통 시각). SENSOR_LANES 로 레인 고름
         import shoot3_eval
         sensors = shoot3_eval.load_sensor(LABELS / "sensor" / f"{pair}.csv", offset_ms, SENSOR_LANES)
     elif sensor:
@@ -569,7 +625,7 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
 
 
 def load_band_map() -> tuple[float, float]:
-    if SHOOT == 3:
+    if phone_shoot():
         import shoot3_eval
         a, b = shoot3_eval.load_band_map(ZONES / "band_map.yaml")
         return float(a), float(b)
@@ -594,6 +650,7 @@ def check_payment_labels(todo: list[str], path: Path | None = None) -> list[str]
 
 def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", before: bool = False,
           payments: bool = False) -> list[dict]:
+    require_inputs(pattern)
     base = AppConfig.load(ROOT / "config.yaml")
     if before:
         base.fusion.release_delay_seconds, base.fusion.unchanged_clears_all = 1.0, False
@@ -611,7 +668,7 @@ def judge(pattern: str | None, use_detail: bool, sensor: bool, label: str = "", 
         try:
             rows.append(judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, use_detail, sensor, payments, truth))
         except PAIR_ERRORS as e:
-            if SHOOT != 3:
+            if not phone_shoot():
                 raise
             failed.append({"pair": pair, "error": f"{type(e).__name__}: {e}"})
     print_summary(summarize(rows), label)
@@ -718,6 +775,13 @@ def sync(pattern: str | None, max_lag_s: float = 3.0) -> None:
     table.save(LABELS / "sync.csv")
 
 
+CALIBRATE_METHODS = ("trajectory", "manual", "audio")
+"""띠 축 맞추기에 쓰는 시차 방식. audio = 피크가 쓸 만한 소리 시차 (sync_floor.py audio-sync, 4차) —
+3차에서 사람이 확정한 값과 39쌍 중 37쌍이 같았다. 믿기 어려운 값(trajectory-fallback·audio-fallback·suggest)은 뺀다."""
+MIN_CALIBRATE_SAMPLES = 100
+"""이보다 적으면 맞추지 않고 멈춘다 (빈 표본으로 polyfit 이 죽지 않게)."""
+
+
 def calibrate(pattern: str = "N*") -> None:
     """정상 영상(한 명)에서 선반 카메라 x → 띠 위치 1차식을 맞춘다 (시차 반영)."""
     table = SyncTable.load(LABELS / "sync.csv")
@@ -726,12 +790,12 @@ def calibrate(pattern: str = "N*") -> None:
         if not (OUT / pair / ".done").exists():
             continue
         row = table.rows.get(pair)
-        if row is None or row.method not in ("trajectory", "manual"):
+        if row is None or row.method not in CALIBRATE_METHODS:
             continue   # 시차를 믿을 수 없는 짝은 빼고 맞춘다
         try:
             a0, a1 = _tracks(PairLog(pair))
         except PAIR_ERRORS as e:
-            if SHOOT != 3:
+            if not phone_shoot():
                 raise
             print(f"  {pair}: 실패 {type(e).__name__}: {e} — 빼고 맞춤")
             continue
@@ -739,13 +803,16 @@ def calibrate(pattern: str = "N*") -> None:
         xs_all += list(xs)
         ys_all += list(ys)
     xs, ys = np.asarray(xs_all), np.asarray(ys_all)
+    if len(xs) < MIN_CALIBRATE_SAMPLES:
+        raise SystemExit(f"띠 축을 맞출 표본이 모자람 ({len(xs)}개 < {MIN_CALIBRATE_SAMPLES}) — 시차를 믿을 수 있는 짝"
+                         f"({'·'.join(CALIBRATE_METHODS)})의 기록이 있어야 한다 ({pattern})")
     a, b = np.polyfit(xs, ys, 1)
     resid = np.abs(ys - (a * xs + b))
     corr = np.corrcoef(xs, ys)[0, 1]
     print(f"띠 축 변환: band = {a:.3f}·x + {b:.3f}  (표본 {len(xs)}, 중앙 오차 {np.median(resid):.3f}, 상관 {corr:.2f})")
-    if SHOOT == 3:
+    if phone_shoot():
         import shoot3_eval
-        shoot3_eval.save_band_map(a, b, f"dual_eval.py --shoot 3 calibrate ({pattern}): 표본 {len(xs)}, 중앙 오차 "
+        shoot3_eval.save_band_map(a, b, f"dual_eval.py --shoot {SHOOT} calibrate ({pattern}): 표본 {len(xs)}, 중앙 오차 "
                                         f"{np.median(resid):.3f}, 상관 {corr:.2f}. 입력 x = area_setting 좌표로 옮긴 선반 카메라 사람 위치",
                                   ZONES / "band_map.yaml")
         _PAIR_ZONES.clear()   # 영상별 구역 파일에 새 band_map 이 들어가게 다음에 다시 만든다
@@ -784,7 +851,8 @@ def main() -> int:
     ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
                     help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
     ap.add_argument("--sensor-lanes", help="3차 --sensor: 쓸 레인 쉼표 (기본 전부, 예: L1,L2)")
-    ap.add_argument("--shoot", type=int, choices=[2, 3], default=2, help="촬영 회차 (기본 2). 3 = 2026-11-11 3차")
+    ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
+                    help="촬영 회차 (기본 2). 3 = 2026-11-11 3차, 4 = 2026-11-19 4차")
     ap.add_argument("--payments", action="store_true",
                     help="계산대 체류 대신 결제 라벨(<라벨 폴더>/payments.csv, scripts/label_payments.py)을 결제 기록으로")
     args = ap.parse_args()

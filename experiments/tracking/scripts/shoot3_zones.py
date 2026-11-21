@@ -25,6 +25,12 @@ from src.inputs.frame_times import index_at, read_times  # noqa: E402
 
 ZONES = ROOT / "zones" / "store01_shoot3" / "angle0.yaml"
 REGISTER = ROOT / "outputs" / "sync_floor" / "register.csv"
+REGISTERS = {3: REGISTER, 4: ROOT / "outputs" / "sync_floor4" / "register.csv"}
+"""촬영 회차 → 영상별 카메라 맞추기 표 (sync_floor.py --shoot N register)."""
+
+
+def register_path(shoot: int = 3) -> Path:
+    return REGISTERS[shoot]
 VIDEOS = ROOT.parent.parent / "source" / "2(angle0)"
 LABELS = ROOT / "labels" / "store01_shoot3"
 OUT = ROOT / "outputs" / "zones3"

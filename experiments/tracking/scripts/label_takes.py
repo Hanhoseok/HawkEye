@@ -1,4 +1,4 @@
-"""3차 촬영(카메라 1대 + 아두이노 레인 센서) 선반 행동 정답 라벨링 도구.
+"""3·4차 촬영(휴대폰 2대 + 아두이노 레인 센서) 선반 행동 정답 라벨링 도구.
 
 센서는 놓치고(T05), 늦고, 가짜로 찍기도 했다(T01 11초 ADD — 선반 앞에 아무도 없음).
 그래서 **정답은 영상을 보고 사람이 찍는다**: 언제, 어느 레인에서, 집었는지/되돌렸는지, 몇 개.
@@ -9,6 +9,11 @@
     python scripts/label_takes.py --summary     # 찍은 결과 요약
     python scripts/label_takes.py --compare     # 검수 완료 영상만 센서와 대조
     python scripts/label_takes.py --review      # 대조에서 문제 난 곳(놓침·가짜·늦음)만 차례로 — 센서 보이게, 보기 전용
+
+    # 4차 촬영(2026-11-19, source/3(angle0)·3(angle1)) — 결과는 labels/store01_shoot4/ 에 따로 쌓인다
+    python scripts/label_takes.py --shoot 4 --blind
+    python scripts/label_takes.py --shoot 4 --summary
+    python scripts/label_takes.py --shoot 4 --view      # 두 화면을 차례로 보기만 (정답 확인용 — 라벨·상태 안 바뀜, 센서 숨김)
 
 먼저 센서를 영상별로 나눠 둔다: python scripts/split_sensor_events.py "../../source/2(angle1)"
 
@@ -33,7 +38,7 @@ angle0 시각에 옮겨 둔다 — sensor_index.csv 의 axis 열이 angle0 이 �
     TAB     다음 영상 (저장)      BACKSPACE  이전 영상 (저장)
     s       저장          q/ESC   저장하고 종료
 
-결과
+결과 (4차는 labels/store01_shoot4/ 의 같은 이름)
     labels/store01_shoot3/takes.csv         pair,seq,time_sec,lane,action,qty,checked_by,note
     labels/store01_shoot3/takes_status.csv  pair,status,checked_by,updated     (status: draft / done)
     labels/store01_shoot3/sensor_check.csv  (--compare) 정답·센서 한 단위씩 대조 결과
@@ -63,17 +68,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from label_payments import KEY_DOWN, KEY_UP, FrameCache, normalize_key  # noqa: E402
 from src.inputs.sync import SyncTable  # noqa: E402
 
-SOURCE = ROOT.parent.parent / "source" / "2(angle0)"
-"""기준 화면·시각: 선반을 정면에서 보는 angle0."""
-SIDE_SOURCE = ROOT.parent.parent / "source" / "2(angle1)"
-"""옆 화면: angle1 (센서 시계를 연결한 영상). sync.csv 시차만큼 맞춰 보여준다."""
+SOURCE_ROOT = ROOT.parent.parent / "source"
+SHOOTS = {
+    3: {"source": "2(angle0)", "side": "2(angle1)", "labels": "store01_shoot3", "snapshots": "label_takes",
+        "split": 'python scripts/split_sensor_events.py "../../source/2(angle1)"'},
+    4: {"source": "3(angle0)", "side": "3(angle1)", "labels": "store01_shoot4", "snapshots": "label_takes4",
+        "split": ('python scripts/split_sensor_events.py "../../source/3(angle1)"'
+                  ' --events "../../source/3(log)/events_2026-11-19_1700_이후.txt"'
+                  ' --out labels/store01_shoot4 --axis-folder "../../source/3(angle0)" --no-video-offsets')},
+}
+"""촬영 회차별 영상 폴더·라벨 폴더. source = 기준 화면·시각(선반을 정면에서 보는 angle0),
+side = 옆 화면 angle1 (센서 시계를 연결한 영상, sync.csv 시차만큼 맞춰 보여준다), split = 센서를 다시 나누는 명령."""
 AXIS = "angle0"
-LABELS = ROOT / "labels" / "store01_shoot3"
-SYNC = LABELS / "sync.csv"
-OUT = LABELS / "takes.csv"
-STATUS = LABELS / "takes_status.csv"
-CHECK = LABELS / "sensor_check.csv"
-OFFSETS = LABELS / "sensor_offsets.csv"
+_UNSET = object()
+"""'경로를 안 줬다' 표시 — None 은 '쓰지 않는다'는 뜻으로 쓰는 인자(compare·fit_offsets 의 write)가 있어 따로 둔다."""
+
+
+def set_shoot(shoot: int) -> None:
+    """촬영 회차를 고른다 — 아래 경로들이 그 회차 폴더를 가리킨다. 경로 인자를 안 준 함수는 부를 때 이 값을 읽는다."""
+    global SHOOT, SOURCE, SIDE_SOURCE, LABELS, SYNC, OUT, STATUS, CHECK, OFFSETS, SENSOR, INDEX, SNAPSHOTS
+    profile = SHOOTS[shoot]
+    SHOOT = shoot
+    SOURCE = SOURCE_ROOT / profile["source"]
+    SIDE_SOURCE = SOURCE_ROOT / profile["side"]
+    LABELS = ROOT / "labels" / profile["labels"]
+    SYNC = LABELS / "sync.csv"
+    OUT = LABELS / "takes.csv"
+    STATUS = LABELS / "takes_status.csv"
+    CHECK = LABELS / "sensor_check.csv"
+    OFFSETS = LABELS / "sensor_offsets.csv"
+    SENSOR = LABELS / "sensor"
+    INDEX = LABELS / "sensor_index.csv"
+    SNAPSHOTS = ROOT / "outputs" / profile["snapshots"]
+
+
+set_shoot(3)
 STATUS_FIELDS = ("pair", "status", "checked_by", "updated", "mode")
 OFFSET_FIELDS = ("pair", "shift_sec", "n", "spread_sec", "applied", "reason", "base_sec", "checked_by", "updated")
 FIT_MIN_ROWS = 2        # 영상별 보정: 서로 다른 정답 행이 이만큼은 짝지어져야
@@ -130,7 +159,8 @@ def pair_key(p: str):
     return (m.group(1), int(m.group(2)), m.group(3)) if m else (p, 0, "")
 
 
-def load_labels(path: Path = OUT) -> dict[str, list[TakeLabel]]:
+def load_labels(path: Path | None = None) -> dict[str, list[TakeLabel]]:
+    path = path or OUT
     out: dict[str, list[TakeLabel]] = {}
     if not path.exists():
         return out
@@ -144,7 +174,8 @@ def load_labels(path: Path = OUT) -> dict[str, list[TakeLabel]]:
     return out
 
 
-def save_labels(labels: dict[str, list[TakeLabel]], path: Path = OUT) -> None:
+def save_labels(labels: dict[str, list[TakeLabel]], path: Path | None = None) -> None:
+    path = path or OUT
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
@@ -156,7 +187,8 @@ def save_labels(labels: dict[str, list[TakeLabel]], path: Path = OUT) -> None:
                 w.writerow(row)
 
 
-def load_status(path: Path = STATUS) -> dict[str, dict]:
+def load_status(path: Path | None = None) -> dict[str, dict]:
+    path = path or STATUS
     if not path.exists():
         return {}
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -167,7 +199,8 @@ def load_status(path: Path = STATUS) -> dict[str, dict]:
     return rows
 
 
-def save_status(status: dict[str, dict], path: Path = STATUS) -> None:
+def save_status(status: dict[str, dict], path: Path | None = None) -> None:
+    path = path or STATUS
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=STATUS_FIELDS)
@@ -202,9 +235,9 @@ def is_done(status: dict[str, dict], pair: str) -> bool:
     return status.get(pair, {}).get("status") == "done"
 
 
-def load_sensor(pair: str, folder: Path = LABELS / "sensor") -> list[SensorRow] | None:
+def load_sensor(pair: str, folder: Path | None = None) -> list[SensorRow] | None:
     """영상별 센서 CSV. 파일이 없으면 None (센서 없이 라벨만 찍는다)."""
-    path = folder / f"{pair}.csv"
+    path = (folder or SENSOR) / f"{pair}.csv"
     if not path.exists():
         return None
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -217,7 +250,8 @@ def load_sensor(pair: str, folder: Path = LABELS / "sensor") -> list[SensorRow] 
         return out
 
 
-def load_clock_offset(path: Path = LABELS / "sensor_index.csv") -> str:
+def load_clock_offset(path: Path | None = None) -> str:
+    path = path or INDEX
     if not path.exists():
         return "?"
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -340,7 +374,9 @@ CHECK_FIELDS = ("pair", "kind", "lane", "direction", "label_sec", "sensor_lane",
 
 
 def compare(labels: dict[str, list[TakeLabel]], status: dict[str, dict], pairs: list[str],
-            write: Path | None = CHECK) -> dict[str, int]:
+            write: Path | None = _UNSET) -> dict[str, int]:
+    if write is _UNSET:
+        write = CHECK
     done = [p for p in pairs if is_done(status, p)]
     print(f"검수 완료 {len(done)}/{len(pairs)} 영상만 대조 (draft·미라벨 {len(pairs) - len(done)} 제외)")
     modes = [mode_of(status, p) for p in done]
@@ -388,8 +424,9 @@ def compare(labels: dict[str, list[TakeLabel]], status: dict[str, dict], pairs: 
     return total
 
 
-def load_video_shifts(path: Path = LABELS / "sensor_index.csv") -> dict[str, float]:
+def load_video_shifts(path: Path | None = None) -> dict[str, float]:
     """분할에 이미 반영된 영상별 보정 (sensor_index.csv video_shift). 없으면 0."""
+    path = path or INDEX
     if not path.exists():
         return {}
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -412,9 +449,11 @@ def row_dts(labels: list[TakeLabel], sensor: list[SensorRow]) -> list[float]:
 
 
 def fit_offsets(labels: dict[str, list[TakeLabel]], status: dict[str, dict], pairs: list[str],
-                checked_by: str = "", write: Path | None = OFFSETS) -> dict[str, dict]:
+                checked_by: str = "", write: Path | None = _UNSET) -> dict[str, dict]:
     """영상별 센서 시각 보정. 기준 = 모든 행 dt 의 중앙값(센서 지연 + 시계 차이 — 건드리지 않음),
     shift = 그 영상 행 dt 중앙값 - 기준. 서로 다른 행 ≥ FIT_MIN_ROWS, 범위 ≤ FIT_MAX_SPREAD, |shift| ≤ FIT_MAX_SHIFT 일 때만 적용."""
+    if write is _UNSET:
+        write = OFFSETS
     per: dict[str, list[float]] = {}
     for p in pairs:
         if not is_done(status, p):
@@ -468,15 +507,17 @@ def fit(frame, width: int):
     return frame if w == width else cv2.resize(frame, (width, int(h * width / w)))
 
 
-def load_side_offsets(path: Path = SYNC) -> dict[str, float]:
+def load_side_offsets(path: Path | None = None) -> dict[str, float]:
     """짝별 카메라 시차 (ms). 공통 시각(angle1) = angle0 시각 + offset_ms."""
+    path = path or SYNC
     if not path.exists():
         return {}
     return {p: r.offset_ms for p, r in SyncTable.load(path).rows.items()}
 
 
-def load_applied_offsets(path: Path = LABELS / "sensor_index.csv") -> dict[str, float]:
+def load_applied_offsets(path: Path | None = None) -> dict[str, float]:
     """센서 분할에 실제로 쓴 시차 (sensor_index.csv sync_offset_ms). 옆 화면도 이 값을 써야 센서와 같은 축."""
+    path = path or INDEX
     if not path.exists():
         return {}
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -494,8 +535,9 @@ def side_time(now_sec: float, offset_ms: float) -> float:
     return now_sec + offset_ms / 1000.0
 
 
-def sensor_axis(path: Path = LABELS / "sensor_index.csv") -> str | None:
+def sensor_axis(path: Path | None = None) -> str | None:
     """센서 분할의 시각 축 (sensor_index.csv axis 열). 파일·열이 없으면 None (옛 angle1 분할)."""
+    path = path or INDEX
     if not path.exists():
         return None
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -646,7 +688,7 @@ def label_video(pair, cache: FrameCache, labels, status, checked_by, done, total
                     playing = False
                 continue
             if readonly and key in EDIT_KEYS:
-                print("   보기 전용 (--review) — 고치려면: python scripts/label_takes.py " + pair)
+                print(f"   보기 전용 — 고치려면: python scripts/label_takes.py --shoot {SHOOT} {pair}")
                 continue
             if key == ord(" "):
                 playing = not playing
@@ -722,8 +764,9 @@ PROBLEM_KINDS = ("놓침", "가짜", "늦음")
 LEAD_SEC = 2.0   # 문제 시각보다 이만큼 앞에서 시작
 
 
-def load_problems(path: Path = CHECK, kinds=PROBLEM_KINDS, pairs: list[str] | None = None) -> list[dict]:
+def load_problems(path: Path | None = None, kinds=PROBLEM_KINDS, pairs: list[str] | None = None) -> list[dict]:
     """sensor_check.csv 에서 문제 줄만. at = 정답 시각(없으면 센서 시각). 영상·시각 순."""
+    path = path or CHECK
     if not path.exists():
         return []
     out = []
@@ -832,7 +875,9 @@ def main() -> None:
             stream.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pairs", nargs="*", help="영상 이름 (예: T01 N05). 비우면 검수 완료 안 된 영상 전부")
-    ap.add_argument("--folder", type=Path, default=SOURCE, help="기준 영상 폴더 (기본 source/2(angle0))")
+    ap.add_argument("--shoot", type=int, choices=sorted(SHOOTS), default=3,
+                    help="촬영 회차 (기본 3 = source/2(angle*), 4 = source/3(angle*)) — 영상·라벨 폴더가 함께 바뀐다")
+    ap.add_argument("--folder", type=Path, help="기준 영상 폴더 (기본: 그 회차의 angle0 — 3차 source/2(angle0))")
     ap.add_argument("--all", action="store_true", help="검수 완료 영상도 다시 돌아본다")
     ap.add_argument("--summary", action="store_true", help="요약만 출력")
     ap.add_argument("--compare", action="store_true", help="검수 완료 영상을 센서와 대조")
@@ -841,14 +886,20 @@ def main() -> None:
     ap.add_argument("--snapshot", type=float, metavar="초", help="첫 영상의 이 시각 화면을 그림으로 저장하고 끝")
     ap.add_argument("--review", action="store_true",
                     help="대조에서 문제 난 곳(놓침·가짜·늦음)만 센서 보이게 차례로 (보기 전용, blind 이력 유지). 영상 이름을 주면 그 영상만")
+    ap.add_argument("--view", action="store_true",
+                    help="보기 전용으로 두 화면을 차례로 (라벨·상태를 바꾸지 않고 센서도 숨김 — 정답 확인용). 영상 이름을 주면 그 영상만")
     ap.add_argument("--kinds", default=",".join(PROBLEM_KINDS), help="--review 에서 볼 종류 (쉼표, 예: 놓침,가짜,늦음,경계)")
     ap.add_argument("--blind", action="store_true", help="센서 표시를 숨기고 찍는다 (정답이 센서에 끌리지 않게)")
-    ap.add_argument("--side-folder", type=Path, default=SIDE_SOURCE,
-                    help="옆에 같이 볼 angle1 영상 폴더 (기본 source/2(angle1))")
+    ap.add_argument("--side-folder", type=Path,
+                    help="옆에 같이 볼 angle1 영상 폴더 (기본: 그 회차의 angle1 — 3차 source/2(angle1))")
     ap.add_argument("--single", action="store_true", help="angle0 만 보여준다 (옆 화면 끔)")
     ap.add_argument("--fit-offsets", action="store_true",
                     help="검수 완료 영상으로 영상별 센서 시각 보정을 계산해 sensor_offsets.csv 에 저장")
     args = ap.parse_args()
+    set_shoot(args.shoot)
+    args.folder = args.folder or SOURCE
+    args.side_folder = args.side_folder or SIDE_SOURCE
+    split_hint = SHOOTS[SHOOT]["split"]
 
     all_pairs = sorted((p.stem for p in args.folder.glob("*.mp4") if p.stem != "area_setting"), key=pair_key)
     if not all_pairs:
@@ -860,11 +911,11 @@ def main() -> None:
     axis = sensor_axis()
     if axis != AXIS:
         sys.exit(f"센서 분할 시각 축이 {axis or 'angle1(옛 분할)'} — 정답은 {AXIS} 시각이라 섞인다.\n"
-                 f"먼저: python scripts/split_sensor_events.py \"../../source/2(angle1)\"  (기본 --axis angle0)")
+                 f"먼저: {split_hint}  (기본 --axis angle0)")
     stale = stale_offsets(load_applied_offsets(), load_side_offsets())
     if stale:
         sys.exit(f"sync.csv 시차가 센서 분할 때와 다르다: {', '.join(stale)}\n"
-                 f"먼저: python scripts/split_sensor_events.py \"../../source/2(angle1)\"  로 다시 나눈다")
+                 f"먼저: {split_hint}  로 다시 나눈다")
     if args.compare:
         compare(labels, status, all_pairs)
         return
@@ -882,10 +933,10 @@ def main() -> None:
         print(f"문제 {len(problems)}곳: TAB 다음 · BACKSPACE 이전 · q 끝 (보기 전용)")
         review(problems, args.folder, None if args.single else args.side_folder, args.width, labels, status)
         return
-    todo = args.pairs or [p for p in all_pairs if args.all or not is_done(status, p)]
+    todo = args.pairs or [p for p in all_pairs if args.all or args.view or not is_done(status, p)]
     if args.snapshot is not None:
         snapshot(todo[0], args.folder, labels, status, args.width, args.snapshot,
-                 ROOT / "outputs" / "label_takes" / f"{todo[0]}_{args.snapshot:.1f}s{'_blind' if args.blind else ''}.png",
+                 SNAPSHOTS / f"{todo[0]}_{args.snapshot:.1f}s{'_blind' if args.blind else ''}.png",
                  args.blind, None if args.single else args.side_folder)
         return
     if not todo:
@@ -916,13 +967,15 @@ def main() -> None:
             continue
         done = sum(1 for p in all_pairs if is_done(status, p))
         action = label_video(todo[i], caches[todo[i]], labels, status, args.by, done, len(all_pairs), args.width,
-                             args.blind, sides.get(todo[i]), offsets.get(todo[i]), dual)
+                             args.blind or args.view, sides.get(todo[i]), offsets.get(todo[i]), dual,
+                             readonly=args.view)
         if action == "quit":
             break
         step = 1 if action == "next" else -1
         i = max(i + step, 0)
     cv2.destroyAllWindows()
-    summary(labels, status, all_pairs)
+    if not args.view:
+        summary(labels, status, all_pairs)
 
 
 if __name__ == "__main__":

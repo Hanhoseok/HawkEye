@@ -1,4 +1,4 @@
-"""3차 촬영을 카메라 2대 판정(dual_eval.py --shoot 3)에 붙이는 도움 함수.
+"""3차·4차 촬영을 카메라 2대 판정(dual_eval.py --shoot 3|4)에 붙이는 도움 함수 (4차는 shoot=4 로 같은 길을 탄다).
 
 - 영상별 구역 파일: 기본 구역(zones/store01_shoot3/floor.yaml·angle0.yaml, area_setting 장면 기준)을
   outputs/sync_floor/register.csv 의 영상→area_setting 호모그래피 역으로 그 영상 화면에 옮긴다.
@@ -22,10 +22,11 @@ BAND_MAP = BASE / "band_map.yaml"
 SIZE = {"angle0": (1920, 1080), "angle1": (1920, 1080)}
 
 
-def homographies(camera: str) -> dict[str, np.ndarray]:
+def homographies(camera: str, shoot: int = 3) -> dict[str, np.ndarray]:
+    """영상 픽셀 → area_setting 픽셀. shoot: 3차(기본) 또는 4차 — 회차마다 맞추기 표가 다르다."""
     import shoot3_zones as Z
 
-    return Z.load_homographies(camera=camera)
+    return Z.load_homographies(Z.register_path(shoot), camera=camera)
 
 
 def _to_clip(points_norm, h_clip_to_ref: np.ndarray, size: tuple[int, int]) -> np.ndarray:
@@ -81,9 +82,9 @@ def pair_detail(base: dict, h0: np.ndarray, band_map: list[float]) -> dict:
     return out
 
 
-def make_pair_zones(pair: str, out_root: Path, base_dir: Path = BASE) -> Path:
+def make_pair_zones(pair: str, out_root: Path, base_dir: Path = BASE, shoot: int = 3) -> Path:
     """outputs/.../zones/<짝>/{floor,angle0}.yaml 을 기본 파일에서 늘 새로 만든다 (band_map 최신 반영). 호모그래피 없으면 KeyError."""
-    h1, h0 = homographies("angle1")[pair], homographies("angle0")[pair]
+    h1, h0 = homographies("angle1", shoot)[pair], homographies("angle0", shoot)[pair]
     floor = yaml.safe_load((base_dir / "floor.yaml").read_text(encoding="utf-8"))
     detail = yaml.safe_load((base_dir / "angle0.yaml").read_text(encoding="utf-8"))
     d = out_root / pair

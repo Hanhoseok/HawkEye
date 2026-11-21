@@ -1,0 +1,28 @@
+note: |-
+  4차 촬영(2026-11-19) 선반 카메라(angle0) 구역 — 화면 비율, **area_setting 장면 기준**. 판정을 돌리기 전에 그렸고(2026-11-20) 결과를 보고 고치지 않는다.
+  받침이 선반 위에서 3차보다 오른쪽 위로 옮겨져 새로 그렸다. 영상마다 카메라 움직임만큼 옮겨 쓴다:
+  scripts/shoot3_eval.py 가 outputs/sync_floor4/register.csv 의 영상→area_setting 호모그래피 역으로 옮긴다 (scripts/dual_eval.py --shoot 4).
+  레인 이름은 센서 레인과 같다 (L1 칸타타 · L2 동과루 · L3 애플사이다). 받침의 왼쪽 두 칸은 비어 있어 구역 없음.
+  3차와 다른 점: 4차 화면에서는 칸막이가 왼쪽 위로 기울어 보여, 레인을 세로 직사각형이 아니라 칸막이를 따라 기운 사각형으로 그렸다
+  (앞쪽 = 받침 앞 턱, 뒤쪽 = 뒤에 선 상품의 뚜껑 위). 확인 그림: python scripts/shoot4_setup.py check → outputs/shoot4_setup/lanes_sheet.jpg
+notes:
+  shelf: 센서 레인 받침(검은 칸막이) 전체 — 빈 칸 둘 포함. 사람 상자가 겹치면 '선반을 가림'.
+  L1: 맨 오른쪽 칸 — 칸타타(빨간 뚜껑 병), 처음 2개.
+  L2: 오른쪽 둘째 칸 — 동과루(흰 캔), 처음 3개.
+  L3: 오른쪽 셋째 칸 — 애플사이다(노란 캔), 처음 2개. 센서는 4차에도 RESYNC(SENSOR_ERROR)가 많아 판정에는 L1·L2 만 쓴다.
+reference: area_setting
+normalized: true
+shelves:
+- name: shelf
+  box: [0.5599, 0.2778, 0.6417, 0.3630]
+  zone: shelf
+zones:
+- name: L1
+  type: SHELF
+  polygon: [[0.6224, 0.2926], [0.6375, 0.2926], [0.6406, 0.3602], [0.6260, 0.3602]]
+- name: L2
+  type: SHELF
+  polygon: [[0.6073, 0.2852], [0.6219, 0.2852], [0.6260, 0.3602], [0.6130, 0.3602]]
+- name: L3
+  type: SHELF
+  polygon: [[0.5958, 0.2963], [0.6083, 0.2963], [0.6130, 0.3602], [0.5990, 0.3602]]

@@ -8,6 +8,10 @@
     python scripts/split_sensor_events.py "../../source/2(angle1)"
     python scripts/split_sensor_events.py "../../source/2(angle1)" --clock-offset 1.5   # 휴대폰 시계가 센서 PC 보다 1.5초 빠를 때
 
+    # 4차 촬영(2026-11-19): 이벤트 파일이 따로 있고(3(log)) 결과·시차 표는 store01_shoot4
+    python scripts/split_sensor_events.py "../../source/3(angle1)" --events "../../source/3(log)/events_2026-11-19_1700_이후.txt" \
+        --out labels/store01_shoot4 --axis-folder "../../source/3(angle0)" --no-video-offsets
+
 **시각 축 (기본 angle0)**: 시계 연결은 angle1 mp4 기록 시각으로만 한다 (angle0 의 기록 시각은 초 단위·시계 미검증).
 그 뒤 카메라 시차(labels/store01_shoot3/sync.csv, angle1 = angle0 + offset_ms)를 빼서 **angle0 영상 시각**으로 쓴다 —
 선반을 정면에서 보는 카메라라 사람이 정답을 찍기 쉽다 (label_takes.py 도 angle0 기준). 옛 축은 --axis angle1.

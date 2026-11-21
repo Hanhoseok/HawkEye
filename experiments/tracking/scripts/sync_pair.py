@@ -45,9 +45,15 @@ SOURCE = ROOT.parent.parent / "source"
 VIDEO_DIR = SOURCE / "1(angle0)"
 REF_DIR = SOURCE / "1(angle1)"
 TABLE = ROOT / "labels" / "store01_dual" / "sync.csv"
-SHOOT3 = {"video": SOURCE / "2(angle0)", "ref": SOURCE / "2(angle1)",
-          "table": ROOT / "labels" / "store01_shoot3" / "sync.csv"}
-"""3차 촬영: 두 각도 모두 <짝>.mp4 (예: T01.mp4, N08-1.mp4)."""
+PHONE_SHOOTS = {
+    3: {"video": SOURCE / "2(angle0)", "ref": SOURCE / "2(angle1)",
+        "table": ROOT / "labels" / "store01_shoot3" / "sync.csv"},
+    4: {"video": SOURCE / "3(angle0)", "ref": SOURCE / "3(angle1)",
+        "table": ROOT / "labels" / "store01_shoot4" / "sync.csv"},
+}
+"""3차(2026-11-11, source/2)·4차(2026-11-19, source/3) 촬영: 두 각도 모두 <짝>.mp4 (예: T01.mp4, N08-1.mp4).
+source 폴더 번호는 촬영 회차보다 하나 작다 (source/1 = 2차)."""
+SHOOT3 = PHONE_SHOOTS[3]
 ADDED_DIR = SOURCE / "added"
 """분석 도구에서 추가한 영상: <짝>_angle1.<확장자>(전체 카메라) · <짝>_angle0.<확장자>(선반 카메라). 같은 매장·같은 카메라 위치만."""
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".mkv", ".avi")
@@ -56,9 +62,10 @@ HZ = 10.0
 
 def pair_files(pair: str, shoot: int = 2) -> tuple[Path, Path]:
     """짝 이름(N1, T3, C10, N8-1) → (angle0 파일, angle1 파일). 추가한 영상이면 그 파일, 아니면 2차 촬영의 이름 규칙.
-    shoot=3 이면 3차 촬영 폴더의 같은 이름 파일 (T01 → 2(angle0)/T01.mp4, 2(angle1)/T01.mp4)."""
-    if shoot == 3:
-        return SHOOT3["video"] / f"{pair}.mp4", SHOOT3["ref"] / f"{pair}.mp4"
+    shoot=3·4 면 그 촬영 폴더의 같은 이름 파일 (3차 T01 → 2(angle0)/T01.mp4, 2(angle1)/T01.mp4)."""
+    if shoot in PHONE_SHOOTS:
+        dirs = PHONE_SHOOTS[shoot]
+        return dirs["video"] / f"{pair}.mp4", dirs["ref"] / f"{pair}.mp4"
     added = added_files(pair)
     if added is not None:
         return added
@@ -88,9 +95,10 @@ def added_pairs() -> list[str]:
 
 
 def all_pairs(shoot: int = 2) -> list[str]:
-    if shoot == 3:
-        return sorted(p.stem for p in SHOOT3["ref"].glob("*.mp4")
-                      if p.stem != "area_setting" and (SHOOT3["video"] / p.name).exists())
+    if shoot in PHONE_SHOOTS:
+        dirs = PHONE_SHOOTS[shoot]
+        return sorted(p.stem for p in dirs["ref"].glob("*.mp4")
+                      if p.stem != "area_setting" and (dirs["video"] / p.name).exists())
     names = []
     for p in sorted(VIDEO_DIR.glob("20261028_*.mp4")):
         name = p.stem.split("_", 1)[1]
@@ -239,15 +247,16 @@ def main() -> int:
     ap.add_argument("--suggest-all", action="store_true", help="모든 짝의 자동 추정값을 표에 채움 (확인된 짝은 건드리지 않음)")
     ap.add_argument("--no-suggest", action="store_true", help="자동 추정 없이 표의 값(없으면 0)에서 시작")
     ap.add_argument("--by", default="", help="확인한 사람")
-    ap.add_argument("--table", help="시차 표 (기본: 2차 labels/store01_dual/sync.csv, 3차 labels/store01_shoot3/sync.csv)")
-    ap.add_argument("--shoot", type=int, choices=[2, 3], default=2, help="촬영 회차 (기본 2)")
+    ap.add_argument("--table", help="시차 표 (기본: 2차 labels/store01_dual/sync.csv, 3차 labels/store01_shoot3/sync.csv, 4차 store01_shoot4)")
+    ap.add_argument("--shoot", type=int, choices=[2, 3, 4], default=2, help="촬영 회차 (기본 2)")
     ap.add_argument("--all", action="store_true", help="짝을 차례로 (아직 manual 이 아닌 짝만)")
     ap.add_argument("--redo", action="store_true", help="--all 에서 manual 짝도 다시")
     ap.add_argument("--status", action="store_true", help="확인 진행 상황만 출력")
     args = ap.parse_args()
-    args.table = args.table or str(SHOOT3["table"] if args.shoot == 3 else TABLE)
-    if args.shoot == 3 and args.suggest_all:
-        ap.error("3차 촬영의 자동 추정은 scripts/sync_floor.py estimate 를 쓴다 (발 위치)")
+    phone = args.shoot in PHONE_SHOOTS
+    args.table = args.table or str(PHONE_SHOOTS[args.shoot]["table"] if phone else TABLE)
+    if phone and args.suggest_all:
+        ap.error("3·4차 촬영의 자동 추정은 scripts/sync_floor.py 를 쓴다 (3차 estimate = 발 위치 + 소리, 4차 audio-sync = 소리)")
 
     table = SyncTable.load(args.table)
     model = None
@@ -303,8 +312,8 @@ def main() -> int:
     if not args.pair:
         ap.error("짝 이름, --all, --status 또는 --suggest-all 이 필요합니다")
     start = table.offset_ms(args.pair)
-    if start is None and args.shoot == 3:
-        print(f"{args.pair}: 표에 시작값 없음 — 0 에서 시작 (먼저 sync_floor.py estimate 권장)")
+    if start is None and phone:
+        print(f"{args.pair}: 표에 시작값 없음 — 0 에서 시작 (먼저 sync_floor.py estimate / audio-sync 권장)")
         start = 0.0
     if start is None:
         start = 0.0 if args.no_suggest else suggest(args.pair, model)[0]

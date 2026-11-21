@@ -1,0 +1,83 @@
+camera: angle1
+note: '4차 촬영(2026-11-19) 전체 카메라(angle1) 바닥 지도와 구역 — **area_setting 장면 기준** (영상마다 register 호모그래피로 옮겨 씀, scripts/dual_eval.py --shoot 4).
+
+  3차 바닥 좌표계 그대로다: 3차·4차 area_setting 의 바닥 타일 무늬를 맞춰(scripts/shoot4_setup.py floor, 인라이어 55/83) 3차 보정점 4개를 4차 화면으로 옮겼다. 바닥 cm 구역·띠 축은 zones/store01_shoot3/floor.yaml 과 같다 (같은 매장·같은 가구 자리). 4차 판정 결과를 보고 고치지
+  않는다.'
+notes:
+  source: 구역별 설명은 zones/store01_shoot3/floor.yaml 의 notes — 같은 바닥 자리.
+band:
+  start: -10.0
+  end: 90.0
+calibration:
+  image:
+  - - 0.56549
+    - 0.58789
+  - - 0.4833
+    - 0.58809
+  - - 0.58229
+    - 0.97883
+  - - 0.42519
+    - 0.97257
+  floor:
+  - - 0.0
+    - 0.0
+  - - 64.0
+    - 0.0
+  - - 0.0
+    - 74.0
+  - - 64.0
+    - 74.0
+zones:
+- name: shelf
+  type: SHELF
+  polygon:
+  - - -60.0
+    - 47.0
+  - - 70.0
+    - 47.0
+  - - 110.0
+    - 82.0
+  - - -60.0
+    - 82.0
+- name: counter
+  type: CHECKOUT
+  polygon:
+  - - -60.0
+    - 12.0
+  - - 50.0
+    - 12.0
+  - - 50.0
+    - 47.0
+  - - -60.0
+    - 47.0
+- name: door
+  type: EXIT
+  polygon:
+  - - 300.0
+    - -90.0
+  - - 530.0
+    - -90.0
+  - - 520.0
+    - 20.0
+  - - 300.0
+    - 20.0
+- name: aisle
+  type: OTHER
+  polygon:
+  - - -60.0
+    - -25.0
+  - - 260.0
+    - -25.0
+  - - 300.0
+    - -60.0
+  - - 530.0
+    - -90.0
+  - - 520.0
+    - 20.0
+  - - 250.0
+    - 30.0
+  - - 110.0
+    - 82.0
+  - - -60.0
+    - 82.0
+ignore_image: []
