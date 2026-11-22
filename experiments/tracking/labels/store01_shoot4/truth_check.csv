@@ -1,0 +1,43 @@
+﻿pair,scenario,plan_people,plan_expected,pos_paid,seen_people,seen_expected,note,checked_by
+C01,같은 색 옷 잠깐 겹침,2,CLEAR,13초 1개 (동과루×1),2,CLEAR,,Hoseok
+C02,같은 색 옷 조금 오래 겹침,2,CLEAR,11초 1개 (애플사이다×1),2,CLEAR,,Hoseok
+C03,같은 색 옷 오래 겹침,2,CLEAR,18초 2개 (동과루×1 + 칸타타×1),2,CLEAR,,Hoseok
+C04,다른 색 옷 잠깐 겹침,2,CLEAR,14초 1개 (애플사이다×1),2,CLEAR,,Hoseok
+C05,다른 색 옷 조금 오래 겹침,2,CLEAR,19초 1개 (칸타타×1),2,CLEAR,동과루와 칸타타 1개씩 결제함,Hoseok
+C06,다른 색 옷 오래 겹침,2,CLEAR,17초 2개 (애플사이다×1 + 칸타타×1),2,CLEAR,,Hoseok
+C10,화면 밖으로 나갔다 돌아와 반납 후 퇴장,1,CLEAR,결제 없음,1,CLEAR,,Hoseok
+C11,화면 밖으로 나갔다 돌아와 결제 후 퇴장,1,CLEAR,20초 1개 (칸타타×1),1,CLEAR,,Hoseok
+C12,"1명 화면 안, 1명 나갔다 옴 (다른 색)",2,CLEAR,11초 1개 (동과루×1) / 29초 1개 (칸타타×1),2,CLEAR,,Hoseok
+C13,"1명 화면 안, 1명 나갔다 옴 (같은 색)",2,CLEAR,13초 1개 (칸타타×1) / 26초 1개 (동과루×1),2,CLEAR,,Hoseok
+C14,2명 같이 나갔다 옴 (다른 색),2,CLEAR,34초 2개 (동과루×1 + 애플사이다×1) / 46초 1개 (칸타타×1),2,CLEAR,,Hoseok
+C15,2명 같이 나갔다 옴 (같은 색),2,CLEAR,35초 2개 (칸타타×1 + 애플사이다×1) / 43초 1개 (동과루×1),2,CLEAR,,Hoseok
+C16,물건 위치 바꾸기,1,CLEAR,결제 없음,1,CLEAR,,Hoseok
+C17,한 명이 두 손을 동시에 뻗어 가져감,1,CLEAR,15초 2개 (칸타타×1 + 애플사이다×1),1,CLEAR,,Hoseok
+C18,"한 명이 두 손: 하나는 만지기만, 하나는 가져감",1,CLEAR,11초 1개 (애플사이다×1),1,CLEAR,,Hoseok
+C19,2명이 각자 팔을 동시에 뻗어 가져감,2,CLEAR,11초 1개 (애플사이다×1) / 18초 1개 (칸타타×1),2,CLEAR,,Hoseok
+C20,2명이 팔을 겹쳐(X자) 뻗어 가져감,2,CLEAR,14초 1개 (칸타타×1) / 23초 1개 (애플사이다×1),2,CLEAR,,Hoseok
+C21,"2명 팔 겹침: 한 명은 만지기만, 한 명은 가져감",2,CLEAR,16초 1개 (칸타타×1),2,CLEAR,,Hoseok
+L1,"긴 영상 — 3명 등장, 2명 정상·1명 절도",3,HIGH_RISK,16초 1개 (동과루×1) / 28초 1개 (동과루×1),3,HIGH_RISK,,Hoseok
+N01,기본 구매,1,CLEAR,12초 1개 (칸타타×1),1,CLEAR,,Hoseok
+N02,결제 후 개인 가방,1,CLEAR,18초 1개 (동과루×1),1,CLEAR,,Hoseok
+N03,"개인 물건을 주머니에, 상품은 결제",1,CLEAR,19초 1개 (칸타타×1),1,CLEAR,,Hoseok
+N04,서로 다른 상품 3개 모두 결제,1,CLEAR,26초 3개 (칸타타×1 + 동과루×1 + 애플사이다×1),1,CLEAR,,Hoseok
+N05,같은 상품 3개 결제,1,CLEAR,24초 3개 (동과루×3),1,CLEAR,,Hoseok
+N06,스캔 뒤 구매 취소·반납·빈손 퇴장,1,CLEAR,결제 없음,1,CLEAR,,Hoseok
+N08-1,결제 뒤 추가 구매 (두고 추가 결제),1,CLEAR,10초 1개 (동과루×1) / 21초 1개 (애플사이다×1),1,CLEAR,,Hoseok
+N08-2,결제 뒤 추가 구매 (들고 추가 결제),1,CLEAR,20초 1개 (칸타타×1) / 30초 1개 (동과루×1),1,CLEAR,,Hoseok
+N09,"A 가 골라 B 에게 전달, A 가 결제, 함께 퇴장",2,CLEAR,16초 1개 (동과루×1),2,CLEAR,,Hoseok
+N10-1,결제 후 반납,1,CLEAR,14초 1개 (동과루×1),1,CLEAR,,Hoseok
+N10-2,"2개 중 1개 반납, 1개 결제",1,CLEAR,18초 1개 (동과루×1),1,CLEAR,,Hoseok
+N11,"여러 개 비교 뒤 모두 반납, 빈손 퇴장",1,CLEAR,결제 없음,1,CLEAR,,Hoseok
+N12,미결제로 출구 근처까지 갔다 돌아와 결제,1,CLEAR,16초 1개 (동과루×1),1,CLEAR,,Hoseok
+S1,짧은 영상 — 1명이 빠르게 절도,1,HIGH_RISK,결제 없음,1,HIGH_RISK,,Hoseok
+T01,상품을 들고 바로 퇴장,1,HIGH_RISK,결제 없음,1,HIGH_RISK,,Hoseok
+T02,개인 가방에 넣고 퇴장,1,HIGH_RISK,결제 없음,1,HIGH_RISK,,Hoseok
+T03,주머니에 넣고 퇴장,1,HIGH_RISK,결제 없음,1,HIGH_RISK,,Hoseok
+T04,3개 중 2개만 결제,1,HIGH_RISK,20초 2개 (동과루×1 + 칸타타×1),1,HIGH_RISK,,Hoseok
+T05,같은 상품 3개 중 1개만 결제,1,HIGH_RISK,11초 1개 (동과루×1),1,HIGH_RISK,,Hoseok
+T06,스캔·화면 조작 뒤 결제 미완료,1,HIGH_RISK,결제 없음,1,HIGH_RISK,,Hoseok
+T08,1개 결제 뒤 추가 상품을 결제 없이 반출,1,HIGH_RISK,9초 1개 (애플사이다×1),1,HIGH_RISK,,Hoseok
+T09,동행자에게 전달 후 둘 다 결제 없이 퇴장,2,HIGH_RISK,결제 없음,2,HIGH_RISK,,Hoseok
+T10,"2개 집어 1개 반납, 1개 미결제 반출",1,HIGH_RISK,결제 없음,1,HIGH_RISK,,Hoseok
