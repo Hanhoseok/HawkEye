@@ -75,6 +75,23 @@
     </section>
   </main>
 
+  <div id="confirmOverlay" class="overlay">
+    <div class="card">
+      <h2 style="color:var(--text)">담긴 상품을 확인하세요</h2>
+      <p class="confirm-count">상품 <b id="confirmCount">0</b>개</p>
+      <table>
+        <thead><tr><th>상품명</th><th class="num">수량</th><th class="num">금액</th></tr></thead>
+        <tbody id="confirmItems"></tbody>
+      </table>
+      <div class="total"><span>결제 금액</span><span id="confirmTotal"></span></div>
+      <p class="muted">빠진 상품이 있으면 "더 담기"를 누르고 휴대폰으로 다시 스캔하세요.</p>
+      <div class="actions">
+        <button id="confirmBack" class="big">더 담기</button>
+        <button id="confirmPay" class="primary big">결제하기</button>
+      </div>
+    </div>
+  </div>
+
   <div id="paidOverlay" class="overlay">
     <div class="card">
       <h2>✅ 결제 완료 (테스트)</h2>

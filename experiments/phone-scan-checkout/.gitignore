@@ -31,3 +31,6 @@ coverage/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- 결제 기록 내보내기 결과 (npm run export:orders). 결제 데이터라 올리지 않음 ---
+exports/

@@ -4,6 +4,7 @@
   const won = (n) => n.toLocaleString('ko-KR') + '원';
   let session = null;
   let es = null;
+  let lastFlashAt = null;
 
   async function api(method, url, body) {
     const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -25,8 +26,12 @@
     setStatus(cart.status);
     const tbody = $('items');
     tbody.innerHTML = '';
+    const ev0 = cart.lastEvent;
+    const justAdded = ev0 && ev0.type === 'added' && ev0.at !== lastFlashAt ? ev0.barcode : null;
+    if (justAdded) lastFlashAt = ev0.at;
     for (const it of cart.items) {
       const tr = document.createElement('tr');
+      if (it.barcode === justAdded) tr.className = 'flash'; // 방금 담긴 줄을 잠깐 초록으로 강조
       tr.innerHTML = `
         <td>${esc(it.name)}<div class="muted mono">${esc(it.barcode)}</div></td>
         <td class="num">${won(it.price)}</td>
@@ -180,8 +185,21 @@
     } catch { /* ignore */ }
   }
 
-  $('pay').addEventListener('click', async () => {
+  // 결제 전 확인: 담긴 상품과 개수를 크게 보여 주고 한 번 더 누르게 한다.
+  // 결제 시점(차임)은 "결제하기"를 누른 순간 기준이다.
+  function openConfirm() {
+    if (!session || !session.items.length) return;
+    $('confirmCount').textContent = session.count;
+    $('confirmItems').innerHTML = session.items.map((it) => `<tr><td>${esc(it.name)}</td><td class="num">${it.qty}</td><td class="num">${won(it.price * it.qty)}</td></tr>`).join('');
+    $('confirmTotal').textContent = won(session.total);
+    $('confirmOverlay').classList.add('show');
+  }
+  $('pay').addEventListener('click', openConfirm);
+  $('confirmBack').addEventListener('click', () => $('confirmOverlay').classList.remove('show'));
+
+  $('confirmPay').addEventListener('click', async () => {
     primeAudio();
+    $('confirmOverlay').classList.remove('show');
     try {
       const r = await api('POST', `/api/sessions/${session.sessionId}/checkout`);
       beep(); // 서버가 결제 성공을 응답한 직후에만 울린다
