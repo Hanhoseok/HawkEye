@@ -71,6 +71,10 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 .overlay .card { max-width: 520px; width: 100%; }
 .overlay h2 { font-size: 24px; color: var(--ok); }
 .actions { margin-top: 14px; display: flex; gap: 8px; }
+.confirm-count { font-size: 22px; margin: 4px 0 10px; }
+.confirm-count b { font-size: 34px; color: var(--primary); }
+@keyframes rowFlash { from { background: #bbf7d0; } to { background: transparent; } }
+tr.flash td { animation: rowFlash 2s ease-out; }
 
 /* 모바일 스캔 페이지 */
 body.scan main { max-width: 520px; padding: 14px; }
