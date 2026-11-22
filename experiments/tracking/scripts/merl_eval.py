@@ -137,23 +137,21 @@ def main() -> None:
     for wz in (0.10, 0.15, 0.20, 0.25, 0.35):
         for dwell in (0.2, 0.4, 0.6):
             cfg = dict(
-                signal="reach", wrist_zone_max=wz, dwell_seconds=dwell,
-                gap_tolerance_seconds=0.2, min_overlap=0.0, max_speed=99.0,
+                signal="reach", wrist_zone_max=wz, min_seconds=dwell,
+                gap_tolerance_seconds=0.2,
             )
             r = score(train, zone_map, **cfg)
             show(f"reach 거리<={wz} 지속>={dwell}초", r)
             if best is None or r["f1"] > best[0]["f1"]:
                 best = (r, cfg)
     r, cfg = best
-    print(f"\ntrain 최고 F1 {r['f1']:.2f} -> 거리<={cfg['wrist_zone_max']}, 지속>={cfg['dwell_seconds']}초")
+    print(f"\ntrain 최고 F1 {r['f1']:.2f} -> 거리<={cfg['wrist_zone_max']}, 지속>={cfg['min_seconds']}초")
 
     print("\n=== 2단계 · test 에서 그 설정으로만 평가 ===")
     print(header)
     print("-" * 104)
-    show("(참고) dwell 기준선", score(test, zone_map, signal="dwell", min_overlap=0.05,
-                                   max_speed=0.30, dwell_seconds=3.0))
     show("reach (train 에서 고른 설정)", score(test, zone_map, **cfg))
-    print("\n두 번째 줄이 처음으로 '튜닝과 평가가 분리된' 수치다.")
+    print("\n이 줄이 '튜닝과 평가가 분리된' 수치다. (머묾 기준선은 지웠다 — 2026-11-21)")
 
 
 if __name__ == "__main__":

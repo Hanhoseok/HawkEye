@@ -19,6 +19,10 @@ const LEGEND = {
 };
 const PALETTE = ["#4c6ef5", "#f76707", "#0ca678", "#d6336c", "#7048e8", "#f08c00", "#1098ad", "#74b816"];
 const GRAY = "#a8a79f";
+/* 상품 탐지 모델이 아는 종류 (labels/products_shoot3). 일반 YOLO 의 이름(bottle …)은 예전처럼 초록 한 색 */
+const ITEM_COLOR = { cantata: "#e599f7", donggwaru: "#66d9e8", applecider: "#8ce99a" };
+const ITEM_NAME = { cantata: "칸타타", donggwaru: "동과루", applecider: "애플사이다" };
+const ITEM_PLAIN = "#69db7c";
 const ZONE_NAME = { shelf: "선반 앞", counter: "계산대", door: "출구", outside: "문 밖", aisle: "통로" };
 const ZONE_COLOR = { SHELF: "#f08c00", CHECKOUT: "#0ca678", EXIT: "#e03131", OUTSIDE: "#868e96", OTHER: "#4c6ef5" };
 const LEVEL_NAME = { HIGH_RISK: "경보", REVIEW: "확인 필요", CLEAR: "통과" };
@@ -152,7 +156,7 @@ function drawBuilding(build) {
 
 function drawGallery(index) {
   const all = index.cards || [], batches = index.batches || [], pending = index.pending || [];
-  const batch = batches.find(x => x.key === app.batch) || batches[0] || null, home = `shoot${index.shoot}`;
+  const batch = batches.find(x => x.key === app.batch) || batches[0] || null, home = `shoot${index.shoot_base}`;
   const cards = batch && batches.length > 1 ? all.filter(c => (c.batch || home) === batch.key) : all;
   const t = batch && batches.length > 1 ? batch.totals : index.totals;
   const kids = [];
@@ -161,7 +165,7 @@ function drawGallery(index) {
   if (!all.length && !pending.length && !add.open) {
     kids.push(h("div", { class: "empty" }, index.build.running ? "처음 여는 중이라 잠시 걸립니다 (짝마다 몇 초)." :
       (index.can_add ? "아직 영상이 없습니다. 아래에서 두 각도 영상을 추가하세요."
-        : `${index.shoot_name}의 기록이 없습니다. 먼저 python scripts/dual_eval.py --shoot ${index.shoot} run 으로 영상을 처리해 주세요.`)));
+        : `${index.shoot_name}의 기록이 없습니다. 먼저 python scripts/dual_eval.py --shoot ${index.shoot_base} run 으로 영상을 처리해 주세요.`)));
   }
   if (batches.length > 1) {
     kids.push(h("div", { class: "filters batches" }, batches.map(x => h("button", {
@@ -185,9 +189,10 @@ function drawGallery(index) {
   const shown = cards.filter(test);
   kids.push(h("div", { class: "grid" }, index.can_add ? addCard(index) : null, pending.map(x => pendingCard(x)), shown.map(c => card(c, index))));
   if (cards.length && !shown.length) kids.push(h("div", { class: "empty" }, "여기에 해당하는 영상이 없습니다."));
-  if (!index.can_add && all.length) {
+  if (index.note && all.length) kids.push(h("p", { class: "gallery-note" }, index.note));
+  else if (!index.can_add && all.length) {
     kids.push(h("p", { class: "gallery-note" }, `${index.shoot_name}은 영상마다 카메라가 조금씩 움직여 영상별로 구역을 옮겨 씁니다. ` +
-      `그래서 여기서는 새 영상을 추가하지 못합니다 — 영상을 넣으려면 카메라 맞추기(scripts/sync_floor.py)와 scripts/dual_eval.py --shoot ${index.shoot} run 을 먼저 합니다. ` +
+      `그래서 여기서는 새 영상을 추가하지 못합니다 — 영상을 넣으려면 카메라 맞추기(scripts/sync_floor.py)와 scripts/dual_eval.py --shoot ${index.shoot_base} run 을 먼저 합니다. ` +
       "위 점수는 이 컴퓨터에서 만든 기록으로 다시 판정한 것입니다."));
   }
   view.replaceChildren(...kids);
@@ -272,6 +277,11 @@ class Player {
       this.keyMs[cam] = this.keys[cam].map(k => tr.ms ? tr.ms[k] : k * 1000 / tr.fps);
     }
     this.itemMs = data.shelf_items.map(r => r.length > 2 ? r[2] : r[0] * 1000 / data.tracks.angle0.fps);
+    this.overItems = data.overview_items || [];        // 전체 카메라에서 찾은 상품 (보기만 — 판정에는 안 쓴다)
+    this.overItemMs = this.overItems.map(r => r[2]);
+    const kinds = new Set();
+    for (const rows of [data.shelf_items, this.overItems]) for (const r of rows.slice(0, 40)) for (const it of r[1]) if (ITEM_COLOR[it[0]]) kinds.add(it[0]);
+    this.itemKinds = Object.keys(ITEM_COLOR).filter(k => kinds.has(k));
     this.floor = data.floor ? this.floorSetup(data.floor) : null;
     this.showZones = lens === "verdict" || lens === "take";
     this.initLabels();
@@ -372,7 +382,8 @@ class Player {
     if (lens !== "label" && this.pick) { this.pick = null; this.showPick(); }
     this.drawLensBar();
     this.legend.replaceChildren(...LEGEND[lens].map(([tone, text]) => h("span", {},
-      h("i", { style: tone === "who" ? `background:${PALETTE[0]}` : "", class: tone === "who" ? "" : `tl-seg ${tone}`, }), text)));
+      h("i", { style: tone === "who" ? `background:${PALETTE[0]}` : "", class: tone === "who" ? "" : `tl-seg ${tone}`, }), text)),
+      ...(lens === "take" ? this.itemKinds.map(k => h("span", {}, h("i", { style: `background:${ITEM_COLOR[k]}` }), `상자 = ${ITEM_NAME[k]}`)) : []));
     for (const i of this.legend.querySelectorAll("i.tl-seg")) i.style.position = "static";
     this.logBox.hidden = lens === "label";
     if (lens === "label") {
@@ -553,6 +564,14 @@ class Player {
   itemsOf(pid) {
     let n = 0;
     for (const a of this.data.actions) if (a.pid === pid && a.end <= this.t) n += a.count;
+    // 손에 든 것을 보고 먼저 센 것: 확정한 때부터, 그 시간을 덮는 선반 방문이 끝날 때까지 (그 뒤는 위 행동의 개수가 대신한다).
+    // 끝까지 방문으로 안 바뀐 것은 행동 목록에 '든 것을 봄'으로 이미 들어 있다.
+    for (const h of this.data.held || []) {
+      if (h.pid !== pid || !h.counted || h.until === null || h.ms > this.t || this.t >= h.until) continue;
+      // 방문의 끝과 행동의 끝은 반올림이 달라 몇 ms 어긋난다 — 그 방문의 행동이 이미 세어졌으면 겹쳐 세지 않는다
+      if (this.data.actions.some(a => a.pid === pid && a.end <= this.t && Math.abs(a.end - h.until) < 100)) continue;
+      n += 1;
+    }
     return n;
   }
   paidOf(pid) {
@@ -669,6 +688,7 @@ class Player {
       const names = lens === "take" ? ["shelf"] : (lens === "verdict" ? ["counter", "door", "outside", "shelf"] : z.overview.map(q => q.name));
       for (const q of z.overview) if (names.includes(q.name)) this.poly(p, q.poly, ZONE_COLOR[q.type] || "#868e96", ZONE_NAME[q.name] || q.name, 0.08);
     }
+    if (lens === "take" && this.showZones) this.drawItems(p, this.itemsNear(this.overItems, this.overItemMs, this.t));
     for (const r of this.rowsAt("angle1")) {
       const rid = r[1], cust = this.customers.has(rid);
       if (!cust) {
@@ -713,11 +733,7 @@ class Player {
     if (lens === "take" && this.showZones) {
       const active = new Set(this.data.takes0.filter(t => t.start <= this.t && this.t <= t.end + 150).map(t => t.zone));
       for (const s of z.slots) this.poly(p, s.poly, active.has(s.name) ? "#ff3b6b" : "#ffd43b", `${s.name} 칸`, active.has(s.name) ? 0.28 : 0);
-      const items = this.itemsAt();
-      for (const it of items) {
-        p.ctx.strokeStyle = "#69db7c"; p.ctx.lineWidth = 1.5 * p.u;
-        p.ctx.strokeRect(it[1], it[2], it[3] - it[1], it[4] - it[2]);
-      }
+      this.drawItems(p, this.itemsAt());
     }
     for (const r of this.rowsAt("angle0")) {
       const rid = r[1], l = rid > 0 ? this.linkOf(rid) : null;
@@ -734,12 +750,21 @@ class Player {
       }
     }
   }
-  itemsAt() {
-    const local = this.t - this.offset, ms = this.itemMs;
-    let best = -1;
-    for (let i = 0; i < ms.length; i++) { if (ms[i] <= local) best = i; else break; }
+  itemsAt() { return this.itemsNear(this.data.shelf_items, this.itemMs, this.t - this.offset); }
+  /* 그 시각 바로 앞 장면의 물건들 (1초 넘게 비면 없음). rows = [[장면 번호, 물건들, …]], ms = 줄마다의 시각 */
+  itemsNear(rows, ms, local) {
+    let lo = 0, hi = ms.length;                       // ms[lo - 1] <= local 인 가장 큰 lo
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (ms[mid] <= local) lo = mid + 1; else hi = mid; }
+    const best = lo - 1;
     if (best < 0 || local - ms[best] > 1000) return [];
-    return this.data.shelf_items[best][1];
+    return rows[best][1];
+  }
+  drawItems(p, items) {
+    p.ctx.lineWidth = 1.5 * p.u;
+    for (const it of items) {
+      p.ctx.strokeStyle = ITEM_COLOR[it[0]] || ITEM_PLAIN;
+      p.ctx.strokeRect(it[1], it[2], it[3] - it[1], it[4] - it[2]);
+    }
   }
 
   /* -- 바닥 지도 (3차: 두 화면 짝을 바닥 위 거리로 맺을 때). 줄 끝 r[10] = 발의 바닥 좌표 [x, y] 또는 [x, y, dx, dy](발목이 안 보임) */

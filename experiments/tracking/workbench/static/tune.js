@@ -30,10 +30,20 @@ async function showTune(query) {
   view.replaceChildren(h("div", { class: "empty" }, "불러오는 중"));
   tune.focus = query.focus || null;
   tune.error = ""; tune.notice = "";
+  const here = location.hash;   // 읽는 동안 다른 화면으로 넘어갔으면 그리지 않는다 (처음 읽을 때는 몇 초 걸린다)
   try {
-    tune.page = await getJSON(api("tune"));
     if (!app.index) await loadIndex();
-  } catch (e) { return showError(e); }
+    if (location.hash !== here) return;
+    if (app.index.can_tune === false) {   // 견줘 보기 (같은 회차의 다른 기록) — 적용한 값을 그 회차와 함께 쓴다
+      const base = (app.index.shoots || []).find(s => s.shoot === app.index.shoot_base);
+      return view.replaceChildren(h("div", { class: "empty" },
+        `'${app.index.shoot_name}'은 견줘 보는 화면이라 수치 조정이 없습니다. 값은 `,
+        h("a", { href: `#/${app.index.shoot_base}/tune` }, base ? base.name : "원래 촬영"),
+        "에서 바꿉니다 — 바꾸면 이 화면도 그 값으로 다시 판정됩니다."));
+    }
+    tune.page = await getJSON(api("tune"));
+  } catch (e) { return location.hash === here ? showError(e) : undefined; }
+  if (location.hash !== here) return;
   tune.result = null; tune.busy = "";
   try { tune.values = JSON.parse(sessionStorage.getItem(tuneKey()) || "{}"); } catch (e) { tune.values = {}; }
   for (const key of Object.keys(tune.values)) if (!tune.page.knobs.some(k => k.key === key)) delete tune.values[key];

@@ -2,6 +2,10 @@
 
 > 원본 문서 §7 의 baseline("SHELF 와 사람의 근접 관계 + 다중 프레임 누적")을 구현하고,
 > **어디까지 되고 어디서 막히는지** 측정한 기록.
+>
+> **2026-11-21 (후속 60): 이 문서의 '선반 앞 멈춤(머묾)' 근거는 코드에서 지웠다.** 상품 · 관절 인식 전의 임시 근거였다.
+> 아래는 그때의 측정 기록이다. `signal: dwell` · `min_overlap` · `max_speed` · `dwell_seconds` · `--dwell` · `--max-speed` · `take_sweep.py` 는 이제 없다.
+> 지금 근거는 손목이다 (`src/interaction/detector.py`, 한계 D-1 · D-26).
 
 ---
 
@@ -340,5 +344,5 @@ interaction:
   speed_window_seconds: 0.4
 ```
 
-명령행: `--no-takes` `--dwell <초>` `--max-speed <체구/초>`
+명령행: `--no-takes` `--dwell <초>` `--max-speed <체구/초>` (2026-11-21: `--dwell` · `--max-speed` 와 아래 스윕은 지움)
 스윕: `python scripts/take_sweep.py <identities.jsonl> --fps <원본 fps>`

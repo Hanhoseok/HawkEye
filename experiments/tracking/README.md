@@ -161,7 +161,7 @@ python run_tracking.py --source data/videos/store-aisle-detection.mp4   --start-
 영상 한 장면
  ├─ ① 사람 찾기·잇기   YOLO(사람) → BoT-SORT                   → TrackObservation (추적 번호)
  ├─ ② 매장 단위 신원   끊겨도·번호가 바뀌어도 같은 손님          → IdentityObservation (손님 번호)
- ├─ ③ 손 뻗기          선반 구역 앞 멈춤 / 손목-선반 거리        → TakeCandidate
+ ├─ ③ 손 뻗기          손목이 선반 구역 안 / 손목-선반 거리 (관절) → TakeCandidate
  └─ ④ 선반 지도        YOLO(물건) → 지도 → 가림 → 떠난 뒤 비교   → ShelfVisit (사라짐·생김·변화 없음)
       ⑤ 손님 장부      ③+④ → 집음/놓음/만지기만, 물건 수, 결제(기록 또는 계산대 체류)
       ⑥ 위험 판정      출구 접근 WARNING → 나감 확정 → HIGH_RISK / REVIEW / CLEAR → RiskEvent
@@ -185,11 +185,11 @@ run_tracking.py            진입점 (config.yaml + 명령행 인자, 카메라 
 config.yaml                모든 설정값 (카메라 1대 기본)
 configs/store01_dual.yaml  카메라 2대 설정 — config.yaml 위에 얹는다
 configs/store01_dual_judge.yaml  (있을 때만) 분석 도구의 수치 조정에서 적용한 판정 값 — 평가·실행이 함께 읽는다
-configs/store01_shoot3_judge.yaml  (있을 때만) 같은 것의 3차 촬영 몫 — `dual_eval.py --shoot 3` 과 분석 도구의 3차가 읽는다
-zones/                     카메라별 구역 파일 (SHELF / CHECKOUT / EXIT / OUTSIDE), store01_dual/ 은 카메라 2대(바닥 지도·칸)
+configs/store01_shoot3_judge.yaml  (있을 때만) 같은 것의 3차 촬영 몫 — `dual_eval.py --shoot 3` 과 분석 도구의 3차가 읽는다 (4차는 store01_shoot4_judge.yaml)
+zones/                     카메라별 구역 파일 (SHELF / CHECKOUT / EXIT / OUTSIDE), store01_dual/ 은 카메라 2대(바닥 지도·칸), store01_shoot3/ · store01_shoot4/ 는 3 · 4차 촬영
 src/
   core/                    types.py(층 사이 형식) · config.py(설정) · protocols.py(인터페이스)
-  inputs/                  영상 읽기, 두 카메라 시차(sync.py), 실시간 입력(live_source.py)
+  inputs/                  영상 읽기, 두 카메라 시차(sync.py), 실시간 입력(live_source.py), 영상 파일의 소리 읽기(audio_read.py — 결제 소리 · 소리로 시차 맞추기)
   detectors/               ① 사람 탐지(YOLO / YOLO-pose), 선반 물건 탐지기, 사람 아님 영역(masked.py)
   trackers/                ① BoT-SORT / ByteTrack 어댑터, 교체 지점 factory.py
   identity/                ② 매장 단위 신원, 외형 모델 어댑터
@@ -207,7 +207,8 @@ scripts/                   평가·실험 도구 — 아래 표
 workbench/                 분석 도구 — 기록을 영상 위에 그려 질문별로 보는 웹 화면 (workbench/README.md)
 training/products/         상품 탐지 학습 폴더 — 다른 컴퓨터에서 이 폴더만으로 학습한다 (training/products/README.md, 그림은 git 제외)
 tests/                     층별 규칙 테스트
-labels/                    정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서, events/ 는 분석 도구로 적는 집음·짝·경보 대상)
+labels/                    정답표 (store01 1차 촬영, store01_dual 2차 촬영: 정답·시차·결제 라벨·가짜 센서, events/ 는 분석 도구로 적는 집음·짝·경보 대상,
+                           store01_shoot3 3차, store01_shoot4 4차: 정답 초안 · 소리로 맞춘 시차 · 결제 로그에서 뽑은 결제 · 센서 로그를 영상별로 가른 것)
 data/videos/, outputs/     입력 영상·결과물 (git 제외)
 ```
 
@@ -219,7 +220,8 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 
 | 쓰임 | 파일 | 한 줄 |
 |---|---|---|
-| **카메라 2대 평가** | `dual_eval.py` | 2차 촬영 38쌍: `run`(기록) · `sync`(시차) · `calibrate`(띠 축) · `judge`(판정만 다시) |
+| **카메라 2대 평가** | `dual_eval.py` | 2차 촬영 38쌍 · `--shoot 3` 3차 39쌍 · `--shoot 4` 4차 42쌍: `run`(기록) · `replay`(저장분으로 다시) · `sync`(시차) · `calibrate`(띠 축) · `judge`(판정만 다시). `judge --sensor --sensor-lanes L1,L2 --payments` = 센서 로그 + 결제 기록으로 판정 (최종 흐름) |
+| | `regress.py` | 고친 뒤 점수가 떨어졌는지 — 2 · 3 · 4차를 방식별(영상만 · 센서 · 결제 · 센서 + 결제)로 다시 판정해 기준과 견줌 (`check` · `update`) |
 | | `sync_pair.py` · `calibrate_floor.py` | 두 화면을 보며 시차 확정 · 바닥 보정점으로 바닥 지도 만들기 |
 | | `label_payments.py` | 두 화면을 보며 결제 시각·개수·시차를 적는 도구 (`labels/store01_dual/payments.csv`) |
 | | `fake_sensor.py` · `live_sim.py` | 가짜 선반 센서 기록 만들기 · 녹화본을 카메라 속도로 흘리는 실시간 흉내 |
@@ -230,14 +232,23 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | | `link_diagnose.py` | 두 화면 짝이 왜 끊기나 — 조각마다 이유(`why`) · 위치값 견주기(`fit`) · 해결 후보 견주기(`try`). `--shoot 3` 은 바닥 위 거리 방식: 허용 거리의 근거(`fit`) · 띠/바닥 견주기(`try`) · 두 명 장면에서 맺은 짝이 맞는 사람인가(`check`). `gate` = 매장 안 바닥을 밟은 신원만 짝 후보로 삼기를 끔/켬으로 견줌(2·3차), `keep` · `hidden` = 같은 표로 직전 짝 가산점 · 가린 발목 규칙. 기록만 다시 돌리고 아무것도 고치지 않음 |
 | | `floor_check.py` | 3차: 두 카메라의 바닥 지도가 같은 좌표인가 — 타일 줄눈 어긋남(`tiles`) · 같은 사람의 두 카메라 발목 거리(`feet`) |
 | | `identity_hold.py` | 신원 보류(포개진 상자 · 낮은 탐지 점수) · 관절로 가르기 · 건너뛴 번호 다시 판정 · 한 신원 한 상자를 저장분으로 켜고 끄며 견줌 — 기준 후보 한꺼번에(`grid` · `posegrid`) · 한 조합(`try`) · 한 짝의 신원 흐름(`who`) · 두 화면 짝(`links`) · 보류된 상자가 그 뒤 무엇이 됐나(`held`) · 포개진 두 상자의 관절 거리(`gaps`). 저장분(`dual_eval.py run --record-cache`) 필요 |
+| **3 · 4차 촬영 준비** | `shoots.py` | 촬영 회차별 경로 · 값 한 곳 (영상 · 구역 · 라벨 폴더, 바닥 표시, 센서 레인의 상품 종류, 개수를 어느 카메라에서 셀지 · 선반 지도 묶기 값 — 카메라 자리에 맞춘 값) |
+| | `sync_floor.py` · `shoot3_zones.py` · `shoot3_eval.py` | 영상마다 카메라 움직임 맞추기 · 바닥 지도 · 소리로 두 카메라 시차(4차) · 구역을 영상별로 옮기기 (`--shoot 4`) |
+| | `pos_payments.py` | 4차: 결제 로그(`payment-log.csv`)와 센서 로그를 영상별로 갈라 `labels/store01_shoot4/` 에 — 결제 시각은 영상의 결제 소리로 맞춤 |
+| | `log_balance.py` | 센서 로그와 결제 로그만으로 영상마다 '꺼낸 것 - 결제한 것' — 카메라 없이 보는 정답 검산 (정답표와 어긋나는 영상을 알림) |
+| | `count_source_check.py` | 선반 방문의 개수를 어느 카메라에서 가져올지 — 정상(N) 영상에서 선반 지도와 전체 카메라 개수를 정답과 견줌 (카메라를 옮기면 다시) |
 | **1차 매장 영상 (카메라 1대)** | `store_eval.py` | 1차 촬영 40편 일괄 평가: `run` · `judge` |
 | | `transfer_zones.py` · `screen_videos.py` | 카메라가 조금 움직였을 때 구역 옮기기 · 검증 영상 고르기(사람·물건이 얼마나 보이나) |
 | **기록으로 다시 돌리기 (영상 없이)** | `replay_identity.py` · `replay_risk.py` | 저장된 추적 기록으로 신원만 · 신원 기록으로 판정만 다시 |
-| | `take_sweep.py` · `identity_calibration.py` · `remap_identities.py` | 손 뻗기 기준값 훑기 · 신원 판정 방식 비교 · 두 실행 사이 손님 번호 대응표 |
+| | `identity_calibration.py` · `remap_identities.py` | 신원 판정 방식 비교 · 두 실행 사이 손님 번호 대응표 |
 | **공개 데이터 평가** | `merl_to_labels.py` · `merl_batch.py` · `merl_eval.py` · `merl_feature_check.py` | MERL: 라벨 변환 · 묶어 돌리기 · train/test 평가 · 자세 특징 판별력 |
 | | `retailaction_eval.py` · `retailaction_hands.py` · `eval_takes.py` | RetailAction: 자세만으로 집기 · 손 사진으로 집음/놓음 · 손 뻗기 후보를 라벨과 대조 |
 | **라벨·구역 준비** | `label_actions.py` · `export_frame.py` · `zone_report.py` | 행동 구간 라벨링 · 격자 입힌 장면 저장 · 신원별 구역 체류 집계 |
 | **상품 탐지 데이터 (3차)** | `product_frames.py` | 학습용 장면 고르기(`plan`) · 그림으로 뽑기(`extract`, `--batch 2` 는 상품을 들고 옮기는 구간 — Roboflow 에 올릴 것) · 모아보기(`sheet`) · 찍은 라벨을 YOLO 학습용으로 내보내기(`export`) — 표 · 라벨은 `labels/products_shoot3/`, 그림은 `outputs/` 에만. 라벨은 분석 도구의 '상품 라벨' 화면에서 찍는다 |
+| | `product_shelf_cache.py` | 3차 평가 저장분에서 선반 물건 탐지만 상품 모델로 바꾼 저장분 만들기 — 선반 지도에 상품 모델을 끼워 보는 길 (그 뒤 `dual_eval.py replay`) |
+| | `product_overview_items.py` | 전체 카메라(angle1) 영상에서도 상품을 찾아 기록에 남기기 — 분석 도구가 전체 카메라 화면에 상품 상자를 그린다 (기본 판정에는 안 씀 — `fusion.overview_count` 를 켜면 선반 방문의 개수에 쓴다). `--report` 로 사람 정답과 견줘 세고, `--count` 로 전체 카메라의 종류별 개수(처음 - 끝)를 꺼냄 정답 · 선반 지도와 견준다. `--visits` 로 선반 방문마다 개수 변화를 세어 정답과 견준다 (판정의 `fusion.overview_count` 와 같은 세기 — `src/fusion/overview_count.py`) |
+| | `product_shelf_report.py` | 선반 지도가 센 것을 사람 정답(`takes.csv`)과 견주기 — 개수 · 종류 · 주인, `--judge` 로 판정 점수도 기준과 견줌 |
+| | `product_model_check.py` | 받은 상품 탐지 모델을 이 컴퓨터에서 확인 — '움직인 상품'(주로 손에 든 것)을 몇 개 찾는지 · CPU 에서 한 장에 몇 초인지 · 놓친 것 / 찾은 것 모아보기 → `outputs/` |
 | | `product_coco.py` | Roboflow 로 찍은 데이터셋(COCO, `source/labeling_object/`)을 YOLO 학습용으로 바꾸기 — 영상 단위로 다시 나누고 · 종류 번호를 맞추고 · 카메라를 갈라 이름에 넣는다 → `outputs/products_rf/`. `--publish` 는 그 가운데 라벨 · 목록만(그림 빼고) 학습 폴더 `training/products/dataset/` 으로 낸다 |
 | **추적 분석 (초기 단계)** | `analyze_observations.py` · `detect_id_jumps.py` · `find_crossings.py` | 추적 번호 단위 요약 · 번호가 남에게 옮겨 간 지점 · 두 사람이 겹친 구간 |
 | **시연·시험용** | `shelf_demo.py` · `make_sample_video.py` | 선반 지도 1단계 시연 · 영상 입출력만 확인하는 합성 영상 |
@@ -264,7 +275,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 | **`docs/identity-registry.md`** | **계층 2 — 매장 단위 신원. tracker 가 끊겨도 person_id 유지** |
 | **`docs/zones.md`** | **구역 인프라 — SHELF/EXIT 정의와 판정 방식** |
 | **`docs/zones-store01.md`** | **카메라 2대 구역 — 구역마다 코드에서 하는 일, 구역 편집 페이지(`scripts/zone_editor.html`)** |
-| **`docs/take-candidates.md`** | **계층 3 — 선반 앞 멈춤으로 TAKE 후보 판정, 그 한계** |
+| **`docs/take-candidates.md`** | **계층 3 — 선반 앞 멈춤으로 TAKE 후보 판정, 그 한계** (그 근거는 2026-11-21 코드에서 지움 — 측정 기록) |
 | **`docs/labeling.md`** | **행동 라벨링 — 무엇을 왜 어떻게 찍는가** |
 | **`docs/pose-signals.md`** | **Pose 신호 — 손 높이는 되고 팔 뻗음·손 위치는 안 된다** |
 | **`docs/merl-evaluation.md`** | **MERL 공개 데이터로 train/test 분리 평가. 특징이 화각에 종속적임을 확인** |
@@ -366,6 +377,7 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 | 2026-11-14 | 남은 두 화면 짝 문제 가르기 + 직전 짝 가산점은 바로 앞 조각의 짝에게만 (`fusion.keep_bonus_recent_only`, 2·3차 기본) | 3차에 남은 짝 바뀜 7번 · 의심 조각 대부분은 짝짓기가 아니라 전체 카메라 번호(겹칠 때 서로 바뀜 C20, 가린 뒤 새 번호 C03·C14, 0.1~0.3초 뒤섞임). 짝짓기 탓 2조각 중 1조각 고침. 가린 상자의 발목 안 믿기는 해 보고 버림. 판정 3차 26/39 · 2차 31/38 그대로 | `docs/multiview-progress.md` 후속 44 |
 | 2026-11-14 | 신원 보류 두 가지 시험 (`identity.nested_hold_overlap` · `identity.min_identity_score`, 둘 다 꺼 둠) + 이 컴퓨터의 2·3차 기록을 저장분과 함께 다시 만듦 (`scripts/identity_hold.py`) | 새 기록은 기준과 같음(3차 28·29·29·29 / 39, 2차 32·32 / 38). 포개진 상자 보류: 3차 판정 그대로 · 손님 수 38 → 39/39(C03) · 손님 아닌 번호와 맺힌 짝 3 → 0, 그러나 2차 C15 에서 포개 선 두 사람을 한 신원으로 합쳐 틀림(0.7 이하, 0.9 는 무사). 낮은 점수 보류: 3차 정상 영상에서 신원이 붙은 줄 −9%(0.4) · C14 손님 수 틀림, 2차는 무해. 정상 영상이 한 명뿐이라 기준을 N 으로 못 정함 | `docs/multiview-progress.md` 후속 45 |
 | 2026-11-14 | 포개진 두 상자를 관절로 가르기 (`identity.nested_pose_gap`) — 공통 관절 거리(중앙값 ÷ 작은 상자 폭)가 0.5 를 넘으면 다른 사람으로 보고 보류하지 않음. `dual_eval.py --shoot 3` 기본으로 켬(포개짐 0.7 · 관절 0.5) | 기준은 3차 정상 영상에서: 같은 사람의 두 상자 0.05~0.17, 다른 상자 0.91 이상. 2차 C15 가 더는 안 틀려짐(2차 32·32 · 38/38 그대로), 3차 판정 28·29·29·29 그대로 · **손님 수 38 → 39/39** · 짝 바뀜 8 → 6 · 손님 아닌 번호와 맺힌 짝 3 → 0. 2차는 이득이 없어 안 켬. 공통 관절이 없으면 여전히 포개짐만으로 판단 | `docs/multiview-progress.md` 후속 46 |
+| 2026-11-21 | 4차 촬영(42편)을 실제 결제 로그 + 센서 로그로 판정 — 회차 값 한 곳에(`scripts/shoots.py`), 소리로 시차 맞추기, 결제 로그 나누기(`scripts/pos_payments.py`), 센서와 카메라를 종류별로 합치기, 일부만 결제 = 경보 · 남는 결제 메우기, 선반 지도 윗변 묶기(4차만), 겹친 상자에 붙은 번호 버리기 | 4차 센서 + 결제 **40 / 42** (기록 `outputs/dual_eval_shoot4`, 정답 초안, 절도 9/9), 3차 센서 + 결제 31 → 37 / 39 (기록 `outputs/dual_eval_shoot3_prod`) | `docs/multiview-progress.md` 후속 61 |
 
 **다음에 확인할 것** (2026-10-14 에 적은 것): 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
 → 2026-11-10: 계산하고 나가는 손님은 1차·2차 촬영 정상 영상으로 확인(정상 11/12). 상품 탐지 모델은 아직 안 함. **지금의 다음 단계는 `docs/results-summary.md` §0-5.**

@@ -250,7 +250,7 @@ def _judge_all(recorder: Recorder, base: AppConfig, pattern: str | None = None) 
         try:
             results.append(de.judge_pair(pair, base, table.offset_ms(pair) or 0.0, band, truth=truth))
         except de.PAIR_ERRORS as e:
-            if de.SHOOT != 3:
+            if de.SHOOT < 3:
                 raise
             print(f"  (건너뜀 {pair}: {e})")
     return results
@@ -716,15 +716,15 @@ AB = {"keep": lambda: gate("keep_bonus_recent_only", "가산점은 바로 앞 �
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("what", choices=("why", "fit", "try", "check", "gate", "keep", "hidden"))
-    ap.add_argument("--shoot", type=int, choices=(2, 3), default=2, help="촬영 회차 (기본 2). 3 = 선반 카메라에도 바닥 지도")
+    ap.add_argument("--shoot", type=int, choices=(2, 3, 4), default=2, help="촬영 회차 (기본 2). 3 · 4 = 선반 카메라에도 바닥 지도")
     ap.add_argument("--set", action="append", default=[], metavar="절.키=값", help="why 에서 설정을 바꿔 본다 (예: fusion.position_mode=floor)")
     args = ap.parse_args()
     de.set_profile(args.shoot)
     _BASE_SET[:] = args.set
     de.OVERRIDES[:] = args.set
-    if args.what == "check" and args.shoot != 3:
-        ap.error("check 는 --shoot 3 에서만 (두 카메라 모두 바닥 지도가 있어야 기준을 만들 수 있다)")
-    if args.shoot == 3:
+    if args.what == "check" and args.shoot < 3:
+        ap.error("check 는 --shoot 3 · 4 에서만 (두 카메라 모두 바닥 지도가 있어야 기준을 만들 수 있다)")
+    if args.shoot >= 3:
         {"why": why, "fit": fit3, "try": try3, "check": check3, "gate": gate, **AB}[args.what]()
     else:
         {"why": why, "fit": fit, "try": try_all, "gate": gate, **AB}[args.what]()

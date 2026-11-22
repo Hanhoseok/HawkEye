@@ -92,7 +92,7 @@ person_id,action,start_frame,end_frame,start_sec,end_sec
 # 현재 설정 평가
 python scripts/eval_takes.py labels/store-aisle.csv --takes outputs/take-base/take_candidates.jsonl
 
-# 임계값을 스윕하며 최적점 찾기 (재추론 없이 초 단위)
+# 임계값을 스윕하며 최적점 찾기 (재추론 없이 초 단위) — 2026-11-21 지움 (머묾 기준값 훑기였다, 후속 60)
 python scripts/eval_takes.py labels/store-aisle.csv \
     --identities outputs/take-base/identities.jsonl --fps 59.9 --sweep
 ```

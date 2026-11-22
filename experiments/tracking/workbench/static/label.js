@@ -211,7 +211,7 @@ Player.prototype.drawLabelPanel = function () {
           h("span", { class: "who" }, p.checked_by ? `적은 사람 ${p.checked_by}` : ""), del(this.pays, i, true));
       }) : none("결제 정답이 없습니다."),
       h("div", { class: "muted small" }, `결제 정답은 ${this.index.labels_dir}/payments.csv 에 저장됩니다 (결제 라벨 도구 scripts/label_payments.py 와 같은 파일).` +
-        (this.index.shoot === 3 ? " 3차는 바코드 삑 소리로 만든 초안을 확인한 것이 들어 있습니다 — 고치면 그 파일이 바뀝니다." : ""))),
+        (this.index.shoot_base === 3 ? " 3차는 바코드 삑 소리로 만든 초안을 확인한 것이 들어 있습니다 — 고치면 그 파일이 바뀝니다." : ""))),
     this.syncSection());
   this.drawLabelState();
 };

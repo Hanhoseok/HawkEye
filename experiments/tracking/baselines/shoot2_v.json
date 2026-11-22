@@ -386,10 +386,10 @@
  {
   "pair": "T9",
   "verdicts": [
-   "HIGH_RISK",
+   "CLEAR",
    "CLEAR"
   ],
-  "correct": true,
+  "correct": false,
   "people": 2,
   "people_ok": true,
   "no_verdict": false

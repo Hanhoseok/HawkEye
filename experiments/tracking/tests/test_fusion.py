@@ -98,7 +98,7 @@ def test_fuser_assigns_unowned_visit_through_hand_touch_and_converts_frames():
     detail_axis, overview_axis = TimeAxis(30.0, -300.0), TimeAxis(60.0)
     fuser = ShelfEventFuser(cfg, linker, detail_axis, overview_axis, {"card": "shelf"})
     # 선반 카메라 4번이 card 칸에 손을 댐 (선반 카메라 장면 90~105 = 3.0~3.5초 → 시차 -0.3초 → 공통 2.7~3.2초)
-    take = TakeCandidate(4, "card", 90, 105, "", "", 0.5, 8, 0.0, 0.0)
+    take = TakeCandidate(4, "card", 90, 105, "", "", 0.5, 8, 0.0)
     fused_take = fuser.detail_take(take)
     assert fused_take.person_id == 11 and fused_take.zone == "shelf"
     assert fused_take.start_frame == overview_axis.to_frame(3000.0 - 300.0) == 162
@@ -136,7 +136,7 @@ def test_sensor_only_event_becomes_visit_after_waiting():
 
 def test_slot_change_keeps_take_when_detector_sees_nothing():
     # 물건 탐지 '변화 없음' + 칸 줄어듦 → 집음 1개 / 칸 바뀜(방향 모름) + 손 뻗기 → 확인 못 함(+1) / 칸 그대로 → 만지기만
-    take = TakeCandidate(1, "shelf", 10, 40, "", "", 1.0, 5, 0.0, 0.0)
+    take = TakeCandidate(1, "shelf", 10, 40, "", "", 1.0, 5, 0.0)
     base = dict(person_id=1, shelf="shelf", start_frame=0, end_frame=50, removed=0, added=0, zone="shelf")
     assert classify_visit(ShelfVisit(**base, slot_change="줄어듦"), [take]).kind == "TAKE"
     unsure = classify_visit(ShelfVisit(**base, slot_change="바뀜"), [take])
@@ -260,7 +260,7 @@ def test_dual_judge_turns_overview_wrist_in_shelf_into_reach():
             x = wrist if 0.5 <= frame.pts_ms / 1000 <= 1.2 else 0.43 * w   # 0.5~1.2초 동안 손목이 선반 안
             obs = IdentityObservation(person_id=3, track_id=3, bbox=bbox, frame=i, timestamp="",
                                       keypoints=kp_with_wrist(x, 0.5 * h))
-            judge.overview_step(frame, [obs], [], [])
+            judge.overview_step(frame, [obs], [])
             last = frame
         judge.finish(last)
         return risk.takes, judge
@@ -295,7 +295,7 @@ def test_overview_reach_ignores_a_person_standing_inside_the_shelf():
         frame = Frame(index=i, timestamp="", pts_ms=i * 1000.0 / 60, image=None, camera_id="angle1")
         obs = IdentityObservation(person_id=9, track_id=9, bbox=ghost, frame=i, timestamp="",
                                   keypoints=kp_with_wrist(0.2 * w, 0.55 * h))
-        judge.overview_step(frame, [obs], [], [])
+        judge.overview_step(frame, [obs], [])
         last = frame
     judge.finish(last)
     assert risk.takes == [] and not any(r.kind == "reach" for r in judge.fuser.records)
@@ -487,10 +487,10 @@ def test_dual_judge_marks_only_customers_and_people_standing_on_the_store_floor(
     # 장면을 넣으면 표본은 모두 쌓이고, 후보 표시만 다르다
     people = [obs(1, near, ankles(500.0, 980.0)), obs(4, far), obs(5, near)]
     frame = Frame(index=0, timestamp="", pts_ms=0.0, image=None, camera_id="angle1")
-    judge.overview_step(frame, people, [], [])
+    judge.overview_step(frame, people, [])
     assert set(judge.linker._overview) == {1, 4, 5} and judge.linker.overview_candidates(0.0) == [1]
     off, _ = judge_with(False)                                                         # 기본(꺼짐): 보인 신원 전부
-    off.overview_step(frame, people, [], [])
+    off.overview_step(frame, people, [])
     assert off.linker.overview_candidates(0.0) == [1, 4, 5]
 
 

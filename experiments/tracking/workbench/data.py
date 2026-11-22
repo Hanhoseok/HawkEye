@@ -1,6 +1,6 @@
 """기록 → 분석 도구 데이터 (outputs/workbench/).
 
-저장된 기록(2차 outputs/dual_eval_pose3/<짝>/ · 3차 outputs/dual_eval_shoot3/<짝>/)을 지금 설정으로 다시 판정하며 보기 데이터를 만들고,
+저장된 기록(2차 outputs/dual_eval_pose3/<짝>/ · 3차 outputs/dual_eval_shoot3_prod/<짝>/ — 상품 모델 기록)을 지금 설정으로 다시 판정하며 보기 데이터를 만들고,
 질문별 요약(analyze.py)을 붙여 짝마다 한 파일로 둔다. 영상을 다시 돌리지 않는다 — 짝당 1초 안팎.
 
     python workbench/data.py              # 바뀐 짝만 다시 만들기 (2차)
@@ -18,11 +18,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,16 +34,22 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 10
+VERSION = 14
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
-10: 전체 카메라 번호 맞바뀜 되돌리기 (fusion.swap_repair, 후속 49) — 보기 데이터에 swaps 가 생기고 3차 C20 의 번호·짝이 달라진다."""
+10: 전체 카메라 번호 맞바뀜 되돌리기 (fusion.swap_repair, 후속 49) — 보기 데이터에 swaps 가 생기고 3차 C20 의 번호·짝이 달라진다.
+11: 전체 카메라에서 찾은 상품 (overview_items, 후속 52) — 보기만 하고 판정은 그대로다.
+12: 전체 카메라의 선반 앞 머묾을 판정에 넣었는지 (overview_dwell, 후속 55) — 뺀 보기는 그 줄에 '판정에 안 씀'이 붙는다.
+13: 3차의 기본 기록이 상품 모델 기록으로, 3차 기본 판정이 전체 카메라 개수 · 든 사람 · 머묾 안 씀으로 (후속 56). 보기 31 · 32 의 뜻이 바뀌고 33 은 없어졌다.
+(같은 날, 후속 57) 보기는 회차마다 최신 2개만 둔다 — 31 = 3차의 바로 전 판정, 32 는 없앴다. 만드는 내용은 그대로라 번호를 안 올렸다.
+14: 전체 카메라의 '선반 앞 머묾' 줄을 없앴다 (코드에서 지움, 후속 58). 손에 든 것을 보면 바로 세는 기록(held)과 그 줄이 생겼다 (후속 59).
+    31 = 바로 세기를 끈 판정."""
 RUN_KEY = "current"
 
 
 ADDED = ROOT / "labels" / "store01_dual" / "added.csv"
-BATCH_NAME = {"shoot2": "2차 촬영", "added": "추가한 영상", "shoot3": "3차 촬영"}
+BATCH_NAME = {"shoot2": "2차 촬영", "added": "추가한 영상", "shoot3": "3차 촬영", "shoot4": "4차 촬영"}
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,18 @@ class Profile:
     can_add: bool
     """분석 도구에서 새 영상을 추가할 수 있나 (구역을 그대로 쓸 수 있는 회차만)."""
     payment: str = "계산대 체류 = 결제"
+    note: str = ""
+    """갤러리 아래에 보이는 설명 — 같은 회차의 다른 기록(견줘 보기)이 무엇을 바꾼 것인지."""
+    can_tune: bool = True
+    """수치 조정을 할 수 있나. 견줘 보기는 못 한다 — 적용한 값 파일과 조정 기록을 그 회차와 함께 쓰기 때문."""
+    thumbs: Path | None = None
+    """장면 그림을 여기서 가져다 쓴다 (전체 카메라 추적이 같은 기록이면 그림도 같다 — 영상을 다시 읽지 않는다)."""
+    overrides: tuple[str, ...] = ()
+    """이 보기에서만 얹는 판정 값 (`절.키=값`, dual_eval.py 의 --set 과 같다) — 같은 기록을 다른 설정으로 판정해 견줄 때."""
+    sensor_lanes: tuple[str, ...] = ()
+    """판정에 넣을 센서 레인 (labels/<회차>/sensor/<짝>.csv). 비면 센서 없이 판정한다."""
+    payments: bool = False
+    """결제 기록(labels/<회차>/payments.csv)을 결제로 쓴다. False 면 계산대 체류 = 결제."""
 
 
 PROFILES = {
@@ -74,12 +93,70 @@ PROFILES = {
                 ROOT / "zones" / "store01_dual" / "angle0.yaml"), True),
     # 3차는 영상마다 카메라가 조금씩 움직여, 기본 구역을 영상별 화면으로 옮겨 쓴다 (outputs/sync_floor/register.csv).
     # 새 영상을 넣으려면 그 맞추기부터 해야 해서 도구에서 추가하지 못한다.
-    3: Profile(3, "3차 촬영", ROOT / "outputs" / "dual_eval_shoot3", ROOT / "labels" / "store01_shoot3",
+    # 3차의 기본 기록은 상품 모델 기록이다 (후속 56 — scripts/dual_eval.py RECORDS 와 같은 폴더). 판정 값도 그쪽 3차 기본 그대로:
+    # 전체 카메라 개수 · 든 사람으로 주인 · 선반 앞 머묾 안 씀.
+    3: Profile(3, "3차 촬영", ROOT / "outputs" / "dual_eval_shoot3_prod", ROOT / "labels" / "store01_shoot3",
                ROOT / "zones" / "store01_shoot3", OUT / "shoot3", ROOT / "configs" / "store01_shoot3_judge.yaml",
                (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot3" / n for n in
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
                 ROOT / "outputs" / "sync_floor" / "register.csv"), False),
+    # 4차(2026-11-19)는 최종 판정 흐름 그대로 본다: 상품 모델 기록 + 센서 로그(L1 · L2) + 결제 로그 (사용자 방향, 2026-11-20).
+    # 수치 조정은 아직 '영상만' 판정으로 돌아서 이 보기와 점수가 다르다 — 붙일 때까지 끈다.
+    4: Profile(4, "4차 촬영", ROOT / "outputs" / "dual_eval_shoot4", ROOT / "labels" / "store01_shoot4",
+               ROOT / "zones" / "store01_shoot4", OUT / "shoot4", ROOT / "configs" / "store01_shoot4_judge.yaml",
+               (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot4" / n for n in
+                                        ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
+                ROOT / "outputs" / "sync_floor_shoot4" / "register.csv"), False,
+               payment="결제 로그 (POS)", can_tune=False, sensor_lanes=("L1", "L2"), payments=True,
+               note="센서 로그(L1 · L2)와 결제 로그를 넣은 판정입니다. 정답표는 3차 이름에서 가져온 초안이고, L1 은 정답을 몰라 채점하지 않습니다."),
 }
+"""열쇠는 보기 번호 — 주소(#/3)와 요청(?shoot=3)에 쓴다. 회차의 기본 기록은 회차 번호 그대로이고,
+같은 회차의 다른 기록(견줘 보기)은 다른 번호를 쓴다 (Profile.shoot 는 그대로 회차)."""
+
+MAX_VIEWS = 2
+"""한 회차의 보기는 최신 2개까지 (사용자 규칙, 2026-11-20): 지금 기준(#/3)과 바로 전 판정(#/31).
+새 판정이 기준이 되면 — 지금 것을 '바로 전'으로 옮기고, 그 전 것은 지운다 (보기 데이터 폴더는 `--prune`).
+더 옛 판정은 점수만 본다: `scripts/dual_eval.py judge --out <기록> --set …` (docs/shelf-map.md)."""
+
+SHOOT3_PREV = 31
+"""바로 전 판정: 지금 기록(상품 모델)을 '손에 든 것을 보면 바로 세기'(fusion.overview_instant, 후속 59) 없이 본 것 —
+물건 개수가 선반 방문이 끝난 뒤에야 오른다. 최종 판정은 같고 개수가 오르는 때만 다르다.
+정답표 · 시차 · 결제 · 구역 · 적용한 값은 3차 것을 그대로 쓴다 — 여기서 정답을 고치면 3차의 정답이 바뀐다."""
+PROFILES[SHOOT3_PREV] = replace(
+    PROFILES[3], name="3차 · 바로 전 판정 (방문이 끝나야 셈)", out=OUT / "shoot3_prev", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
+    overrides=("fusion.overview_instant=false",),
+    note="'3차 촬영'과 같은 기록입니다. 손에 든 것을 봐도 바로 세지 않고, 선반 방문이 끝나야 물건 개수가 오르던 판정입니다 "
+         "(2026-11-21 후속 59 전). 수치 조정은 3차 촬영에서 합니다.")
+
+
+def views_of(shoot: int) -> list[int]:
+    """그 회차의 보기 번호들 (기본 보기 + 견줘 보기)."""
+    return [key for key, p in PROFILES.items() if p.shoot == shoot]
+
+
+def check_views() -> None:
+    """보기 규칙을 어기면 그 자리에서 멈춘다 — 회차마다 MAX_VIEWS 개까지, 만든 것을 두는 폴더는 서로 달라야 한다."""
+    for shoot in {p.shoot for p in PROFILES.values()}:
+        keys = views_of(shoot)
+        if len(keys) > MAX_VIEWS:
+            raise RuntimeError(f"{shoot}차 보기가 {len(keys)}개입니다 ({keys}) — 최신 {MAX_VIEWS}개만 둡니다. 가장 옛 것을 지우세요")
+    outs = [p.out for p in PROFILES.values()]
+    if len(set(outs)) != len(outs):
+        raise RuntimeError("두 보기가 같은 폴더에 만듭니다")
+
+
+check_views()
+
+
+def stale_outputs() -> list[Path]:
+    """지금 어느 보기도 안 쓰는 보기 데이터 폴더 (outputs/workbench/shoot*) — 없앤 옛 보기가 남긴 것."""
+    used = {p.out for p in PROFILES.values()}
+    return sorted(d for d in OUT.glob("shoot*") if d.is_dir() and d not in used)
+
+
+def main_views() -> list[int]:
+    """회차의 기본 기록인 보기들 (견줘 보기를 뺀 것)."""
+    return [key for key, p in PROFILES.items() if key == p.shoot]
 
 ENGINE_LOCK = threading.RLock()
 """판정 코드(scripts/dual_eval.py)는 촬영 회차·기록 폴더를 모듈 값으로 들고 있다 — 한 번에 한 회차만 돌린다.
@@ -131,9 +208,12 @@ def _labeled(cards: list[dict]) -> dict:
 class Builder:
     """한 촬영 회차의 짝별 데이터를 만들고 상태를 알려 준다. 서버는 build_async 로 뒤에서 돌리고 status 를 화면에 보인다."""
 
-    def __init__(self, shoot: int = 2) -> None:
-        self.profile = PROFILES[shoot]
-        self.shoot = shoot
+    def __init__(self, key: int = 2) -> None:
+        self.profile = PROFILES[key]
+        self.key = key
+        """보기 번호 (PROFILES 의 열쇠)."""
+        self.shoot = self.profile.shoot
+        """촬영 회차 — 판정 코드가 구역 · 정답표를 고르는 번호."""
         self.out = self.profile.out
         self.lock = ENGINE_LOCK
         self.state = {"running": False, "done": 0, "total": 0, "current": "", "errors": [], "seconds": 0.0}
@@ -146,6 +226,7 @@ class Builder:
             de = self.ctx()["dual_eval"]
             if de.SHOOT != self.shoot or de.OUT != self.profile.records:
                 de.set_profile(self.shoot)
+                de.OUT = self.profile.records      # 같은 회차의 다른 기록 (견줘 보기)
             yield de
 
     # -- 판정에 쓰는 것들 (한 번 읽어 둔다)
@@ -174,8 +255,9 @@ class Builder:
         p = self.profile
         files = [*p.signature_files, p.judge_file, self.events_dir() / f"{pair}.json",
                  self.records_dir() / pair / ".done",
-                 self.records_dir() / pair / "meta.json"]
-        h = hashlib.sha1(f"v{VERSION}".encode())
+                 self.records_dir() / pair / "meta.json",
+                 self.records_dir() / pair / "angle1" / "product_items.meta.json"]     # 전체 카메라 상품 (있을 때만)
+        h = hashlib.sha1(f"v{VERSION}{'|'.join(p.overrides)}".encode())
         # 짝마다 한 줄씩 있는 표는 그 짝의 줄만 본다 — 한 영상의 시차·결제를 고쳤다고 38쌍을 다 다시 만들지 않게
         for table in (p.labels / "sync.csv", p.labels / "truth.csv", self.payments_file(), p.labels / "added.csv"):
             h.update(self._rows(table).get(pair, "-").encode("utf-8"))
@@ -280,7 +362,12 @@ class Builder:
         home = f"shoot{self.shoot}"
         (out / "pairs").mkdir(parents=True, exist_ok=True)
         (out / "cards").mkdir(parents=True, exist_ok=True)
-        opts = {"set": list(overrides)} if overrides else {}
+        sets = [*self.profile.overrides, *(overrides or [])]
+        opts = {"set": sets} if sets else {}
+        if self.profile.sensor_lanes:
+            opts.update(sensor=True, lanes=self.profile.sensor_lanes)
+        if self.profile.payments:
+            opts["payments"] = True
         for pair in todo:
             self.state["current"] = pair
             try:
@@ -320,6 +407,11 @@ class Builder:
         done = self.records_dir() / pair / ".done"
         if path.exists() and done.exists() and path.stat().st_mtime >= done.stat().st_mtime:
             return f"thumbs/{pair}.jpg"   # 기록이 그대로면 다시 만들지 않는다 (영상을 처음부터 읽어야 해서 느리다)
+        ready = self.profile.thumbs / f"{pair}.jpg" if self.profile.thumbs else None
+        if ready is not None and ready.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ready, path)
+            return f"thumbs/{pair}.jpg"
         try:
             import cv2
             track = data["tracks"]["angle1"]
@@ -372,8 +464,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true", help="바뀌지 않은 짝도 다시 만든다")
     ap.add_argument("--only", help="짝 이름 (쉼표)")
-    ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2, help="촬영 회차 (기본 2)")
+    ap.add_argument("--shoot", type=int, choices=sorted(PROFILES), default=2,
+                    help=f"보기 번호 — 2 · 3 · 4 는 촬영 회차 (3차 · 4차는 상품 모델 기록, 4차는 센서 + 결제 로그 판정), "
+                         f"{SHOOT3_PREV} 은 3차의 바로 전 판정 (기본 2)")
+    ap.add_argument("--prune", action="store_true", help="없앤 옛 보기가 남긴 보기 데이터 폴더를 지우고 끝낸다 (다시 만들 수 있는 것만 들어 있다)")
     args = ap.parse_args()
+    if args.prune:
+        for d in stale_outputs():
+            shutil.rmtree(d)
+            print("지움:", d)
+        return 0
     b = Builder(args.shoot)
     state = b.build(args.only.split(",") if args.only else None, args.force)
     print(f"만든 짝 {state['done']}/{state['total']}, {state['seconds']}초 → {b.out}")

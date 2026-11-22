@@ -146,10 +146,12 @@ def match(before: list[Slot], after: list[Slot], gate: float = 0.8,
 class _Consensus:
     """최근 몇 장면의 탐지를 모아, 대부분의 장면에서 보인 물건만 남긴다 (한 장면만 튀는 오탐 제거)."""
 
-    def __init__(self, presence: float, gate: float, map_score: float = 0.0) -> None:
+    def __init__(self, presence: float, gate: float, map_score: float = 0.0, top_gate: float = 0.0) -> None:
         self.presence = presence
         self.gate = gate
         self.map_score = map_score
+        self.top_gate = top_gate
+        """0 보다 크면 같은 물건인지를 상자 **윗변**(가로 가운데, 위 끝)의 거리 ÷ 크기로 본다 (shelves.top_merge)."""
         self.frames: list[list[ShelfItem]] = []
         """장면마다 탐지된 물건 전부 (약한 것 포함). 지도는 map_score 이상으로만 만든다."""
 
@@ -166,10 +168,12 @@ class _Consensus:
             for it in items:
                 if it.score < self.map_score:
                     continue   # 약한 탐지는 지도에 넣지 않는다 (사라짐/생김 확인용으로만 쓴다)
-                best, best_cost = None, self.gate
+                best, best_cost = None, self.top_gate or self.gate
                 for cl in clusters:
                     ref = cl[-1]
-                    cost = np.hypot(ref.center[0] - it.center[0], ref.center[1] - it.center[1]) / ((ref.size + it.size) / 2)
+                    # 윗변으로 보면: 뒤 상품에 '윗부분만' 상자와 '전체' 상자가 함께 잡혀도 윗변이 같아 한 물건, 앞 · 뒤 상품은 윗변이 달라 두 물건
+                    dy = ref.bbox[1] - it.bbox[1] if self.top_gate else ref.center[1] - it.center[1]
+                    cost = np.hypot(ref.center[0] - it.center[0], dy) / ((ref.size + it.size) / 2)
                     if cost < best_cost:
                         best, best_cost = cl, cost
                 if best is None:
@@ -238,6 +242,7 @@ class ShelfMonitor:
         map_score: float = 0.0,
         weak_presence: float = 0.3,
         polygon: tuple[tuple[float, float], ...] | None = None,
+        top_merge: float = 0.0,
     ) -> None:
         self.name = name
         self.box = shelf_box
@@ -248,7 +253,7 @@ class ShelfMonitor:
         self.stable_ms = stable_seconds * 1000.0
         self.match_gate = match_gate
         self.weak_presence = weak_presence
-        self._cons = _Consensus(presence, gate=0.5, map_score=map_score)
+        self._cons = _Consensus(presence, gate=0.5, map_score=map_score, top_gate=top_merge)
         self.reset()
 
     def reset(self) -> None:

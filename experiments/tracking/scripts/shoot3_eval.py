@@ -1,4 +1,4 @@
-"""3차 촬영을 카메라 2대 판정(dual_eval.py --shoot 3)에 붙이는 도움 함수.
+"""3차 · 4차 촬영을 카메라 2대 판정(dual_eval.py --shoot 3|4)에 붙이는 도움 함수. 회차는 set_shoot 으로 바꾼다 (기본 3).
 
 - 영상별 구역 파일: 기본 구역(zones/store01_shoot3/floor.yaml·angle0.yaml, area_setting 장면 기준)을
   outputs/sync_floor/register.csv 의 영상→area_setting 호모그래피 역으로 그 영상 화면에 옮긴다.
@@ -20,6 +20,17 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "zones" / "store01_shoot3"
 BAND_MAP = BASE / "band_map.yaml"
 SIZE = {"angle0": (1920, 1080), "angle1": (1920, 1080)}
+
+
+def set_shoot(number: int) -> None:
+    """촬영 회차를 바꾼다 (3차부터) — 기본 구역 폴더와 카메라 맞추기 표."""
+    global BASE, BAND_MAP
+    import shoot3_zones as Z
+    import shoots
+
+    BASE = shoots.get(number).zones
+    BAND_MAP = BASE / "band_map.yaml"
+    Z.set_shoot(number)
 
 
 def homographies(camera: str) -> dict[str, np.ndarray]:
@@ -46,15 +57,16 @@ def _rect_points(box) -> list[list[float]]:
     return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
 
 
-def load_band_map(path: Path = BAND_MAP) -> list[float]:
+def load_band_map(path: Path | None = None) -> list[float]:
+    path = path or BAND_MAP
     if not path.exists():
         return [1.0, 0.0]
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return [float(v) for v in raw.get("band_map", [1.0, 0.0])]
 
 
-def save_band_map(a: float, b: float, note: str, path: Path = BAND_MAP) -> None:
-    path.write_text(yaml.safe_dump({"band_map": [round(float(a), 4), round(float(b), 4)], "note": note}, allow_unicode=True,
+def save_band_map(a: float, b: float, note: str, path: Path | None = None) -> None:
+    (path or BAND_MAP).write_text(yaml.safe_dump({"band_map": [round(float(a), 4), round(float(b), 4)], "note": note}, allow_unicode=True,
                                    sort_keys=False), encoding="utf-8")
 
 
@@ -88,8 +100,9 @@ def pair_detail(base: dict, h0: np.ndarray, band_map: list[float], floor0: dict 
     return out
 
 
-def make_pair_zones(pair: str, out_root: Path, base_dir: Path = BASE) -> Path:
+def make_pair_zones(pair: str, out_root: Path, base_dir: Path | None = None) -> Path:
     """outputs/.../zones/<짝>/{floor,angle0}.yaml 을 기본 파일에서 늘 새로 만든다 (band_map 최신 반영). 호모그래피 없으면 KeyError."""
+    base_dir = base_dir or BASE
     h1, h0 = homographies("angle1")[pair], homographies("angle0")[pair]
     floor = yaml.safe_load((base_dir / "floor.yaml").read_text(encoding="utf-8"))
     detail = yaml.safe_load((base_dir / "angle0.yaml").read_text(encoding="utf-8"))
@@ -159,7 +172,7 @@ def load_sensor(path: Path, offset_ms: float, lanes: tuple[str, ...] | None = No
 
     - 영상 안(in_video=1) 기록만 — 영상 끝 뒤의 채워 넣기(ADD)가 마지막 손님에게 '놓음'으로 붙지 않게.
     - REMOVE·ADD 만 (RESYNC 는 개수 변화 0).
-    - delta_g 에 개수 변화를 그대로 넣는다 (칸 무게 sensor_unit_g 가 없는 칸은 기록 하나 = 1개로 셈).
+    - delta_g 에 개수 변화를 그대로 넣고 unit="count" 로 표시한다 (REMOVE 2 = 2개, 칸 무게와 무관).
     - lanes 를 주면 그 레인만 (예: L3 센서는 못 믿어서 L1·L2 만).
     """
     import csv
@@ -175,5 +188,6 @@ def load_sensor(path: Path, offset_ms: float, lanes: tuple[str, ...] | None = No
                 continue
             if lanes and r["lane"] not in lanes:
                 continue
-            out.append(SensorEvent(float(r["time_sec"]) * 1000.0 + offset_ms, r["lane"], float(r["delta"]), 1.0))
+            out.append(SensorEvent(float(r["time_sec"]) * 1000.0 + offset_ms, r["lane"], float(r["delta"]), 1.0,
+                                   unit="count"))
     return out

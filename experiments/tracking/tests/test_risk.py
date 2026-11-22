@@ -57,7 +57,7 @@ def person(pid: int, foot_y: float, x: float = 100.0) -> IdentityObservation:
 
 
 def take(pid: int, start: int = 10) -> TakeCandidate:
-    return TakeCandidate(pid, "shelf", start, start + 20, "a", "b", 2.0, 20, 0.3, 0.01)
+    return TakeCandidate(pid, "shelf", start, start + 20, "a", "b", 2.0, 20, 0.3)
 
 
 def engine(payments=(), consistency=None, **cfg) -> RiskEngine:
@@ -135,7 +135,7 @@ def test_paying_for_fewer_items_is_review_not_alarm():
 def test_overlapping_candidates_count_as_one_take():
     """한 번 멈춰 두 선반에 걸친 후보 두 건은 집기 한 번이다 — 1개 결제하면 CLEAR."""
     eng = engine(payments=[PaymentEvent(time_sec=4.0, items=1)])
-    overlapping = [take(1, 10), TakeCandidate(1, "shelf2", 20, 50, "a", "b", 3.0, 30, 0.3, 0.01)]
+    overlapping = [take(1, 10), TakeCandidate(1, "shelf2", 20, 50, "a", "b", 3.0, 30, 0.3)]
     eng.update(at(1.0), [person(1, AISLE)], takes=overlapping)
     walk(eng, 1, CHECKOUT, 3.0, 2.0)
     events = leave(eng, 1, 6.0)

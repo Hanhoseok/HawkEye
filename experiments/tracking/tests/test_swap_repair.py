@@ -70,7 +70,7 @@ def play(repair=True, overview_touch=True, shelf_touch=False, until=4000, merges
         if merges_at is not None and t >= merges_at and not merges:
             merges.append({"from": 30, "into": 11, "frame": 0})
         frame = Frame(index=t, timestamp="", pts_ms=float(t), image=None, camera_id="angle1")
-        judge.overview_step(frame, [person(left_id, o_left, track=101), person(right_id, o_right, track=102)], [], merges)
+        judge.overview_step(frame, [person(left_id, o_left, track=101), person(right_id, o_right, track=102)], merges)
     return judge, risk
 
 
@@ -134,7 +134,7 @@ def test_a_second_swap_between_the_same_two_goes_back_to_plain_numbers():
         judge.detail_step(float(t), [person(1, LEFT), person(2, RIGHT)], [], [])
         frame = Frame(index=t, timestamp="", pts_ms=float(t), image=None, camera_id="angle1")
         judge.overview_step(frame, [person(left_id, MID_L if near else LEFT, track=101),
-                                    person(right_id, MID_R if near else RIGHT, track=102)], [], [])
+                                    person(right_id, MID_R if near else RIGHT, track=102)], [])
     assert len(judge.swaps) == 2 and judge._store == {}
     assert [o for _, _, o in judge.linker._history[1]] == [11]
 

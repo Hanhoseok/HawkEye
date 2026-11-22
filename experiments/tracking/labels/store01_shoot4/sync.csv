@@ -1,0 +1,43 @@
+pair,video,reference,offset_ms,method,checked_by,note
+C01,3(angle0)/C01.mp4,3(angle1)/C01.mp4,-94.9,audio+chime,,소리 -95ms 피크 1.87; 결제 소리 -80ms; 녹화 시각 +1021ms
+C02,3(angle0)/C02.mp4,3(angle1)/C02.mp4,29.9,audio+chime,,소리 +30ms 피크 2.79; 결제 소리 +32ms; 녹화 시각 +149ms
+C03,3(angle0)/C03.mp4,3(angle1)/C03.mp4,-59.7,audio+chime,,소리 -60ms 피크 1.72; 결제 소리 -64ms; 녹화 시각 -277ms
+C04,3(angle0)/C04.mp4,3(angle1)/C04.mp4,26.2,audio+chime,,소리 +26ms 피크 2.17; 결제 소리 +32ms; 녹화 시각 +107ms
+C05,3(angle0)/C05.mp4,3(angle1)/C05.mp4,16.8,audio+chime,,소리 +17ms 피크 2.13; 결제 소리 +16ms; 녹화 시각 +85ms
+C06,3(angle0)/C06.mp4,3(angle1)/C06.mp4,-50.9,audio+chime,,소리 -51ms 피크 2.27; 결제 소리 -48ms; 녹화 시각 -43ms
+C10,3(angle0)/C10.mp4,3(angle1)/C10.mp4,-71.9,audio,,소리 -72ms 피크 1.48; 결제 소리 없음; 녹화 시각 +1107ms
+C11,3(angle0)/C11.mp4,3(angle1)/C11.mp4,-14.4,audio+chime,,소리 -14ms 피크 2.68; 결제 소리 -32ms; 녹화 시각 -21ms
+C12,3(angle0)/C12.mp4,3(angle1)/C12.mp4,39.3,audio+chime,,"소리 +39ms 피크 2.23; 결제 소리 +48ms, +48ms; 녹화 시각 +149ms"
+C13,3(angle0)/C13.mp4,3(angle1)/C13.mp4,3.4,audio+chime,,"소리 +3ms 피크 2.48; 결제 소리 +0ms, +0ms; 녹화 시각 +0ms"
+C14,3(angle0)/C14.mp4,3(angle1)/C14.mp4,-68.4,audio+chime,,"소리 -68ms 피크 1.90; 결제 소리 -32ms, -32ms; 녹화 시각 +0ms"
+C15,3(angle0)/C15.mp4,3(angle1)/C15.mp4,-14.2,audio+chime,,"소리 -14ms 피크 2.68; 결제 소리 +0ms, +0ms; 녹화 시각 +0ms"
+C16,3(angle0)/C16.mp4,3(angle1)/C16.mp4,16.0,audio,,소리 +16ms 피크 1.37; 결제 소리 없음; 녹화 시각 -128ms
+C17,3(angle0)/C17.mp4,3(angle1)/C17.mp4,51.2,audio+chime,,소리 +51ms 피크 1.66; 결제 소리 +48ms; 녹화 시각 +64ms
+C18,3(angle0)/C18.mp4,3(angle1)/C18.mp4,-103.6,audio+chime,,소리 -104ms 피크 1.84; 결제 소리 -96ms; 녹화 시각 +829ms
+C19,3(angle0)/C19.mp4,3(angle1)/C19.mp4,29.4,audio+chime,,"소리 +29ms 피크 1.99; 결제 소리 +32ms, +32ms; 녹화 시각 +21ms"
+C20,3(angle0)/C20.mp4,3(angle1)/C20.mp4,6.4,audio+chime,,"소리 +6ms 피크 1.74; 결제 소리 +32ms, +16ms; 녹화 시각 +1085ms"
+C21,3(angle0)/C21.mp4,3(angle1)/C21.mp4,-16.0,chime,,소리 -22ms 피크 1.09; 결제 소리 -16ms; 녹화 시각 +0ms — 확인 필요: 소리 피크 약함
+L1,3(angle0)/L1.mp4,3(angle1)/L1.mp4,-44.9,audio+chime,,"소리 -45ms 피크 1.77; 결제 소리 -48ms, -32ms; 녹화 시각 +21ms"
+N01,3(angle0)/N01.mp4,3(angle1)/N01.mp4,-566.3,audio+chime,,소리 -566ms 피크 1.40; 결제 소리 -560ms; 녹화 시각 -405ms
+N02,3(angle0)/N02.mp4,3(angle1)/N02.mp4,-7.8,audio+chime,,소리 -8ms 피크 2.59; 결제 소리 +0ms; 녹화 시각 +43ms
+N03,3(angle0)/N03.mp4,3(angle1)/N03.mp4,24.8,audio+chime,,소리 +25ms 피크 1.77; 결제 소리 +16ms; 녹화 시각 +107ms
+N04,3(angle0)/N04.mp4,3(angle1)/N04.mp4,59.5,audio+chime,,소리 +60ms 피크 2.24; 결제 소리 +64ms; 녹화 시각 +107ms
+N05,3(angle0)/N05.mp4,3(angle1)/N05.mp4,-22.1,audio+chime,,소리 -22ms 피크 1.73; 결제 소리 -32ms; 녹화 시각 +64ms
+N06,3(angle0)/N06.mp4,3(angle1)/N06.mp4,-18.5,audio,,소리 -18ms 피크 1.79; 결제 소리 없음; 녹화 시각 +1021ms
+N08-1,3(angle0)/N08-1.mp4,3(angle1)/N08-1.mp4,-48.3,audio+chime,,"소리 -48ms 피크 1.58; 결제 소리 -48ms, -32ms; 녹화 시각 +1128ms"
+N08-2,3(angle0)/N08-2.mp4,3(angle1)/N08-2.mp4,1.0,audio+chime,,"소리 +1ms 피크 1.90; 결제 소리 +0ms, +0ms; 녹화 시각 +85ms"
+N09,3(angle0)/N09.mp4,3(angle1)/N09.mp4,-20.1,audio+chime,,소리 -20ms 피크 2.20; 결제 소리 -16ms; 녹화 시각 +128ms
+N10-1,3(angle0)/N10-1.mp4,3(angle1)/N10-1.mp4,-30.5,audio+chime,,소리 -30ms 피크 1.67; 결제 소리 -32ms; 녹화 시각 +64ms
+N10-2,3(angle0)/N10-2.mp4,3(angle1)/N10-2.mp4,-116.0,audio+chime,,소리 -116ms 피크 1.84; 결제 소리 -96ms; 녹화 시각 -43ms
+N11,3(angle0)/N11.mp4,3(angle1)/N11.mp4,-31.9,audio,,소리 -32ms 피크 1.79; 결제 소리 없음; 녹화 시각 +64ms
+N12,3(angle0)/N12.mp4,3(angle1)/N12.mp4,35.4,audio+chime,,소리 +35ms 피크 1.62; 결제 소리 +32ms; 녹화 시각 +1085ms
+S1,3(angle0)/S1.mp4,3(angle1)/S1.mp4,33.1,audio,,소리 +33ms 피크 1.42; 결제 소리 없음; 녹화 시각 +43ms
+T01,3(angle0)/T01.mp4,3(angle1)/T01.mp4,0.0,audio-low,,소리 -36ms 피크 1.16; 결제 소리 없음; 녹화 시각 +0ms — 확인 필요: 소리 피크 약함 · 결제 소리 없음
+T02,3(angle0)/T02.mp4,3(angle1)/T02.mp4,-34.9,audio,,소리 -35ms 피크 1.44; 결제 소리 없음; 녹화 시각 +149ms
+T03,3(angle0)/T03.mp4,3(angle1)/T03.mp4,-47.1,audio,,소리 -47ms 피크 1.57; 결제 소리 없음; 녹화 시각 +43ms
+T04,3(angle0)/T04.mp4,3(angle1)/T04.mp4,-33.9,audio+chime,,소리 -34ms 피크 1.99; 결제 소리 -48ms; 녹화 시각 +64ms
+T05,3(angle0)/T05.mp4,3(angle1)/T05.mp4,12.4,audio+chime,,소리 +12ms 피크 1.82; 결제 소리 +16ms; 녹화 시각 +0ms
+T06,3(angle0)/T06.mp4,3(angle1)/T06.mp4,-40.9,audio,,소리 -41ms 피크 1.23; 결제 소리 없음; 녹화 시각 +107ms
+T08,3(angle0)/T08.mp4,3(angle1)/T08.mp4,-21.0,audio+chime,,소리 -21ms 피크 1.86; 결제 소리 +0ms; 녹화 시각 +85ms
+T09,3(angle0)/T09.mp4,3(angle1)/T09.mp4,-173.1,audio,,소리 -173ms 피크 1.24; 결제 소리 없음; 녹화 시각 -107ms
+T10,3(angle0)/T10.mp4,3(angle1)/T10.mp4,-106.7,audio-low,,소리 -148ms 피크 1.15; 결제 소리 없음; 녹화 시각 -107ms — 확인 필요: 소리 피크 약함 · 결제 소리 없음

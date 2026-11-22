@@ -1,6 +1,6 @@
 """카메라 2대 파이프라인 — 전체 카메라(angle1) + 선반 카메라(angle0)를 함께 돌린다 (docs/multiview-design.md §4).
 
-    전체 카메라 → 카메라 작업자(사람·신원·바닥 위치·선반 앞 머묾) ─┐
+    전체 카메라 → 카메라 작업자(사람+관절·신원·바닥 위치) ──────────┐
     선반 카메라 → 카메라 작업자(사람+관절·신원·손-칸 접촉·선반 지도) ┼→ ⑦ 합치기(DualJudge) → ⑤ 손님 장부 → ⑥ 위험 판정
     선반 센서(있으면) ──────────────────────────────────────────────┘
 
@@ -203,9 +203,9 @@ class MultiCameraPipeline:
                     for sc in step.slot_changes:
                         slot_file.write(json.dumps(sc.to_dict(), ensure_ascii=False) + "\n")
                     self.judge.detail_step(frame.pts_ms, ids, step.takes, visits, appearance, resolve,
-                                           step.slot_changes)
+                                           step.slot_changes, step.open_visits)
                 else:
-                    events, records = self.judge.overview_step(frame, ids, step.takes, worker.registry.merges,
+                    events, records = self.judge.overview_step(frame, ids, worker.registry.merges,
                                                                appearance, resolve)
                     for pid in sorted({resolve(o.person_id) for o in ids if o.person_id > 0}):
                         value = worker.registry.recent_consistency(pid)
@@ -294,7 +294,7 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
         ident = replace(config.identity, **{k: tuple(v) if isinstance(v, list) else v for k, v in cam.identity.items()})
         return IdentityRegistry(ident, embedder, imgsz=config.detector.imgsz)
 
-    # 전체 카메라: 사람 상자만, 바닥 구역, 선반 앞 띠에서 머묾(보조)
+    # 전체 카메라: 사람 상자와 바닥 구역. '선반 앞 머묾' 감지기는 안 단다 (임시 근거라 지웠다 — 후속 58)
     floor_zones = FloorZoneMap(floor)
     ocfg = deepcopy(config.detector)
     if overview_cam.detector == "yolo-pose":
@@ -309,8 +309,7 @@ def build_multicam(config: AppConfig, out_dir: str | Path, *, build_detector, bu
     if inside and hasattr(ov_registry, "set_promote_check"):
         # 임시 신원은 발이 매장 안 바닥(선반 앞·계산대·통로)에 있어야 정식이 된다 — 손님 조건(C-20)과 같은 기준
         ov_registry.set_promote_check(lambda bbox: any(h.zone in inside for h in floor_zones.evaluate(bbox)))
-    overview = CameraWorker(overview_cam.name, ov_detector, build_tracker(config.tracker), ov_registry, floor_zones,
-                            InteractionDetector(config.interaction, floor_zones))
+    overview = CameraWorker(overview_cam.name, ov_detector, build_tracker(config.tracker), ov_registry, floor_zones)
 
     detail = None
     setup = None

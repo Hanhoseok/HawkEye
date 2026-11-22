@@ -68,7 +68,7 @@ def test_take_elsewhere_still_counts():
 def test_zone_limits_which_takes_are_replaced():
     """선반에 구역 이름을 주면, 같은 시간이라도 다른 구역의 집기 동작은 대신하지 않는다."""
     eng = engine()
-    other = TakeCandidate(1, "shelf_far", 10, 30, "a", "b", 2.0, 20, 0.3, 0.01)
+    other = TakeCandidate(1, "shelf_far", 10, 30, "a", "b", 2.0, 20, 0.3)
     shop(eng, 1, takes=[other], visits=[visit(1, removed=1, zone="shelf_near")])
     assert eng.book.customers[1].taken == 2
 

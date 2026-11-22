@@ -287,15 +287,24 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
     for c in slot:
         log.append({"ms": c["end"], "level": "info", "text": f"칸 그림: '{c['slot']}' {c['ratio'] * 100:.1f}% 바뀜 ({c['direction']})"})
 
-    rows.append({"label": "선반 앞 머묾", "group": "전체 카메라", "marks": [], "who": None,
-                 "segs": [{"s": t["start"], "e": t["end"], "who": t["pid"] if t["pid"] in customers else None,
-                           "tip": f"{_who(t['pid'], customers)} 선반 앞 {(t['end'] - t['start']) / 1000:.1f}초"}
-                          for t in data["takes1"]]})
+    # 전체 카메라가 손에 든 상품을 본 때 (fusion.overview_instant) — 센 것은 그때부터 그 손님의 물건이고, 선반 방문이 끝나면 방문의 개수로 바뀐다
+    held = data.get("held") or []
+    rows.append({"label": "손에 든 것을 봄", "group": "전체 카메라", "who": None,
+                 "segs": [{"s": h["ms"], "e": h["until"] if h["until"] is not None else h["ms"] + 400,
+                           "who": h["pid"] if h["pid"] in customers else None, "tone": "take",
+                           "tip": f"{_who(h['pid'], customers)} 손에 {h['name']} — 바로 1개로 셈"
+                                  + (" · 선반 방문이 끝나 방문의 개수로 바뀜" if h["until"] is not None else " · 덮는 선반 방문 없음 (그대로 남음)")}
+                          for h in held if h["counted"]],
+                 "marks": [{"ms": h["ms"], "tone": "quiet", "tip": f"{_who(h['pid'], customers)} 손에 {h['name']} — 안 셈: {h['why']}"}
+                           for h in held if not h["counted"]]})
+    for h in held:
+        log.append({"ms": h["ms"], "level": "info",
+                    "text": f"전체 카메라: {_who(h['pid'], customers)} 손에 {h['name']}" + (" — 바로 1개로 셈" if h["counted"] else f" — 안 셈 ({h['why']})")})
 
     actions = [a for a in data["actions"] if a["kind"] != "LOOK"]
     rows.append({"label": "행동 판정", "group": "결론", "marks": [], "who": None,
                  "segs": [{"s": a["start"], "e": max(a["end"], a["start"] + 200), "who": a["pid"] if a["pid"] in customers else None,
-                           "tone": {"TAKE": "take", "PUT": "put"}.get(a["kind"]),
+                           "tone": {"TAKE": "take", "HELD": "take", "PUT": "put"}.get(a["kind"]),
                            "tip": f"{_who(a['pid'], customers)}: {a['name']}" + (f" {a['count']:+d}개" if a["count"] else "")
                                   + f" · 근거 {a['evidence']}"} for a in actions]})
     per: dict[int, dict] = {}

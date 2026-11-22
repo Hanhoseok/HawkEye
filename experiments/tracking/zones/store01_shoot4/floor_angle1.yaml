@@ -1,0 +1,25 @@
+camera: angle1
+note: 4차 촬영 바닥 지도 (sync_floor.py --shoot 4 calibrate). 보정점 = 바닥 흰 테이프 4장 (area_setting.mp4,
+  사람이 찍은 자리). cm 는 실측이 아니다 — 3차와 4차 area_setting 의 바닥 무늬를 맞춰 3차 바닥 좌표로 옮긴 값 (3차 구역
+  cm 를 그대로 쓰려고). 실측이 생기면 sync_floor.py --shoot 4 calibrate --floor 로 바꾸고 floor.yaml
+  의 구역 cm 도 다시 잡는다.
+calibration:
+  image:
+  - - 0.52656
+    - 0.55741
+  - - 0.4599
+    - 0.56204
+  - - 0.55417
+    - 0.95741
+  - - 0.45208
+    - 0.96481
+  floor:
+  - - 30.8
+    - -11.5
+  - - 86.1
+    - -10.6
+  - - 11.4
+    - 71.3
+  - - 52.8
+    - 72.7
+zones: []

@@ -52,7 +52,8 @@ class ShelfWatcher:
                 box = (x1 * width, y1 * height, x2 * width, y2 * height)
             self.monitors.append((area, ShelfMonitor(name, box, stable_seconds=self.config.stable_seconds,
                                                      map_score=self.config.map_score,
-                                                     weak_presence=self.config.weak_presence, polygon=polygon)))
+                                                     weak_presence=self.config.weak_presence, polygon=polygon,
+                                                     top_merge=self.config.top_merge)))
         self.per_window = max(1, int(round(self.config.stable_seconds * fps)))
         self._seen = [0] * len(self.monitors)
         if self.slots:
@@ -72,6 +73,10 @@ class ShelfWatcher:
             self.slot_diff.reset()
         self.new_slot_changes = []
         self.frames = self.detect_calls = 0
+
+    def open_visits(self) -> list[tuple[float, str]]:
+        """지금 선반이 가려져 아직 안 끝난 방문들: (가려지기 시작한 때 ms, 선반 이름). 판정이 그 사이의 센서 기록을 붙들어 둔다."""
+        return [(m._occluded_since, m.name) for _, m in self.monitors if m._occluded_since is not None]
 
     def summary(self) -> str:
         if not self.frames:
@@ -132,6 +137,8 @@ class ShelfWatcher:
                     added=len(change.added),
                     zone=area.get("zone"),
                     detail=change.describe(),
+                    removed_kinds=tuple(s.item.label for s in change.removed),
+                    added_kinds=tuple(s.item.label for s in change.added),
                 ))
                 changes.append(change)
             self._seen[i] = len(monitor.visits)

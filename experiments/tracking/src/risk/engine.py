@@ -272,36 +272,43 @@ class RiskEngine:
             )
         return replace(event, identity_check=round(value, 3))
 
-    @staticmethod
-    def _judge(customer: Customer, frame: Frame, how: str = "") -> RiskEvent:
+    def _judge(self, customer: Customer, frame: Frame, how: str = "") -> RiskEvent:
+        # 남는 결제로 메우기는 결제 기록이 있을 때만 — 계산대 체류로 어림한 결제의 '남음'은 개수가 나중에 고쳐져 생긴 것이라 뜻이 없다
+        shares = self.config.share_surplus_payments and self.config.payment_mode == "feed"
+        covered = self.book.cover_from_surplus(customer) if shares else 0
         unpaid = customer.unpaid
         detail = customer.count_detail()
+        short = RiskLevel.HIGH_RISK if self.config.partial_payment_alert else RiskLevel.REVIEW
+        """결제가 물건보다 적을 때의 판정 — 기본은 확인 필요, risk.partial_payment_alert 면 경보."""
+        paid = customer.paid_items + covered
+        paid_text = f"{customer.paid_items}" + (f" + 다른 손님의 남는 결제 {covered}" if covered else "")
         if not detail:
             # 선반 지도가 없으면 지금까지처럼 집기 행동 수로 말한다.
-            if unpaid > 0 and customer.paid_items == 0:
+            if unpaid > 0 and paid == 0:
                 level = RiskLevel.HIGH_RISK
                 reason = f"집기 행동 {customer.taken}번, 결제 없음"
             elif unpaid > 0:
-                level = RiskLevel.REVIEW
-                reason = f"결제가 집기 행동보다 적음 (집음 {customer.taken} / 결제 {customer.paid_items}) — 확인 필요"
+                level = RiskLevel.REVIEW     # 집기 행동 수는 물건 수가 아니다 — 개수를 모르니 경보로 올리지 않는다
+                reason = f"결제가 집기 행동보다 적음 (집음 {customer.taken} / 결제 {paid_text}) — 확인 필요"
             else:
                 level = RiskLevel.CLEAR
                 reason = (
                     "집은 물건 없음" if customer.taken == 0
-                    else f"모두 결제함 (집음 {customer.taken} / 결제 {customer.paid_items})"
+                    else f"모두 결제함 (집음 {customer.taken} / 결제 {paid_text})"
                 )
         else:
-            if unpaid > 0 and customer.paid_items == 0:
+            if unpaid > 0 and paid == 0:
                 level = RiskLevel.HIGH_RISK
                 reason = f"물건 {customer.taken}개, 결제 없음"
             elif unpaid > 0:
-                level = RiskLevel.REVIEW
-                reason = f"결제가 물건보다 적음 (물건 {customer.taken} / 결제 {customer.paid_items}) — 확인 필요"
+                level = short
+                reason = (f"결제가 물건보다 적음 (물건 {customer.taken} / 결제 {paid_text})"
+                          + ("" if short == RiskLevel.HIGH_RISK else " — 확인 필요"))
             else:
                 level = RiskLevel.CLEAR
                 reason = (
                     "가져간 물건 없음" if customer.taken == 0
-                    else f"모두 결제함 (물건 {customer.taken} / 결제 {customer.paid_items})"
+                    else f"모두 결제함 (물건 {customer.taken} / 결제 {paid_text})"
                 )
             reason += f" [{detail}]"
         if how:

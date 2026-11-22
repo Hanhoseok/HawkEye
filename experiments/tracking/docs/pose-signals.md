@@ -229,7 +229,7 @@ pose 를 넣고 시도한 모든 규칙:
 python run_tracking.py --source data/videos/store-aisle-detection.mp4 \
     --detector yolo-pose --stride 2 --tracker-fps 30 --out-dir outputs/pose-base
 
-# 신호 비교
+# 신호 비교 (2026-11-21: dwell · raise 는 코드에서 지움 — 남은 값은 hand · reach, 후속 60)
 python run_tracking.py ... --signal dwell   # 체류 기반
 python run_tracking.py ... --signal hand    # 손이 구역 안 (실패)
 python run_tracking.py ... --signal raise   # 손 높이 (국소화 개선)

@@ -91,7 +91,7 @@ def test_dual_eval_profile_paths():
     import dual_eval as D
     try:
         D.set_profile(3)
-        assert D.OUT.name == "dual_eval_shoot3" and D.LABELS.name == "store01_shoot3" and D.SHOOT == 3
+        assert D.OUT.name == "dual_eval_shoot3_prod" and D.LABELS.name == "store01_shoot3" and D.SHOOT == 3
     finally:
         D.set_profile(2)
     assert D.OUT.name == "dual_eval_pose3" and D.ZONES.name == "store01_dual"
@@ -155,3 +155,44 @@ def test_pair_detail_carries_the_floor_map_moved_to_the_clip():
     moved = detail_floor_map(out).to_floor(0.45 - 80 / 1920, 0.8 - 5 / 1080)
     assert moved == pytest.approx(ref, abs=1e-3)
     assert "floor_calibration" not in S.pair_detail(base, SHIFT, [1.0, 0.0])   # 바닥 지도가 없으면 싣지 않는다
+
+
+# ---------------------------------------------------------------------- 3차 기준 = 상품 모델 기록 (후속 56)
+
+def test_shoot3_judges_with_the_product_records_and_counts_held_items_at_once():
+    import dual_eval as D
+    from src.core.config import AppConfig
+
+    cfg = AppConfig()
+    assert not cfg.fusion.overview_count and not cfg.fusion.overview_owner and not cfg.fusion.overview_instant   # 코드 기본 (2차)
+    D.use_product_records(cfg)
+    assert cfg.shelves.model_path == D.PRODUCT_MODEL
+    assert cfg.fusion.overview_count and cfg.fusion.overview_owner and cfg.fusion.overview_instant
+    assert D.RECORDS == {2: "dual_eval_pose3", 3: "dual_eval_shoot3_prod", 4: "dual_eval_shoot4"}   # 4차도 상품 모델 기록
+
+
+def test_missing_model_names_the_file_that_is_not_there(tmp_path):
+    import dual_eval as D
+    from src.core.config import AppConfig
+
+    cfg = AppConfig()
+    cfg.shelves.model_path = str(tmp_path / "products.pt")
+    assert D.missing_model(cfg) == tmp_path / "products.pt"
+    (tmp_path / "products.pt").write_bytes(b"x")
+    assert D.missing_model(cfg) is None
+    cfg.shelves.model_path = "no/such/model.pt"                      # 상대 경로는 experiments/tracking 기준
+    assert D.missing_model(cfg) == Path("no/such/model.pt")
+
+
+def test_replay_brings_the_overview_product_record_along(tmp_path):
+    import dual_eval as D
+
+    src, out = tmp_path / "from" / "C01", tmp_path / "out" / "C01"
+    (src / "angle1").mkdir(parents=True)
+    assert D.copy_overview_products(src, out) == [] and not (out / "angle1").exists()       # 없으면 아무것도 안 한다
+    (src / "angle1" / "product_items.jsonl").write_text('{"frame": 0, "items": []}' + chr(10), encoding="utf-8")
+    (src / "angle1" / "product_items.meta.json").write_text("{}", encoding="utf-8")
+    (src / "angle1" / "identities.jsonl").write_text("x", encoding="utf-8")                # 관찰 층 기록은 안 가져온다
+    assert D.copy_overview_products(src, out) == list(D.OVERVIEW_PRODUCT_FILES)
+    assert sorted(f.name for f in (out / "angle1").iterdir()) == ["product_items.jsonl", "product_items.meta.json"]
+

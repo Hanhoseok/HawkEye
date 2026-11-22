@@ -11,6 +11,8 @@
     python scripts/sync_floor.py estimate           # 시차 → labels/store01_shoot3/sync.csv (manual 줄은 그대로)
     python scripts/sync_floor.py check              # 짝마다 두 화면 나란히 그림 + 비용 곡선 + 카메라 이동 확인
     python scripts/sync_floor.py estimate --only T01,C04
+    python scripts/sync_floor.py --shoot 4 calibrate   # 4차 (source/3(angle*), zones·labels/store01_shoot4)
+    python scripts/sync_floor.py --shoot 4 sound       # 4차 시차: 발 캐시 없이 소리 + 결제 소리 + 녹화 시각으로
 
 발 위치만으로는 39쌍 중 8쌍만 믿을 만했다 (사람이 선반·계산대 앞에 오래 서 있어 비용 골이 넓다). 그래서 소리 시차를
 두 번째 독립 신호로 더해, 둘이 맞을 때만 믿는다 (floor+audio). 맞지 않으면 floor-low 로 두고 note 에 두 후보를 적는다.
@@ -38,31 +40,52 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.inputs import audio_sync  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import shoots  # noqa: E402
+from src.inputs import audio_read, audio_sync  # noqa: E402
 from src.inputs.frame_times import end_ms, first_ms, index_at, read_times  # noqa: E402
 from src.inputs.floor_sync import FloorSyncResult, Samples, combine, lag_cost, median_distance, search  # noqa: E402
 from src.inputs.sync import SyncRow, SyncTable  # noqa: E402
 from src.zones.floor import FloorMap, foot_pixel  # noqa: E402
 
-SOURCE = ROOT.parent.parent / "source"
-CAMS = {"angle0": SOURCE / "2(angle0)", "angle1": SOURCE / "2(angle1)"}
-ZONES = ROOT / "zones" / "store01_shoot3"
-LABELS = ROOT / "labels" / "store01_shoot3"
-OUT = ROOT / "outputs" / "sync_floor"
+SOURCE = shoots.SOURCE
+SHOOT = 3
+"""지금 다루는 촬영 회차 — set_shoot 으로 바꾼다 (아래 경로 · 보정점이 함께 바뀜)."""
+CAMS = {"angle0": shoots.get(3).angle0, "angle1": shoots.get(3).angle1}
+ZONES = shoots.get(3).zones
+LABELS = shoots.get(3).labels
+OUT = shoots.get(3).sync_out
 FEET = OUT / "feet"
+MARKER = shoots.get(3).marker
 FEET_FIELDS = ["ms", "person", "px", "py", "width", "height", "conf", "ankle", "cut", "frame"]
 """ms = 실제 장면 시각(POS_MSEC). frame 열이 없는 옛 캐시는 ms 가 '번호 ÷ fps' — retime 으로 고친다."""
 
-ROUGH = {
-    "angle0": [(432, 820), (349, 1025), (1135, 785), (1213, 1037)],
-    "angle1": [(1125, 604), (942, 604), (1192, 1070), (847, 1068)],
-}
-FLOOR_CM = [(0.0, 0.0), (64.0, 0.0), (0.0, 74.0), (64.0, 74.0)]
+ROUGH = shoots.get(3).rough
+FLOOR_CM = list(shoots.get(3).floor_cm)
 HZ = {"angle0": 10.0, "angle1": 20.0}
 POSE_MODEL = "yolov8n-pose.pt"
 POSE_CONF = 0.3
 VIEW_MARGIN = 0.01
 """다른 카메라 화면 안으로 볼 여유 (화면 비율)."""
+
+
+def save_image(path: Path, img: np.ndarray) -> None:
+    """그림 저장 — cv2.imwrite 는 Windows 에서 한글 경로에 못 쓴다 (오류 없이 안 써진다)."""
+    ok, buf = cv2.imencode(path.suffix, img)
+    if ok:
+        path.write_bytes(buf.tobytes())
+
+
+def set_shoot(number: int) -> None:
+    """촬영 회차를 바꾼다 — 영상 폴더 · 구역 · 라벨 · 캐시 자리 · 바닥 표시."""
+    global SHOOT, CAMS, ZONES, LABELS, OUT, FEET, REGISTER, AUDIO, ROUGH, FLOOR_CM, MARKER
+    s = shoots.get(number)
+    SHOOT = number
+    CAMS = {"angle0": s.angle0, "angle1": s.angle1}
+    ZONES, LABELS, OUT = s.zones, s.labels, s.sync_out
+    FEET, REGISTER, AUDIO = OUT / "feet", OUT / "register.csv", OUT / "audio.csv"
+    ROUGH, FLOOR_CM, MARKER = s.rough, list(s.floor_cm), s.marker
 
 
 # ---------------------------------------------------------------------- 보정
@@ -130,20 +153,30 @@ def calibrate(floor_cm: list[tuple[float, float]], points: dict[str, list[tuple[
     for cam, folder in CAMS.items():
         img = median_frame(folder / "area_setting.mp4")
         h, w = img.shape[:2]
-        centers, warn = note_centers(img, points[cam])
+        if MARKER == "yellow":
+            centers, warn = note_centers(img, points[cam])
+        else:   # 흰 테이프는 밝은 바닥 타일과 색이 비슷해 자동으로 못 찾는다 — 사람이 찍은 자리 그대로
+            centers, warn = [(float(x), float(y)) for x, y in points[cam]], []
         for line in warn:
             print(f"  {cam} {line}")
-        print(f"{cam}: 메모지 중심 " + ", ".join(f"P{i}({x:.1f},{y:.1f})" for i, (x, y) in enumerate(centers, 1)))
-        fm = FloorMap(cam, [(x / w, y / h) for x, y in centers], floor_cm,
-                      note=("3차 촬영 바닥 지도 (sync_floor.py calibrate). 보정점 = 바닥 노란 메모지 4장 (area_setting.mp4). "
-                            "cm 는 실측이 아니라 타일 간격으로 본 대략값 — 두 카메라가 같은 좌표를 쓰므로 시차·교차 화면에는 영향이 작다. "
-                            "실측이 생기면 sync_floor.py calibrate --floor 로 바꾼다."))
+        print(f"{cam}: 표시 중심 " + ", ".join(f"P{i}({x:.1f},{y:.1f})" for i, (x, y) in enumerate(centers, 1)))
+        fm = FloorMap(cam, [(x / w, y / h) for x, y in centers], floor_cm, note=CALIB_NOTE[MARKER])
         fm.save(ZONES / f"floor_{cam}.yaml")
         maps[cam], images[cam] = fm, img
-        cv2.imwrite(str(OUT / f"calib_{cam}.jpg"), draw_grid(img.copy(), fm, centers))
+        save_image(OUT / f"calib_{cam}.jpg", draw_grid(img.copy(), fm, centers))
     tops = [topdown(images[c], maps[c]) for c in CAMS]
-    cv2.imwrite(str(OUT / "calib_topdown.jpg"), np.hstack(tops))
+    save_image(OUT / "calib_topdown.jpg", np.hstack(tops))
     print(f"→ {ZONES}  확인 그림 {OUT}/calib_*.jpg (격자가 두 화면의 같은 바닥 자리에 와야 한다)")
+
+
+CALIB_NOTE = {
+    "yellow": ("3차 촬영 바닥 지도 (sync_floor.py calibrate). 보정점 = 바닥 노란 메모지 4장 (area_setting.mp4). "
+               "cm 는 실측이 아니라 타일 간격으로 본 대략값 — 두 카메라가 같은 좌표를 쓰므로 시차·교차 화면에는 영향이 작다. "
+               "실측이 생기면 sync_floor.py calibrate --floor 로 바꾼다."),
+    "white": ("4차 촬영 바닥 지도 (sync_floor.py --shoot 4 calibrate). 보정점 = 바닥 흰 테이프 4장 (area_setting.mp4, 사람이 찍은 자리). "
+              "cm 는 실측이 아니다 — 3차와 4차 area_setting 의 바닥 무늬를 맞춰 3차 바닥 좌표로 옮긴 값 (3차 구역 cm 를 그대로 쓰려고). "
+              "실측이 생기면 sync_floor.py --shoot 4 calibrate --floor 로 바꾸고 floor.yaml 의 구역 cm 도 다시 잡는다."),
+}
 
 
 def draw_grid(img: np.ndarray, fm: FloorMap, centers, step: float = 30.0, span=(-300, 400)) -> np.ndarray:
@@ -327,15 +360,20 @@ def register_frames(ref: np.ndarray, frame: np.ndarray) -> tuple[np.ndarray | No
     return h, int(inl.sum()) if inl is not None else 0, len(good)
 
 
-def first_last(path: Path) -> tuple[np.ndarray | None, np.ndarray | None]:
+def first_last(path: Path, tail: int = 8) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """첫 장면과 마지막 장면. 순서대로 읽되(HEVC 탐색 버그) 가운데 장면은 꺼내지 않는다 — 장면 수 어림의 끝 tail 장만 꺼낸다."""
     cap = cv2.VideoCapture(str(path))
+    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     first = last = None
+    i = -1
     while cap.grab():
-        ok, f = cap.retrieve()
-        if ok:
-            if first is None:
-                first = f
-            last = f
+        i += 1
+        if i == 0 or count <= 0 or i >= count - tail:
+            ok, f = cap.retrieve()
+            if ok:
+                if first is None:
+                    first = f
+                last = f
     cap.release()
     return first, last
 
@@ -378,12 +416,19 @@ def register(only: str | None, force: bool = False) -> dict[tuple[str, str], dic
                                  "inliers": inl, "matches": n, "drift_px": f"{drift:.1f}"}
             print(f"  {pair} {cam}: 일치 {inl}/{n}, 영상 안 이동 {drift:.1f}px"
                   + ("  ← 큼" if drift > DRIFT_WARN_PX else ""), flush=True)
+        save_registration(have)   # 짝마다 — 중간에 멈춰도 한 것이 남는다
+    save_registration(have)
+    return have
+
+
+def save_registration(have: dict[tuple[str, str], dict]) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    with REGISTER.open("w", encoding="utf-8", newline="") as f:
+    tmp = REGISTER.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as f:
         wr = csv.DictWriter(f, fieldnames=REG_FIELDS)
         wr.writeheader()
         wr.writerows(have[k] for k in sorted(have))
-    return have
+    tmp.replace(REGISTER)
 
 
 def pair_map(base: FloorMap, reg: dict, width: int = 1920, height: int = 1080) -> FloorMap:
@@ -438,16 +483,11 @@ AUDIO_SR = 16000
 
 
 def read_audio(path: Path) -> np.ndarray:
-    """ffmpeg 로 16kHz 모노. 소리 줄이 없거나 못 읽으면 빈 배열."""
-    import subprocess
-
-    try:
-        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(AUDIO_SR),
-                              "-f", "s16le", "-"], capture_output=True).stdout
-    except OSError as e:   # ffmpeg 없음·실행 불가 → 소리 없이 발 위치만
-        print(f"  소리 못 읽음 ({path.name}): {e}")
-        return np.zeros(0)
-    return np.frombuffer(raw[: len(raw) // 2 * 2], np.int16).astype(np.float64)
+    """16kHz 모노. ffmpeg 가 없으면 OpenCV(MSMF)로 읽는다. 소리 줄이 없거나 못 읽으면 빈 배열."""
+    got = audio_read.read_audio(path, AUDIO_SR)
+    if len(got) == 0:
+        print(f"  소리 못 읽음 ({Path(path).name})")
+    return got
 
 
 def audio(only: str | None, force: bool = False) -> dict[str, tuple[float, float]]:
@@ -515,11 +555,86 @@ def estimate(only: str | None) -> dict[str, FloorSyncResult]:
         if row and row.method == "manual":
             print(f"        (manual {row.offset_ms:+.0f}ms 그대로 둠)")
             continue
-        table.upsert(SyncRow(pair, f"2(angle0)/{pair}.mp4", f"2(angle1)/{pair}.mp4", round(d.offset_ms, 1),
+        table.upsert(SyncRow(pair, f"{CAMS['angle0'].name}/{pair}.mp4", f"{CAMS['angle1'].name}/{pair}.mp4", round(d.offset_ms, 1),
                              d.method, "", note))
     table.save(LABELS / "sync.csv")
     print(f"믿을 만함 {trusted}/{len(found)} → {LABELS / 'sync.csv'}")
     return {p: f[0] for p, f in found.items()}
+
+
+CHIME_AGREE_MS = 80.0
+"""소리 시차와 결제 소리 시차가 이 안이면 같다고 본다 (결제 소리 시각은 16ms 칸)."""
+CLOCK_AGREE_MS = 1600.0
+"""소리 시차와 녹화 시각 시차가 이 안이면 어긋나지 않는다고 본다 (녹화 시각은 1초 칸)."""
+
+
+def sound_decision(gcc_ms: float, peak: float, chime_ms: list[float], clock_ms: float | None) -> tuple[float, str, str]:
+    """발 캐시 없이 시차 정하기 → (offset_ms, method, 이유).
+
+    - 결제 소리가 두 카메라에 다 있고 소리 시차와 맞음 → audio+chime (값 = 소리 시차, 더 촘촘).
+    - 결제 소리는 있는데 소리 시차와 다름 → chime (값 = 결제 소리 시차의 가운데값).
+    - 결제 소리 없음: 소리 피크가 기준을 넘고 녹화 시각과 어긋나지 않음 → audio, 아니면 audio-low (확인 필요).
+    """
+    ok = audio_sync.usable(gcc_ms, peak)
+    if chime_ms:
+        mid = float(np.median(chime_ms))
+        if ok and abs(gcc_ms - mid) <= CHIME_AGREE_MS:
+            return float(gcc_ms), "audio+chime", ""
+        return mid, "chime", f"소리 시차 {gcc_ms:+.0f}ms 와 다름" if ok else "소리 피크 약함"
+    if not ok:
+        return (float(clock_ms) if clock_ms is not None else 0.0), "audio-low", "소리 피크 약함 · 결제 소리 없음"
+    if clock_ms is not None and abs(gcc_ms - clock_ms) > CLOCK_AGREE_MS:
+        return float(gcc_ms), "audio-low", f"녹화 시각 시차 {clock_ms:+.0f}ms 와 다름"
+    return float(gcc_ms), "audio", ""
+
+
+def chime_offsets(c0: list[float], c1: list[float], near_ms: float, window_ms: float = 3000.0) -> list[float]:
+    """두 카메라의 결제 소리를 차례로 짝지은 시차(ms). 개수가 다르면 near_ms 에 가까운 것끼리."""
+    if len(c0) == len(c1):
+        return [(b - a) * 1000.0 for a, b in zip(c0, c1)]
+    out = []
+    for a in c0:
+        best = min(c1, key=lambda b: abs((b - a) * 1000.0 - near_ms), default=None)
+        if best is not None and abs((best - a) * 1000.0 - near_ms) <= window_ms:
+            out.append((best - a) * 1000.0)
+    return out
+
+
+def sound(only: str | None) -> None:
+    """발 위치 없이 소리만으로 시차 → sync.csv. 발 뽑기(CPU 한 시간)를 건너뛸 때 쓴다 — 4차는 결제 소리가 또렷해 검산이 된다."""
+    from split_sensor_events import read_mvhd
+
+    table = SyncTable.load(LABELS / "sync.csv")
+    rows, counts = [], {}
+    for pair in pairs(only):
+        x0, x1 = (read_audio(CAMS[c] / f"{pair}.mp4") for c in ("angle0", "angle1"))
+        if len(x0) == 0 or len(x1) == 0:
+            print(f"? {pair}: 소리 없음 — 건너뜀")
+            continue
+        gcc, peak = audio_sync.gcc_phat(x0, x1, AUDIO_SR, max_lag_s=6.0)
+        c0, c1 = audio_read.chimes(x0, AUDIO_SR), audio_read.chimes(x1, AUDIO_SR)
+        try:   # 녹화 시작 = 만든 시각(녹화 끝) - 길이. 공통 시각 = angle0 + offset → offset = angle0 시작 - angle1 시작
+            end0, end1 = (read_mvhd(CAMS[c] / f"{pair}.mp4")[0] for c in ("angle0", "angle1"))
+            clock = ((end0 - end1).total_seconds() - (len(x0) - len(x1)) / AUDIO_SR) * 1000.0
+        except (OSError, ValueError):
+            clock = None
+        near = gcc if np.isfinite(gcc) else (clock or 0.0)
+        ch = chime_offsets(c0, c1, near)
+        off, method, why = sound_decision(gcc, peak, ch, clock)
+        counts[method] = counts.get(method, 0) + 1
+        note = (f"소리 {gcc:+.0f}ms 피크 {peak:.2f}; 결제 소리 " + (", ".join(f"{v:+.0f}ms" for v in ch) or "없음")
+                + (f"; 녹화 시각 {clock:+.0f}ms" if clock is not None else "") + (f" — 확인 필요: {why}" if why else ""))
+        print(f"{'? ' if method.endswith('-low') else '  '}{pair:6s} {off:+7.0f}ms {method:11s} {note}", flush=True)
+        row = table.rows.get(pair)
+        if row and row.method == "manual":
+            print(f"        (manual {row.offset_ms:+.0f}ms 그대로 둠)")
+            continue
+        table.upsert(SyncRow(pair, f"{CAMS['angle0'].name}/{pair}.mp4", f"{CAMS['angle1'].name}/{pair}.mp4", round(off, 1),
+                             method, "", note))
+        rows.append(pair)
+    LABELS.mkdir(parents=True, exist_ok=True)
+    table.save(LABELS / "sync.csv")
+    print(f"{len(rows)}쌍 → {LABELS / 'sync.csv'}  " + " · ".join(f"{k} {v}" for k, v in sorted(counts.items())))
 
 
 # ---------------------------------------------------------------------- 확인
@@ -592,7 +707,7 @@ def check(only: str | None) -> None:
             cv2.putText(b, f"angle1 {t / 1000:.2f}s", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             rows_img.append(np.hstack([a, b]))
         if rows_img:
-            cv2.imwrite(str(OUT / "check" / f"{pair}.jpg"), np.vstack(rows_img))
+            save_image(OUT / "check" / f"{pair}.jpg", np.vstack(rows_img))
         print(f"{pair:6s} {row.method:10s} {row.offset_ms:+7.0f}ms  → check/{pair}.jpg, cost/{pair}.png")
     print(f"→ {OUT}/check, {OUT}/cost")
 
@@ -600,13 +715,15 @@ def check(only: str | None) -> None:
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("stage", choices=["calibrate", "extract", "retime", "register", "audio", "estimate", "check"])
+    ap.add_argument("stage", choices=["calibrate", "extract", "retime", "register", "audio", "estimate", "sound", "check"])
+    ap.add_argument("--shoot", type=int, choices=sorted(shoots.SHOOTS), default=3, help="촬영 회차 (기본 3)")
     ap.add_argument("--only", help="짝 이름 쉼표 구분 (예: T01,C04)")
     ap.add_argument("--force", action="store_true", help="extract·register: 캐시가 있어도 다시")
     ap.add_argument("--floor", help="calibrate: 메모지 P1~P4 바닥 cm 'x,y;x,y;x,y;x,y' (실측 시)")
     ap.add_argument("--points0", help="calibrate: angle0 메모지 대략 위치 픽셀 'x,y;...' (P1~P4 순)")
     ap.add_argument("--points1", help="calibrate: angle1 메모지 대략 위치 픽셀")
     args = ap.parse_args()
+    set_shoot(args.shoot)
 
     def parse(spec):
         return [tuple(float(v) for v in p.split(",")) for p in spec.split(";") if p.strip()]
@@ -629,6 +746,8 @@ def main() -> int:
         audio(args.only, args.force)
     elif args.stage == "estimate":
         estimate(args.only)
+    elif args.stage == "sound":
+        sound(args.only)
     else:
         check(args.only)
     return 0

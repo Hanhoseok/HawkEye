@@ -6,6 +6,7 @@ zones/store01_shoot3/angle0.yaml 은 area_setting 장면 좌표로 적고, sync_
 
     python scripts/shoot3_zones.py check            # 39편 첫 장면에 레인 구역을 겹친 확인 그림 한 장
     python scripts/shoot3_zones.py check --at take  # 정답(takes.csv) 시각 장면에 — 손이 그 레인에 있는지
+    python scripts/shoot3_zones.py --shoot 4 check  # 4차 (zones/store01_shoot4, outputs/sync_floor_shoot4/register.csv)
 """
 from __future__ import annotations
 
@@ -21,6 +22,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import shoots  # noqa: E402
 from src.inputs.frame_times import index_at, read_times  # noqa: E402
 
 ZONES = ROOT / "zones" / "store01_shoot3" / "angle0.yaml"
@@ -28,16 +32,26 @@ REGISTER = ROOT / "outputs" / "sync_floor" / "register.csv"
 VIDEOS = ROOT.parent.parent / "source" / "2(angle0)"
 LABELS = ROOT / "labels" / "store01_shoot3"
 OUT = ROOT / "outputs" / "zones3"
+
+
+def set_shoot(number: int) -> None:
+    """촬영 회차를 바꾼다 (3차부터) — 구역 파일 · 카메라 맞추기 표 · 영상 폴더 · 라벨 · 확인 그림 자리."""
+    global ZONES, REGISTER, VIDEOS, LABELS, OUT
+    s = shoots.get(number)
+    ZONES, REGISTER, VIDEOS, LABELS = s.zones / "angle0.yaml", s.sync_out / "register.csv", s.angle0, s.labels
+    OUT = ROOT / "outputs" / f"zones{number}"
+
+
 COLORS = {"L1": (60, 60, 255), "L2": (80, 220, 80), "L3": (0, 220, 255), "shelf": (255, 160, 60)}
 
 
-def load_zones(path: Path = ZONES) -> dict:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_zones(path: Path | None = None) -> dict:
+    return yaml.safe_load((path or ZONES).read_text(encoding="utf-8"))
 
 
-def load_homographies(path: Path = REGISTER, camera: str = "angle0") -> dict[str, np.ndarray]:
+def load_homographies(path: Path | None = None, camera: str = "angle0") -> dict[str, np.ndarray]:
     """영상 픽셀 → area_setting 픽셀."""
-    with path.open(encoding="utf-8", newline="") as f:
+    with (path or REGISTER).open(encoding="utf-8", newline="") as f:
         return {r["pair"]: np.array([float(v) for v in r["h"].split()]).reshape(3, 3)
                 for r in csv.DictReader(f) if r["camera"] == camera}
 
@@ -76,9 +90,9 @@ def frame_at_sec(path: Path, sec: float) -> np.ndarray | None:
     return f if ok else frame
 
 
-def takes(path: Path = LABELS / "takes.csv") -> dict[str, list[tuple[float, str, str]]]:
+def takes(path: Path | None = None) -> dict[str, list[tuple[float, str, str]]]:
     out: dict[str, list] = {}
-    with path.open(encoding="utf-8-sig", newline="") as f:
+    with (path or LABELS / "takes.csv").open(encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
             if (r.get("time_sec") or "").strip():
                 out.setdefault(r["pair"], []).append((float(r["time_sec"]), r["lane"], r["action"]))
@@ -128,7 +142,9 @@ def check(at: str) -> Path:
         print(f"  {pair}: {len(moments)}장", flush=True)
     OUT.mkdir(parents=True, exist_ok=True)
     out = OUT / f"check_{at}.jpg"
-    cv2.imwrite(str(out), sheet(tiles))
+    ok, buf = cv2.imencode(".jpg", sheet(tiles))   # cv2.imwrite 는 Windows 에서 한글 경로에 못 쓴다
+    if ok:
+        out.write_bytes(buf.tobytes())
     print(f"→ {out}")
     return out
 
@@ -138,7 +154,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("stage", choices=["check"])
     ap.add_argument("--at", choices=["first", "take"], default="first", help="첫 장면 / 정답 시각 장면")
+    ap.add_argument("--shoot", type=int, choices=sorted(shoots.SHOOTS), default=3, help="촬영 회차 (기본 3)")
     args = ap.parse_args()
+    set_shoot(args.shoot)
     check(args.at)
     return 0
 

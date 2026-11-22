@@ -74,7 +74,16 @@ class ShelfVisit:
     """칸 그림 비교 결과 (설계 M-7 보조): '줄어듦' / '늘어남' / '바뀜'(방향 모름) / None(칸 그대로 또는 비교 안 함).
     물건 탐지가 못 보는 물건도 칸이 비었는지는 알 수 있다."""
     source: str = "vision"
-    """근거 출처: vision (카메라) / sensor (선반 센서만) / sensor+vision (둘 다, 개수는 센서)."""
+    """근거 출처: vision (카메라) / sensor (선반 센서만) / sensor+vision (둘 다, 개수는 센서) /
+    overview+vision (방문은 선반 카메라, 개수는 전체 카메라가 센 상품 — fusion.overview_count)."""
+    removed_kinds: tuple = ()
+    """꺼낸 상품의 종류 (선반 지도가 본 것, 개수만큼 되풀이 — 예: ("cantata", "donggwaru")). 센서 레인이 있는 종류와 없는 종류를
+    가를 때 쓴다 (fusion.sensor_kinds). 옛 기록에는 없다 — 그때는 detail 글에서 읽는다."""
+    added_kinds: tuple = ()
+    """놓은 상품의 종류."""
+    held_ms: float | None = None
+    """이 방문에서 꺼낸 상품이 이 손님 손에 들린 것을 전체 카메라가 처음 본 시각 (fusion.overview_owner 일 때만 채운다).
+    방문은 선반을 가린 사람이 모두 비켜야 끝나 판정에 늦게 들어온다 — 그 사이 계산대에 다녀온 손님의 결제를 맞춰 보는 데 쓴다."""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -86,9 +95,29 @@ class ShelfVisit:
         return take.start_frame <= self.end_frame and take.end_frame >= self.start_frame
 
 
+@dataclass(frozen=True)
+class HeldItem:
+    """전체 카메라가 본 '손에 든 상품' 하나 — 선반 방문이 끝나 개수가 확정되기 전에 먼저 세는 것 (fusion.overview_instant).
+
+    그 시간을 덮는 선반 방문이 장부에 들어오면 지워지고 방문의 개수 · 주인으로 바뀐다 (CustomerBook.drop_held)."""
+
+    person_id: int
+    name: str
+    """상품 종류."""
+    start_frame: int
+    """이 장면부터의 손 뻗기는 이 '든 것'이 대신한다 (손에서 처음 본 때의 조금 앞)."""
+    end_frame: int
+    """든 것으로 확정한 장면 — 이때부터 개수에 들어간다."""
+    seen_ms: float
+    """손에서 처음 본 시각. 선반 방문의 시간과 견주는 데 쓴다."""
+
+    def covers(self, take: TakeCandidate) -> bool:
+        return take.start_frame <= self.end_frame and take.end_frame >= self.start_frame
+
+
 KIND_NAMES = {
     "TAKE": "집음", "RETURN": "놓음", "MOVE": "자리 바뀜",
-    "TOUCH": "만지기만", "LOOK": "구경", "UNVERIFIED": "확인 못 한 집기 동작",
+    "TOUCH": "만지기만", "LOOK": "구경", "UNVERIFIED": "확인 못 한 집기 동작", "HELD": "든 것을 봄",
 }
 
 
@@ -99,7 +128,7 @@ class ShelfAction:
     person_id: int
     kind: str
     count: int
-    """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1."""
+    """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1, 든 것을 봄 +1."""
     start_frame: int
     end_frame: int
     evidence: str
@@ -128,7 +157,7 @@ def classify_visit(visit: ShelfVisit, takes: list[TakeCandidate]) -> ShelfAction
     """선반 방문 하나를 행동으로. 같은 시간·같은 선반의 손 뻗기를 근거로 붙인다."""
     covered = [t for t in takes if visit.covers(t)]
     count = visit.removed - visit.added
-    shelf_word = "센서" if visit.source == "sensor" else ("센서+선반" if visit.source == "sensor+vision" else "선반")
+    shelf_word = {"sensor": "센서", "sensor+vision": "센서+선반", "overview+vision": "전체+선반"}.get(visit.source, "선반")
     if visit.removed and visit.added:
         kind = "MOVE"
     elif visit.removed:
@@ -177,7 +206,11 @@ class Customer:
     last_seen_ms: float
     takes: list[TakeCandidate] = field(default_factory=list)
     shelf_visits: list[ShelfVisit] = field(default_factory=list)
+    held: list[HeldItem] = field(default_factory=list)
+    """전체 카메라가 손에 든 것을 봐서 먼저 센 상품 (아직 선반 방문으로 안 바뀐 것)."""
     paid_items: int = 0
+    covered_items: int = 0
+    """다른 손님의 남는 결제 · 주인을 못 찾은 결제로 메운 물건 수 (risk.share_surplus_payments, CustomerBook.cover_from_surplus)."""
 
     # 계산대 구역
     checkout_since_ms: float | None = None
@@ -212,6 +245,8 @@ class Customer:
     """
     dwell_paid_items: int = 0
     """payment_mode="dwell": 계산대 체류로 결제한 물건 수 (취소되면 0). paid_items 에 포함돼 있다."""
+    stood_until_ms: float | None = None
+    """payment_mode="dwell": 계산대에 dwell_pay_seconds 이상 서 있던 마지막 시각 (늦게 들어온 선반 기록의 결제를 맞춰 보는 데 쓴다)."""
     at_shelf_overlap: float = 0.0
     """지금 SHELF 구역과 몸이 겹친 비율 (가장 큰 값)."""
     seen_inside: bool = False
@@ -230,7 +265,8 @@ class Customer:
     @property
     def uncovered_takes(self) -> list[TakeCandidate]:
         """선반 기록이 대신하지 않은 집기 동작 (지켜보지 않는 선반, 또는 선반 기록이 없는 시간)."""
-        return [t for t in self.takes if not any(v.covers(t) for v in self.shelf_visits)]
+        return [t for t in self.takes
+                if not any(v.covers(t) for v in self.shelf_visits) and not any(h.covers(t) for h in self.held)]
 
     @property
     def shelf_net(self) -> int:
@@ -248,6 +284,9 @@ class Customer:
                 evidence="동작만", shelf=group[0].zone,
                 reach_frames=tuple((t.start_frame, t.end_frame) for t in group),
             ))
+        for h in self.held:
+            acts.append(ShelfAction(person_id=self.person_id, kind="HELD", count=1, start_frame=h.end_frame, end_frame=h.end_frame,
+                                    evidence="전체 카메라", detail=h.name))
         return sorted(acts, key=lambda a: a.start_frame)
 
     @property
@@ -261,13 +300,16 @@ class Customer:
 
     def count_detail(self) -> str:
         """물건 수의 근거 (판정 문구용). 선반 기록이 없으면 빈 문자열."""
-        if not self.shelf_visits:
+        if not self.shelf_visits and not self.held:
             return ""
         acts = self.actions
         parts = []
         took = sum(a.count for a in acts if a.kind == "TAKE")
         if took:
             parts.append(f"집음 {took}개")
+        held = sum(a.count for a in acts if a.kind == "HELD")
+        if held:
+            parts.append(f"든 것을 봄 {held}개")
         put = -sum(a.count for a in acts if a.kind == "RETURN")
         if put:
             parts.append(f"놓음 {put}개")
@@ -287,8 +329,12 @@ class Customer:
 
     @property
     def unpaid(self) -> int:
-        """계산하지 않은 물건 수(추정). 결제가 더 많으면 0 (TAKE 를 놓쳤을 수 있다)."""
-        return max(0, self.taken - self.paid_items)
+        """계산하지 않은 물건 수(추정). 결제가 더 많으면 0 (TAKE 를 놓쳤을 수 있다). 남의 남는 결제로 메운 것은 뺀다."""
+        return max(0, self.taken - self.paid_items - self.covered_items)
+
+
+COVER_RECENT_MS = 500.0
+"""다른 손님의 마지막 상자를 '방금 본 것'으로 치는 시간 (risk.return_cover_ignore)."""
 
 
 class CustomerBook:
@@ -337,6 +383,7 @@ class CustomerBook:
             return
         dst.takes = sorted(dst.takes + src.takes, key=lambda c: c.start_frame)
         dst.shelf_visits = sorted(dst.shelf_visits + src.shelf_visits, key=lambda v: v.start_frame)
+        dst.held = sorted(dst.held + src.held, key=lambda h: h.end_frame)
         dst.paid_items += src.paid_items
         dst.dwell_paid_items += src.dwell_paid_items
         dst.first_seen_ms = min(dst.first_seen_ms, src.first_seen_ms)
@@ -353,6 +400,8 @@ class CustomerBook:
         # 보류한 나감 판정은 어느 쪽 것이든 남긴다 — 매장 안으로 돌아온 게 확인(departed 해제)됐을 때만 버린다
         dst.held_since_ms, dst.held_how = min(holds) if holds and dst.departed else (None, "")
         dst.seen_inside = dst.seen_inside or src.seen_inside
+        if src.stood_until_ms is not None and (dst.stood_until_ms is None or src.stood_until_ms > dst.stood_until_ms):
+            dst.stood_until_ms = src.stood_until_ms
         for t in (src.last_checkout_ms, dst.last_checkout_ms):
             if t is not None and (dst.last_checkout_ms is None or t > dst.last_checkout_ms):
                 dst.last_checkout_ms = t
@@ -364,6 +413,21 @@ class CustomerBook:
         customer.takes.append(candidate)
         return customer
 
+    def add_held(self, item: HeldItem, now_ms: float) -> Customer:
+        """전체 카메라가 그 손님 손에 든 상품을 봤다 — 선반 방문을 기다리지 않고 먼저 센다 (fusion.overview_instant)."""
+        customer = self._get(item.person_id, now_ms)
+        customer.held.append(item)
+        return customer
+
+    def drop_held(self, start_ms: float, until_ms: float) -> list[HeldItem]:
+        """[start_ms, until_ms] 에 손에서 처음 본 '든 것'을 모든 손님에게서 지운다 — 그 시간을 덮는 선반 방문이 대신한다."""
+        gone = []
+        for c in self.customers.values():
+            keep = [h for h in c.held if not start_ms <= h.seen_ms <= until_ms]
+            gone += [h for h in c.held if start_ms <= h.seen_ms <= until_ms]
+            c.held = keep
+        return gone
+
     def add_shelf_visit(self, visit: ShelfVisit, now_ms: float) -> Customer | None:
         """선반 방문 결과를 그 손님에게 붙인다. 누구 것인지 모르는(번호 0 이하) 변화는 세기만 한다."""
         if visit.person_id <= 0:
@@ -373,7 +437,48 @@ class CustomerBook:
             return None
         customer = self._get(visit.person_id, now_ms)
         customer.shelf_visits.append(visit)
+        self._late_dwell_payment(customer, visit, now_ms)
         return customer
+
+    def _late_dwell_payment(self, c: Customer, visit: ShelfVisit, now_ms: float) -> None:
+        """payment_mode="dwell": 상품을 손에 든 뒤(held_ms) 계산대에 섰다 떠났는데 선반 기록이 그 뒤에야 들어온 경우 — 그 물건도 결제한 것.
+
+        계산대 체류 결제는 '서 있는 동안 가진 것'만 센다. 두 사람이 함께 선반을 가리면 방문이 늦게 끝나, 먼저 계산하고 떠난 손님의
+        물건이 계산 뒤에 장부에 들어온다 (3차 C19). 든 시각을 모르는 방문(held_ms 없음)은 지금처럼 둔다.
+        """
+        net = visit.removed - visit.added
+        if (self.config.payment_mode != "dwell" or visit.held_ms is None or net <= 0
+                or c.stood_until_ms is None or c.stood_until_ms < visit.held_ms):
+            return
+        # 아직 서 있는 손님이어도 여기서 센다 — dwell_payments 는 이미 센 만큼(dwell_paid_items)은 다시 세지 않는다.
+        # 이미 결제된 만큼은 뺀다: 손에 든 것을 먼저 세어 둔 물건(HeldItem)은 계산대에서 이미 결제됐을 수 있다 (fusion.overview_instant)
+        net = min(net, c.unpaid)
+        if net <= 0:
+            return
+        c.paid_items += net
+        c.dwell_paid_items += net
+        self.payments.append(PaymentRecord(round(now_ms / 1000.0, 3), net, c.person_id, "dwell", 1))
+
+    def _covers_another(self, obs: IdentityObservation, identities: list[IdentityObservation], now_ms: float) -> bool:
+        """이 상자가 다른 손님의 상자를 거의 다 덮는가 — 그 손님에게 겹쳐 생긴 상자다 (risk.return_cover_ignore).
+
+        다른 손님의 상자 = 이번 장면의 것 + 방금(COVER_RECENT_MS 안) 본 마지막 것. 겹친 상자가 생기는 장면에서는
+        원래 상자가 한 장씩 빠진다 (4차 L1: 두 번째 장에는 겹친 상자만 있었다).
+        """
+        need = self.config.return_cover_ignore
+        if need <= 0:
+            return False
+        me = self.resolve(obs.person_id)
+        boxes = [o.bbox for o in identities if o.person_id > 0 and self.resolve(o.person_id) != me]
+        boxes += [c.last_bbox for c in self.customers.values()
+                  if c.person_id != me and not c.departed and c.last_bbox and now_ms - c.last_seen_ms <= COVER_RECENT_MS]
+        x0, y0, x1, y1 = obs.bbox
+        for a0, b0, a1, b1 in boxes:
+            area = (a1 - a0) * (b1 - b0)
+            inside = max(0.0, min(x1, a1) - max(x0, a0)) * max(0.0, min(y1, b1) - max(y0, b0))
+            if area > 0 and inside / area >= need:
+                return True
+        return False
 
     def observe(self, now_ms: float, identities: list[IdentityObservation]) -> list[Customer]:
         """이번 프레임에 보인 손님들의 위치·구역 상태를 갱신한다. 보인 손님 목록을 돌려준다."""
@@ -385,6 +490,8 @@ class CustomerBook:
             customer = self._get(obs.person_id, now_ms)
             hits = self.zone_map.evaluate(obs.bbox, getattr(obs, "keypoints", None)) if self.zone_map else []
             outside = any(h.zone_type == ZoneType.OUTSIDE and h.contains_foot for h in hits)
+            if customer.departed and not outside and self._covers_another(obs, identities, now_ms):
+                continue   # 다른 손님에게 겹쳐 생긴 상자에 나간 손님 번호가 잘못 붙었다 — 돌아온 게 아니다 (4차 L1)
             if customer.departed and not outside:
                 # '나갔다'고 확정했는데 다시 보인다 — 나간 게 아니라 탐지가 끊겼던 것이다.
                 # 판정을 되돌려 다음 출구 방문 때 다시 판정한다.
@@ -454,6 +561,7 @@ class CustomerBook:
         records = []
         for c in visible:
             if c.checkout_since_ms is not None and now_ms - c.checkout_since_ms >= pay_ms:
+                c.stood_until_ms = now_ms
                 # 서 있는 동안 늘어난 것(늦게 확정된 선반 기록 등)까지 결제에 포함한다
                 owed = max(0, c.taken - (c.paid_items - c.dwell_paid_items))
                 if owed > c.dwell_paid_items:
@@ -468,6 +576,23 @@ class CustomerBook:
                 c.dwell_paid_items = 0
         self.payments.extend(records)
         return records
+
+    def cover_from_surplus(self, customer: Customer) -> int:
+        """남는 결제로 이 손님의 모자란 결제를 메운다 (risk.share_surplus_payments). 메운 개수(이 손님의 covered_items)를 돌려준다.
+
+        남는 결제 = 다른 손님이 자기 물건보다 많이 결제한 만큼 + 결제 순간 계산대에 아무도 없어 주인을 못 찾은 결제.
+        결제 로그는 '몇 개를 결제했다'만 알려 주고 누가 했는지는 계산대에 선 사람으로 어림한다 — 일행이 대신 결제하거나(N9),
+        결제한 사람과 집은 사람이 다르게 붙으면 한 사람은 결제가 남고 다른 사람은 모자란다. 매장 전체로는 맞는 결제다.
+        부를 때마다 다시 센다 (그 사이 결제 · 물건이 달라졌을 수 있다). 다른 손님이 이미 메워 간 만큼은 빼고 남은 것만 쓴다."""
+        customer.covered_items = 0
+        need = customer.unpaid
+        if need <= 0:
+            return 0
+        spare = sum(max(0, c.paid_items - c.taken) for c in self.customers.values() if c is not customer)
+        spare += sum(p.items for p in self.payments if p.method == "unmatched")
+        spare -= sum(c.covered_items for c in self.customers.values() if c is not customer)
+        customer.covered_items = max(0, min(need, spare))
+        return customer.covered_items
 
     def pay(self, event: PaymentEvent, now_ms: float) -> PaymentRecord:
         """결제 한 건을 손님에게 연결한다."""

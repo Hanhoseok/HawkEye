@@ -22,10 +22,11 @@ import numpy as np
 from ..core.config import FusionConfig, InteractionConfig
 from ..core.types import Frame, IdentityObservation, RiskEvent, TakeCandidate
 from ..interaction.detector import InteractionDetector
-from ..risk.customers import ShelfVisit
+from ..risk.customers import HeldItem, ShelfVisit
 from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
+from .overview_count import HolderTracker, OverviewCounter
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
 
 
@@ -60,14 +61,30 @@ class DualJudge:
         self.detail_height = detail_height or round(detail_width * 9 / 16)
         self.overview_size = overview_size
         self.linker = CrossViewLinker(config)
-        self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors)
+        self.counter = (OverviewCounter(score=config.overview_count_score, edge_ms=config.event_tolerance_seconds * 1000.0,
+                                        late_ms=config.overview_count_wait_seconds * 1000.0)
+                        if config.overview_count else None)
+        """전체 카메라 상품 개수 (fusion.overview_count). overview_step 에 상품 탐지 결과(products)가 들어와야 센다."""
+        self.holders = (HolderTracker(min_frames=config.overview_owner_frames, score=config.overview_count_score)
+                        if config.overview_owner and self.counter is not None else None)
+        """전체 카메라에서 상품을 든 사람 (fusion.overview_owner). 주인을 못 정한 방문의 주인을 여기서 묻는다."""
+        self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors, self.counter,
+                                     self.holders)
+        self.visit_delay_ms = self.VISIT_DELAY_MS
+        """선반 방문을 끝난 뒤 이만큼 기다렸다 넘긴다. 센서가 늦게 적는 매장(fusion.sensor_lag_seconds)은 그 기록이 올 때까지 더 기다린다."""
+        if sensors and config.sensor_lag_seconds > 0:
+            self.visit_delay_ms = max(self.VISIT_DELAY_MS,
+                                      (config.event_tolerance_seconds + config.sensor_lag_seconds) * 1000.0)
+        self.fuser.hold_wait_ms = self.visit_delay_ms
+        if self.holders is not None and getattr(risk, "book", None) is not None:
+            self.holders.resolve = risk.book.resolve   # 든 뒤에 합쳐진 신원은 한 사람으로
         self.shelf_image = shelf_image
         self.reach = None
         """전체 카메라 팔 뻗기 (손목이 화면의 선반 영역 안). 손목 기록만 있으면 되므로 기록 재실행에서도 같이 돈다."""
         if config.overview_reach_seconds > 0 and shelf_image:
             shelf_image.resolve(*overview_size)
             self.reach = InteractionDetector(
-                InteractionConfig(signal="hand", dwell_seconds=config.overview_reach_seconds,
+                InteractionConfig(signal="hand", min_seconds=config.overview_reach_seconds,
                                   hand_conf=config.overview_reach_conf), shelf_image)
         if getattr(risk, "consistency", None) is not None:
             # 신원 확인 값은 화면 신원으로 재 둔 것이다 — 손님 장부가 매장 신원으로 물으면 화면 신원으로 바꿔 묻는다
@@ -78,11 +95,23 @@ class DualJudge:
     def reset(self) -> None:
         self.linker.reset()
         self.fuser.reset()
+        if self.counter is not None:
+            self.counter.reset()
+        if self.holders is not None:
+            self.holders.reset()
         self.risk.reset()
         if self.reach is not None:
             self.reach.reset()
         self._pending_takes: list[tuple[float, TakeCandidate]] = []
         self._pending_visits: list[tuple[float, ShelfVisit, float, float]] = []
+        self.held: list[dict] = []
+        """손에 든 것을 본 기록 (fusion.overview_instant): pid · name · seen_ms(처음 본 때) · ms(확정한 때) · counted(셌나) ·
+        why(안 셌으면 까닭) · until_ms(이것을 대신한 선반 방문이 끝난 때 — 아직 안 바뀌었으면 None)."""
+        self._settled: list[tuple[float, float]] = []
+        self._waiting: list[tuple[float, float, str]] = []
+        self._open_visits: list[tuple[float, str]] = []
+        """선반 카메라가 알려 준, 아직 안 끝난 방문 (시작 ms — 공통 시각, 선반). fusion.sensor_hold_visits 가 그 사이의 센서 기록을 붙든다."""
+        """넘길 때가 됐는데 전체 카메라 개수를 기다리느라 붙들고 있는 방문 (시작 ms, 끝 ms, 선반) — fusion.overview_count 일 때만 생긴다."""
         self.events: list[RiskEvent] = []
         self.unowned_takes = 0
         self._store: dict[int, int] = {}
@@ -254,7 +283,10 @@ class DualJudge:
         appearance: Callable[[int], np.ndarray | None] | None = None,
         resolve: Callable[[int], int] | None = None,
         slot_changes: list | None = None,
+        open_visits: list[tuple[float, str]] | None = None,
     ) -> None:
+        """open_visits = 지금 선반이 가려져 아직 안 끝난 방문 (시작 ms — 공통 시각, 선반 이름). None 이면 모름 (안 붙든다)."""
+        self._open_visits = list(open_visits or [])
         for sc in slot_changes or []:
             self.fuser.note_slot_change(sc)
         boxes = {}
@@ -279,19 +311,27 @@ class DualJudge:
         self,
         frame: Frame,
         identities: list[IdentityObservation],
-        takes: list[TakeCandidate],
         merges: list[dict],
         appearance: Callable[[int], np.ndarray | None] | None = None,
         resolve: Callable[[int], int] | None = None,
+        products: list | None = None,
     ):
+        """products = 이 장면에서 찾은 상품 상자 [[종류, x1, y1, x2, y2, 점수], …] (fusion.overview_count 일 때만 쓴다).
+
+        전체 카메라의 '선반 앞 머묾'(선반 구역에 느리게 3초)은 여기 들어오지 않는다 — 상품 · 관절 인식 전의 임시 근거라 지웠다 (후속 58).
+        이 카메라가 판정에 넣는 것: 사람의 위치 · 팔 뻗기(주인 근거) · 상품 개수 · 상품을 든 사람."""
         w, h = self.overview_size
+        if self.counter is not None and products is not None:
+            self.counter.update(frame.pts_ms, products, [o.bbox for o in identities])
         boxes = {}
+        hands = []
         for obs in identities:
             if obs.person_id <= 0:
                 continue
             screen = resolve(obs.person_id) if resolve else obs.person_id
             pid = self._store.get(screen, screen)   # 매장 신원 — 번호 맞바뀜을 되돌린 신원만 화면 신원과 다르다
             boxes[pid] = obs.bbox
+            hands.append((pid, obs.bbox, getattr(obs, "keypoints", None)))
             point = self.floor.foot_on_floor(obs.bbox, w, h)
             band = self.floor.band_position(point)   # 띠는 band_map 을 맞춘 상자 기준 그대로
             foot = self.floor.foot_on_floor(obs.bbox, w, h, obs.keypoints) if self.floor.foot_mode != "bbox" else point
@@ -306,6 +346,10 @@ class DualJudge:
                                 candidate)
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
+        if self.holders is not None and products is not None:
+            self.holders.update(frame.pts_ms, products, hands, self.counter.region)
+            if self.config.overview_instant:
+                self._count_held(frame)
         self._note_boxes("overview", frame.pts_ms, boxes)
         self.linker.update(frame.pts_ms)
         if self.config.swap_repair and self.linker.closed != self._closed_seen:
@@ -316,23 +360,23 @@ class DualJudge:
         # 손 접촉도 방문과 같이 기다렸다 넘긴다 — 그 시간을 덮는 짝 기록이 쌓인 뒤에 주인을 정해야
         # 손 접촉과 방문이 같은 손님으로 해석된다 (2차 C1: 일찍 정하면 손 접촉과 방문의 주인이 갈렸다)
         delay = self.config.release_delay_seconds * 1000.0
-        fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.VISIT_DELAY_MS)
-        fused_visits += self.fuser.sensor_only(frame.pts_ms)
+        fused_takes, fused_visits = self._release(frame.pts_ms - delay, frame.pts_ms - self.visit_delay_ms)
+        self._settle_held()
+        fused_visits += self.fuser.sensor_only(frame.pts_ms, self._sensor_hold())
         if not self.config.overview_reach_takes:
             reach_takes = []   # 주인 정하기 근거로만 (note_reach 는 위에서 이미 적음)
         merges = self._note_merges(merges)
-        takes = list(takes)
         if self._store:
             # 손님 장부에는 매장 신원으로 (팔 뻗기 감지기는 위에서 화면 신원 그대로 봤다 — 그쪽은 _reach_takes 가 바꾼다)
             identities = [self._renamed(o, resolve) for o in identities]
-            takes = [self._renamed(t, resolve) for t in takes]
-        events, records = self.risk.update(frame, identities, takes + reach_takes + fused_takes, merges, fused_visits)
+        events, records = self.risk.update(frame, identities, reach_takes + fused_takes, merges, fused_visits)
         self.events.extend(events)
         return events, records
 
     def finish(self, frame: Frame, resolve: Callable[[int], int] | None = None) -> list[RiskEvent]:
         reach_takes = self._reach_takes(self.reach.flush(), resolve) if self.reach else []
         fused_takes, fused_visits = self._release(float("inf"), float("inf"))
+        self._settle_held()
         if self.config.overview_reach_takes:
             fused_takes = reach_takes + fused_takes
         fused_visits += self.fuser.sensor_only(float("inf"))
@@ -342,6 +386,47 @@ class DualJudge:
         done = self.risk.finish(frame, self.overview_size)
         self.events.extend(done)
         return done
+
+    def _sensor_hold(self) -> list[tuple[float, float, str]]:
+        """센서 기록을 붙들어 둘 방문들 (시작 ms, 끝 ms, 선반): 전체 카메라 개수를 기다리는 방문 + (fusion.sensor_hold_visits)
+        끝났지만 아직 안 넘긴 방문 · 아직 안 끝난 방문 (끝 = 끝 모름)."""
+        lag = self.config.sensor_lag_seconds * 1000.0   # 방문이 끝난 뒤 늦게 온 기록도 그 방문이 먼저 볼 수 있게
+        hold = [(start_ms, stop_ms + lag, shelf) for start_ms, stop_ms, shelf in self._waiting]
+        if self.config.sensor_hold_visits:
+            hold += [(start_ms, stop_ms + lag, visit.shelf) for _, visit, start_ms, stop_ms in self._pending_visits]
+            hold += [(start_ms, float("inf"), shelf) for start_ms, shelf in self._open_visits]
+        return hold
+
+    def _count_held(self, frame: Frame) -> None:
+        """전체 카메라가 방금 '손에 들었다'고 확정한 상품을 그 손님의 물건으로 먼저 센다 (fusion.overview_instant).
+
+        선반 방문은 선반을 가린 사람이 비켜야 끝난다 — 그때까지 개수를 기다리지 않는다. 손에서 처음 보기 조금 전에 선반 앞에 있던
+        사람만 센다 (들고 들어온 손님 · 계산대에서 건네받은 일행은 안 센다)."""
+        book = getattr(self.risk, "book", None)
+        if book is None:
+            return
+        near = self.config.overview_instant_near_seconds * 1000.0
+        axis = self.fuser.overview_axis
+        for pid, name, seen_ms, ms in self.holders.fresh():
+            at_shelf = pid in {book.resolve(p) for p in self.fuser.present(seen_ms - near, ms)}
+            self.held.append({"pid": pid, "name": name, "seen_ms": seen_ms, "ms": ms, "counted": at_shelf,
+                              "why": "" if at_shelf else "선반 앞에 있지 않았음", "until_ms": None})
+            if at_shelf:
+                book.add_held(HeldItem(pid, name, axis.to_frame(seen_ms - near), frame.index, seen_ms), frame.pts_ms)
+
+    def _settle_held(self) -> None:
+        """방금 넘긴 선반 방문이 덮는 '든 것'을 지운다 — 그 방문의 개수 · 주인이 대신한다 (방문을 장부에 넣기 바로 전에 부른다)."""
+        settled, self._settled = self._settled, []
+        book = getattr(self.risk, "book", None)
+        if book is None or not self.held:
+            return
+        slack = self.config.event_tolerance_seconds * 1000.0   # 방문의 시작(선반 카메라가 본 가림)과 전체 카메라 시각의 어긋남 (3차 C02: 0.3초 앞)
+        for start_ms, end_ms in settled:
+            gone = book.drop_held(start_ms - slack, end_ms + self.visit_delay_ms)
+            for h in gone:
+                for row in self.held:
+                    if row["until_ms"] is None and row["counted"] and row["seen_ms"] == h.seen_ms and row["name"] == h.name:
+                        row["until_ms"] = end_ms
 
     def _standing(self, identities: list[IdentityObservation]) -> list[IdentityObservation]:
         """발(상자 아래 가운데)이 화면의 선반 영역 밖인 사람만 — 선반 위 상품 포장의 사람 그림에 관절이 잡힌
@@ -366,6 +451,12 @@ class DualJudge:
             out.append(replace(t, person_id=pid, zone=self.config.shelf_zone))
         return out
 
+    def _count_ready(self, end_ms: float, until_ms: float) -> bool:
+        """전체 카메라 개수를 쓰는 중이면: 방문 뒤의 개수를 봤거나, 더 기다릴 시간(overview_count_wait_seconds)이 지났나."""
+        if self.counter is None or not self.counter.fed or self.counter.ready(end_ms) or self.config.count_source != "overview":
+            return True
+        return end_ms <= until_ms - self.config.overview_count_wait_seconds * 1000.0
+
     VISIT_DELAY_MS = 1500.0
     """선반 방문은 끝나고 이만큼 기다렸다 넘긴다 — 칸 그림 비교 결과(같은 무렵 확정)를 함께 붙이려고."""
 
@@ -383,11 +474,18 @@ class DualJudge:
                 keep.append((end_ms, take))
         self._pending_takes = keep
         visits, keepv = [], []
+        self._waiting = []
         for item in self._pending_visits:
             end_ms, visit, start_ms, stop_ms = item
-            if end_ms <= visits_until_ms:
+            if end_ms <= visits_until_ms and not self._count_ready(end_ms, visits_until_ms):
+                # 평소라면 지금 넘겼을 방문 — 그때 묶였을 센서 기록이 그 사이 '센서만의 방문'으로 나가지 않게 적어 둔다
+                self._waiting.append((start_ms, stop_ms, visit.shelf))
+                keepv.append(item)
+            elif end_ms <= visits_until_ms:
                 fused = self.fuser.detail_visit(visit, start_ms, stop_ms)
+                self._settled.append((start_ms, stop_ms))
                 visits.append(fused)
+                visits += self.fuser.take_shares()   # 든 사람별로 나눈 방문의 나머지 몫 (fusion.overview_owner)
                 if self.config.unchanged_clears_all and fused.removed == 0 and fused.added == 0                         and fused.slot_change is None:
                     # 물건 탐지도 칸 그림도 '그대로'인 방문: 그 시간 선반 앞에 있던 다른 손님의 손 뻗기도
                     # 아무것도 안 가져간 것이다 (설계 M-7 — 둘 다 그대로일 때만 집기를 지운다)

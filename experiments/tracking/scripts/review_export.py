@@ -90,7 +90,10 @@ def judge_with(run_dir: str, opts: dict, pair: str, base: AppConfig, table: Sync
             b.fusion.overview_reach_takes = True
         for k, v in (opts.get("fusion") or {}).items():
             setattr(b.fusion, k, v)
-    result = dual_eval.judge_pair(pair, b, table.offset_ms(pair) or 0.0, band)
+    # sensor · lanes · payments: 센서 로그 · 결제 기록을 넣은 판정 (4차 보기). 안 주면 지금까지처럼 영상만.
+    dual_eval.SENSOR_LANES = tuple(opts["lanes"]) if opts.get("lanes") else None
+    result = dual_eval.judge_pair(pair, b, table.offset_ms(pair) or 0.0, band,
+                                  sensor=bool(opts.get("sensor")), payments=bool(opts.get("payments")))
     return result, _Capture.judge
 
 
@@ -205,7 +208,17 @@ def _revivals(log, cam: str, gap_ms: float = 1000.0) -> list[dict]:
 
 def _shelf_items(run_dir: str, pair: str, w: int, h: int, fps: float, offset: float, ms_of=None) -> list:
     """[장면 번호, 물건들, 그 장면의 선반 카메라 시각(ms, ms_of 를 줄 때)]."""
-    p = ROOT / "outputs" / run_dir / pair / "angle0" / "shelf_items.jsonl"
+    return _item_rows(ROOT / "outputs" / run_dir / pair / "angle0" / "shelf_items.jsonl", ms_of)
+
+
+def _overview_items(run_dir: str, pair: str, ms_of) -> list:
+    """전체 카메라에서 찾은 상품 (scripts/product_overview_items.py 가 남긴 것) — [장면 번호, 상품들, 그 장면의 시각(ms)].
+    보기만 한다 — 판정에는 안 들어간다. 기록이 없으면 빈 목록."""
+    return _item_rows(ROOT / "outputs" / run_dir / pair / "angle1" / "product_items.jsonl", ms_of)
+
+
+def _item_rows(p: Path, ms_of=None) -> list:
+    """물건 기록 한 파일 → 화면용 줄. 점수 0.25 미만은 뺀다."""
     if not p.exists():
         return []
     out = []
@@ -357,8 +370,9 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
               "app": None if l.appearance is None else round(l.appearance, 2)} for l in judge.linker.links]
     takes0 = [{"pid": t.person_id, "zone": t.zone, "start": detail_ms(t.start_frame), "end": detail_ms(t.end_frame)}
               for t in log.takes["angle0"]]
-    takes1 = [{"pid": t.person_id, "zone": t.zone, "start": ov_ms(t.start_frame), "end": ov_ms(t.end_frame)}
-              for t in log.takes["angle1"]]
+    # 전체 카메라가 손에 든 상품을 본 기록 (fusion.overview_instant): 확정한 때부터, 그 시간을 덮는 선반 방문이 끝날 때까지 먼저 센 것
+    held = [{"pid": h["pid"], "name": h["name"], "seen": round(h["seen_ms"]), "ms": round(h["ms"]), "counted": h["counted"],
+             "why": h["why"], "until": None if h["until_ms"] is None else round(h["until_ms"])} for h in result.get("held", [])]
     visits = [{"pid": v["person_id"], "start": round(v["start_ms"] + offset), "end": round(v["end_ms"] + offset),
                "removed": v["removed"], "added": v["added"], "detail": v.get("detail", ""),
                "slot_change": v.get("slot_change")} for v in log.visits]
@@ -390,10 +404,11 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
         "births": {"angle1": _births(log, "angle1"), "angle0": _births(log, "angle0")},
         "revivals": {"angle1": _revivals(log, "angle1"), "angle0": _revivals(log, "angle0")},
         "events": events, "actions": actions, "customers": customers, "payments": payments, "links": links,
-        "takes0": takes0, "takes1": takes1, "visits": visits, "merges": merges,
+        "takes0": takes0, "held": held, "visits": visits, "merges": merges,
         "swaps": [{**s, "ms": round(s["ms"]), "found_ms": round(s["found_ms"])} for s in judge.swaps],
         "shelf_events": result["shelf_events"],
         "shelf_items": _shelf_items(run_dir, pair, m0["width"], m0["height"], f0, offset, lambda f: log.ms("angle0", f)),
+        "overview_items": _overview_items(run_dir, pair, lambda f: log.ms("angle1", f)),
         "slot_changes": [{"slot": r["slot"], "start": round(r["start_ms"] + offset), "end": round(r["end_ms"] + offset),
                           "ratio": r["ratio"], "direction": r["direction"]} for r in log.slot_changes],
     }

@@ -160,7 +160,7 @@ def load_takes(path: Path) -> list[TakeCandidate]:
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
         d = json.loads(line)
-        out.append(TakeCandidate(**d))
+        out.append(TakeCandidate.from_dict(d))
     return out
 
 

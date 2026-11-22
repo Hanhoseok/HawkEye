@@ -2,8 +2,8 @@
  {
   "pair": "C01",
   "verdicts": [
-   "REVIEW",
-   "REVIEW"
+   "CLEAR",
+   "CLEAR"
   ],
   "correct": true,
   "people": 2,
@@ -13,8 +13,8 @@
  {
   "pair": "C02",
   "verdicts": [
-   "REVIEW",
-   "REVIEW"
+   "CLEAR",
+   "CLEAR"
   ],
   "correct": true,
   "people": 2,
@@ -24,10 +24,10 @@
  {
   "pair": "C03",
   "verdicts": [
-   "REVIEW",
-   "HIGH_RISK"
+   "CLEAR",
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -35,8 +35,8 @@
  {
   "pair": "C04",
   "verdicts": [
-   "REVIEW",
-   "REVIEW"
+   "CLEAR",
+   "CLEAR"
   ],
   "correct": true,
   "people": 2,
@@ -47,9 +47,9 @@
   "pair": "C05",
   "verdicts": [
    "CLEAR",
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -58,7 +58,7 @@
   "pair": "C06",
   "verdicts": [
    "CLEAR",
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 2,
@@ -78,7 +78,7 @@
  {
   "pair": "C11",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -89,7 +89,7 @@
   "pair": "C12",
   "verdicts": [
    "CLEAR",
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 2,
@@ -111,7 +111,6 @@
   "pair": "C14",
   "verdicts": [
    "CLEAR",
-   "CLEAR",
    "CLEAR"
   ],
   "correct": true,
@@ -122,8 +121,8 @@
  {
   "pair": "C15",
   "verdicts": [
-   "REVIEW",
-   "REVIEW"
+   "CLEAR",
+   "CLEAR"
   ],
   "correct": true,
   "people": 2,
@@ -133,9 +132,9 @@
  {
   "pair": "C16",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -143,7 +142,7 @@
  {
   "pair": "C17",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -153,7 +152,7 @@
  {
   "pair": "C18",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -183,9 +182,9 @@
   "pair": "C21",
   "verdicts": [
    "CLEAR",
-   "CLEAR"
+   "HIGH_RISK"
   ],
-  "correct": true,
+  "correct": false,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -193,7 +192,7 @@
  {
   "pair": "N01",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -213,7 +212,7 @@
  {
   "pair": "N03",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -243,9 +242,9 @@
  {
   "pair": "N06",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -253,7 +252,7 @@
  {
   "pair": "N08-1",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -263,7 +262,7 @@
  {
   "pair": "N08-2",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -273,9 +272,9 @@
  {
   "pair": "N09",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -291,9 +290,9 @@
  {
   "pair": "N11",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -301,7 +300,7 @@
  {
   "pair": "N12",
   "verdicts": [
-   "REVIEW"
+   "CLEAR"
   ],
   "correct": true,
   "people": 1,
@@ -341,9 +340,9 @@
  {
   "pair": "T04",
   "verdicts": [
-   "REVIEW"
+   "HIGH_RISK"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -351,9 +350,9 @@
  {
   "pair": "T05",
   "verdicts": [
-   "CLEAR"
+   "HIGH_RISK"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
@@ -371,9 +370,9 @@
  {
   "pair": "T08",
   "verdicts": [
-   "REVIEW"
+   "HIGH_RISK"
   ],
-  "correct": false,
+  "correct": true,
   "people": 1,
   "people_ok": true,
   "no_verdict": false
