@@ -356,6 +356,35 @@ def test_blind_snapshot_keeps_blind(monkeypatch, tmp_path):
     assert L.mode_of(status, "C02") == "blind" and saves == []
 
 
+def test_view_snapshot_hides_sensor_and_keeps_blind(monkeypatch, tmp_path):
+    """--view --snapshot: 보기 전용이라 센서를 그리지 않고, blind 로 적은 이력을 open 으로 바꾸지 않는다."""
+    videos = tmp_path / "videos"
+    videos.mkdir()
+    (videos / "C02.mp4").touch()
+    monkeypatch.setattr(L, "ROOT", tmp_path)
+    try:
+        L.set_shoot(4)
+        status = {}
+        L.set_status(status, "C02", "done", "h")
+        L.mark_mode(status, "C02", True, "h")
+        L.save_status(status)
+        assert L.mode_of(L.load_status(), "C02") == "blind"
+
+        saves, drawn = [], []
+        _fake_snapshot_env(monkeypatch, saves)
+        monkeypatch.setattr(L, "sensor_axis", lambda: L.AXIS)
+        monkeypatch.setattr(L, "load_side_offsets", lambda: {})
+        monkeypatch.setattr(L, "draw", lambda img, *a: drawn.append(a[13]) or img)   # a[13] = blind
+        monkeypatch.setattr(L.sys, "argv", ["label_takes.py", "--shoot", "4", "--view", "--single", "--snapshot", "0",
+                                            "--folder", str(videos), "C02"])
+        L.main()
+        assert drawn == [True] and saves == []
+        assert (tmp_path / "outputs" / "label_takes4" / "C02_0.0s_blind.png").exists()
+    finally:
+        monkeypatch.undo()
+        L.set_shoot(3)
+
+
 # ---------------------------------------------------------------- 문제 다시 보기 (--review)
 
 CHECK_CSV = ("pair,kind,lane,direction,label_sec,sensor_lane,sensor_sec,dt\n"
@@ -405,3 +434,34 @@ def test_readonly_review_does_not_edit_or_save(monkeypatch):
     out = L.label_video("C04", Cache(), labels, status, "h", 0, 0, 64, readonly=True, start_sec=0.3, note="x")
     assert out == "quit" and saved == []
     assert labels == {"C04": rows} and status["C04"]["mode"] == "blind" and status["C04"]["status"] == "done"
+
+
+def test_shoot_profile_switches_every_path(tmp_path, monkeypatch):
+    """--shoot 4 는 영상·라벨 폴더를 통째로 바꾼다 — 경로를 안 준 함수가 3차 파일을 읽거나 덮어쓰지 않는다."""
+    monkeypatch.setattr(L, "ROOT", tmp_path)
+    try:
+        L.set_shoot(4)
+        shoot4 = tmp_path / "labels" / "store01_shoot4"
+        assert (L.SOURCE.name, L.SIDE_SOURCE.name) == ("3(angle0)", "3(angle1)")
+        assert {p.parent for p in (L.SYNC, L.OUT, L.STATUS, L.CHECK, L.OFFSETS, L.SENSOR, L.INDEX)} == {shoot4}
+        assert L.SNAPSHOTS == tmp_path / "outputs" / "label_takes4"
+        L.save_labels({"T01": [TakeLabel("T01", 1, 5.0, "L2", "take", 1)]})   # 경로 인자 없이
+        status = {}
+        L.set_status(status, "T01", "done", "h")
+        L.save_status(status)
+        assert (shoot4 / "takes.csv").exists() and (shoot4 / "takes_status.csv").exists()
+        assert not (tmp_path / "labels" / "store01_shoot3").exists()
+        assert [r.time_sec for r in L.load_labels()["T01"]] == [5.0] and L.is_done(L.load_status(), "T01")
+        write_sensor(shoot4 / "sensor", "T01", [(5.5, 5.5, "L2", 3, 2)])
+        assert [s.time_sec for s in L.load_sensor("T01")] == [5.5]
+        L.compare(L.load_labels(), L.load_status(), ["T01"])      # write 를 안 주면 그 회차의 sensor_check.csv
+        assert (shoot4 / "sensor_check.csv").exists()
+        assert L.load_problems() == [] and L.sensor_axis() is None and L.load_applied_offsets() == {}
+
+        L.set_shoot(3)
+        shoot3 = tmp_path / "labels" / "store01_shoot3"
+        assert (L.SOURCE.name, L.OUT) == ("2(angle0)", shoot3 / "takes.csv")
+        assert L.load_labels() == {} and L.load_sensor("T01") is None    # 4차에 쓴 것이 3차로 새지 않는다
+    finally:
+        monkeypatch.undo()
+        L.set_shoot(3)
