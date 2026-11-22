@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning server.js",
-    "test": "node --no-warnings=ExperimentalWarning --test \"test/**/*.test.js\""
+    "test": "node --no-warnings=ExperimentalWarning --test \"test/**/*.test.js\"",
+    "export:orders": "node --no-warnings=ExperimentalWarning scripts/export-orders.js"
   },
   "engines": {
     "node": ">=22.13.0"
