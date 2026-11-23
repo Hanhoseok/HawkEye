@@ -42,6 +42,18 @@
 
 근거(evidence)도 함께 남긴다: 선반+동작 / 선반만(손 뻗기가 안 잡힘) / 동작만(선반 기록 없음).
 한계: 한 번의 방문 안에서 들었다 놓은 것은 순변화로만 보인다(가려진 동안은 셀 수 없다).
+
+## 건넴 — 물건 단위 장부 (후속 70, 한계 D-13)
+
+집은 물건마다 '지금 든 사람'과 '결제됨'이 따라다닌다고 본다. 손님끼리 건네면 (Handover):
+
+    든 사람만 바뀐다           건넨 손님 -1 (건넴), 받은 손님 +1 (건네받음)
+    결제됨은 물건과 함께 간다    건넨 손님이 그때 가진 것을 모두 결제했으면 결제 1개도 받은 손님에게 옮긴다
+    나갈 때                   결제 안 된 물건을 **든** 손님이 경보. 그 물건을 건넨 손님은 확인 필요 (engine.py)
+
+물건마다 줄을 따로 두지는 않는다 — 집은 개수(선반 근거)는 그대로 두고, 건넴 기록을 시간순으로 다시 따라가 손님별 순변화를 낸다
+(CustomerBook.rebalance). 선반 근거가 나중에 고쳐져 건넨 손님에게 그 물건이 없게 되면 그 건넴은 무효(void)다.
+건넴이 없으면 모든 수가 예전과 같다.
 """
 
 from __future__ import annotations
@@ -118,7 +130,31 @@ class HeldItem:
 KIND_NAMES = {
     "TAKE": "집음", "RETURN": "놓음", "MOVE": "자리 바뀜",
     "TOUCH": "만지기만", "LOOK": "구경", "UNVERIFIED": "확인 못 한 집기 동작", "HELD": "든 것을 봄",
+    "GIVE": "건넴", "GET": "건네받음",
 }
+
+UNKNOWN_KIND = "?"
+"""종류를 모르는 물건 (선반 기록에 종류가 없거나, 선반 기록이 없는 집기 동작)."""
+
+
+@dataclass
+class Handover:
+    """손님끼리 물건 하나를 건넸다 — 전체 카메라가 받은 손님 손에서 본 것 (fusion.handover)."""
+
+    ms: float
+    """받은 손님 손에서 처음 본 시각."""
+    frame: int
+    giver: int
+    receiver: int
+    name: str
+    """상품 종류."""
+    paid: bool = False
+    """건넬 때 이미 결제된 물건이었나 — 건넨 손님이 그때 가진 것을 모두 결제한 상태였다. 그러면 결제 1개가 물건을 따라간다."""
+    void: bool = False
+    """지금 장부로는 성립하지 않는다 (건넨 손님에게 그 물건이 없다 · 두 사람이 한 사람으로 합쳐졌다). rebalance 가 매번 다시 정한다."""
+
+    def to_dict(self) -> dict:
+        return {**asdict(self), "ms": round(self.ms, 1)}
 
 
 @dataclass(frozen=True)
@@ -128,7 +164,8 @@ class ShelfAction:
     person_id: int
     kind: str
     count: int
-    """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1, 든 것을 봄 +1."""
+    """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1, 든 것을 봄 +1,
+    건넴 -1, 건네받음 +1."""
     start_frame: int
     end_frame: int
     evidence: str
@@ -211,6 +248,14 @@ class Customer:
     paid_items: int = 0
     covered_items: int = 0
     """다른 손님의 남는 결제 · 주인을 못 찾은 결제로 메운 물건 수 (risk.share_surplus_payments, CustomerBook.cover_from_surplus)."""
+    gave: list[Handover] = field(default_factory=list)
+    """이 손님이 건넨 것 (성립한 것만). CustomerBook.rebalance 가 채운다."""
+    got: list[Handover] = field(default_factory=list)
+    """이 손님이 건네받은 것 (성립한 것만)."""
+    paid_moved: int = 0
+    """건넴과 함께 옮겨 온(+) · 옮겨 간(-) 결제 수. paid 에 들어간다."""
+    kinds: dict = field(default_factory=dict)
+    """지금 든 물건의 종류별 개수 (건넴 반영). 건넴이 하나라도 있을 때만 rebalance 가 채운다."""
 
     # 계산대 구역
     checkout_since_ms: float | None = None
@@ -275,7 +320,19 @@ class Customer:
 
     @property
     def actions(self) -> list[ShelfAction]:
-        """이 손님의 행동 목록 (시간순). 선반 방문마다 하나 + 선반 기록이 없는 집기 행동마다 하나."""
+        """이 손님의 행동 목록 (시간순). 선반 방문마다 하나 + 선반 기록이 없는 집기 행동마다 하나 + 건넴 · 건네받음마다 하나."""
+        acts = self.own_actions
+        for h in self.gave:
+            acts.append(ShelfAction(person_id=self.person_id, kind="GIVE", count=-1, start_frame=h.frame, end_frame=h.frame,
+                                    evidence="전체 카메라", detail=f"{h.name} → 손님 {h.receiver}"))
+        for h in self.got:
+            acts.append(ShelfAction(person_id=self.person_id, kind="GET", count=1, start_frame=h.frame, end_frame=h.frame,
+                                    evidence="전체 카메라", detail=f"{h.name} ← 손님 {h.giver}"))
+        return sorted(acts, key=lambda a: a.start_frame)
+
+    @property
+    def own_actions(self) -> list[ShelfAction]:
+        """이 손님이 선반에서 한 일 (건넴 · 건네받음을 뺀 것)."""
         acts = [classify_visit(v, self.takes) for v in self.shelf_visits]
         for group in _group_by_overlap(self.uncovered_takes):
             acts.append(ShelfAction(
@@ -291,16 +348,60 @@ class Customer:
 
     @property
     def taken(self) -> int:
-        """가져간 물건 수(추정) = 행동들의 개수 변화 합.
+        """지금 가진 물건 수(추정) = 행동들의 개수 변화 합.
 
-        = 선반에서 확인한 개수(집음 - 놓음) + 선반 기록이 없는 집기 동작 수.
+        = 선반에서 확인한 개수(집음 - 놓음) + 선반 기록이 없는 집기 동작 수 + 건네받은 수 - 건넨 수.
         선반 지도가 꺼져 있으면 집기 동작 수 그대로다.
         """
         return max(0, sum(a.count for a in self.actions))
 
+    @property
+    def paid(self) -> int:
+        """결제된 물건 수 = 이 손님에게 붙은 결제 + 건넴과 함께 옮겨 온 결제 - 옮겨 간 결제."""
+        return max(0, self.paid_items + self.paid_moved)
+
+    def picked_kinds(self, until_frame: int | None = None) -> dict[str, int]:
+        """선반에서 집어 든 물건의 종류별 개수 (건넴 반영 전). 종류를 모르면 UNKNOWN_KIND.
+        until_frame 을 주면 그 장면까지 시작한 선반 방문 · 든 것 · 집기 동작만 센다."""
+        out: dict[str, int] = {}
+
+        def add(name: str, n: int) -> None:
+            out[name] = out.get(name, 0) + n
+
+        if until_frame is not None:
+            part = replace(self, shelf_visits=[v for v in self.shelf_visits if v.start_frame <= until_frame],
+                           held=[h for h in self.held if h.start_frame <= until_frame],
+                           takes=[t for t in self.takes if t.start_frame <= until_frame])
+            return part.picked_kinds()
+        for v in self.shelf_visits:
+            if v.removed_kinds or v.added_kinds:
+                for name in v.removed_kinds:
+                    add(name, 1)
+                for name in v.added_kinds:
+                    add(name, -1)
+                extra = (v.removed - len(v.removed_kinds)) - (v.added - len(v.added_kinds))
+                if extra:
+                    add(UNKNOWN_KIND, extra)   # 센서 · 전체 카메라 개수로 고친 방문 — 종류 목록보다 개수가 많거나 적다
+            else:
+                act = classify_visit(v, self.takes)
+                if act.count:
+                    add(UNKNOWN_KIND, act.count)
+        for h in self.held:
+            add(h.name, 1)
+        groups = len(_group_by_overlap(self.uncovered_takes))
+        if groups:
+            add(UNKNOWN_KIND, groups)
+        minus = sum(-n for n in out.values() if n < 0)   # 놓은 것이 종류가 다르게 적혔으면 모르는 종류에서 뺀다
+        out = {name: n for name, n in out.items() if n > 0}
+        for name in sorted(out, key=lambda k: k != UNKNOWN_KIND):
+            take = min(minus, out[name])
+            out[name] -= take
+            minus -= take
+        return {name: n for name, n in out.items() if n > 0}
+
     def count_detail(self) -> str:
         """물건 수의 근거 (판정 문구용). 선반 기록이 없으면 빈 문자열."""
-        if not self.shelf_visits and not self.held:
+        if not self.shelf_visits and not self.held and not self.gave and not self.got:
             return ""
         acts = self.actions
         parts = []
@@ -310,6 +411,12 @@ class Customer:
         held = sum(a.count for a in acts if a.kind == "HELD")
         if held:
             parts.append(f"든 것을 봄 {held}개")
+        if self.got:
+            who = ", ".join(f"손님 {p}" for p in sorted({h.giver for h in self.got}))
+            parts.append(f"건네받음 {len(self.got)}개 ({who} 에게서)")
+        if self.gave:
+            who = ", ".join(f"손님 {p}" for p in sorted({h.receiver for h in self.gave}))
+            parts.append(f"건넴 {len(self.gave)}개 ({who} 에게)")
         put = -sum(a.count for a in acts if a.kind == "RETURN")
         if put:
             parts.append(f"놓음 {put}개")
@@ -330,7 +437,7 @@ class Customer:
     @property
     def unpaid(self) -> int:
         """계산하지 않은 물건 수(추정). 결제가 더 많으면 0 (TAKE 를 놓쳤을 수 있다). 남의 남는 결제로 메운 것은 뺀다."""
-        return max(0, self.taken - self.paid_items - self.covered_items)
+        return max(0, self.taken - self.paid - self.covered_items)
 
 
 COVER_RECENT_MS = 500.0
@@ -352,6 +459,11 @@ class CustomerBook:
         self.payments: list[PaymentRecord] = []
         self.shelf_unassigned: int = 0
         """누구 것인지 정하지 못한 선반 변화 수 (두 사람이 함께 있었거나 사람이 안 보임)."""
+        self.handovers: list[Handover] = []
+        """손님끼리 건넨 기록 (시간순으로 다시 따라간다 — rebalance)."""
+        self.changes = 0
+        """집은 개수 · 건넴이 바뀐 횟수 (건넴을 다시 따질 때가 됐는지 보는 데 쓴다)."""
+        self._had_handovers = False
         self.unassigned_visits: list[ShelfVisit] = []
 
     # ------------------------------------------------------------------ 신원
@@ -405,18 +517,92 @@ class CustomerBook:
         for t in (src.last_checkout_ms, dst.last_checkout_ms):
             if t is not None and (dst.last_checkout_ms is None or t > dst.last_checkout_ms):
                 dst.last_checkout_ms = t
+        self.rebalance()
+
+    # ------------------------------------------------------------------ 건넴
+
+    def hand_over(self, giver: int, receiver: int, name: str, ms: float, frame: int, now_ms: float) -> Handover | None:
+        """giver 가 receiver 에게 name 하나를 건넸다. 건넨 손님에게 그 물건이 없으면 적지 않는다 (None).
+
+        결제됨은 물건과 함께 간다: 건넨 손님이 지금 가진 것을 모두 결제한 상태면(결제 ≥ 가진 수 ≥ 1) 그 물건은 결제된 것 —
+        결제 1개가 받은 손님에게 옮겨 간다. 결제 안 한 것이 하나라도 있으면 결제 안 된 물건을 건넨 것으로 본다
+        (어느 것을 건넸는지는 모른다. 결제 안 된 쪽으로 봐야 받은 손님 · 건넨 손님 둘 다 확인하게 된다)."""
+        g, r = self._get(giver, now_ms), self._get(receiver, now_ms)
+        if g is r:
+            return None
+        item = Handover(ms, frame, g.person_id, r.person_id, name, self._paid_then(g, ms, frame))
+        self.handovers.append(item)
+        self._had_handovers = True
+        self.rebalance()
+        if item.void:
+            self.handovers.remove(item)
+            self.rebalance()
+            return None
+        return item
+
+    def _paid_then(self, giver: Customer, ms: float, frame: int) -> bool:
+        """건넨 순간 건넨 손님이 가진 것을 모두 결제한 상태였나. 건넴은 일어난 뒤 몇 초 늦게 확인된다 — 그 사이의 결제는 치지 않는다.
+        결제 기록이 있을 때(feed)는 그 순간까지의 결제 기록으로, 계산대 체류로 어림할 때(dwell)는 지금의 결제 수로 본다
+        (체류 결제는 서 있는 동안 늘어나는 것이 기록에 다 남지 않는다)."""
+        had = (sum(giver.picked_kinds(frame).values())
+               + sum(1 for h in giver.got if h.ms < ms) - sum(1 for h in giver.gave if h.ms < ms))
+        if self.config.payment_mode == "dwell":
+            paid = giver.paid
+        else:
+            paid = sum(p.items for p in self.payments
+                       if p.person_id is not None and self.resolve(p.person_id) == giver.person_id and p.time_sec * 1000.0 <= ms)
+            paid += sum(1 for h in giver.got if h.ms < ms and h.paid) - sum(1 for h in giver.gave if h.ms < ms and h.paid)
+        return had >= 1 and paid >= had
+
+    def drop_handover(self, item: Handover) -> None:
+        """건넴 하나를 지운다 — 다시 따져 보니 건넴이 아니었다 (받은 손님이 자기 것을 집은 것으로 확인됨 등)."""
+        self.handovers = [h for h in self.handovers if h is not item]
+        self.rebalance()
+
+    def rebalance(self) -> None:
+        """건넴 기록을 시간순으로 다시 따라가 손님별 건넴 · 건네받음 · 옮겨 간 결제를 정한다. 집은 개수(선반 근거)가 바뀔 때마다 부른다.
+        건넴이 한 번도 없었으면 아무것도 안 한다."""
+        self.changes += 1
+        if not self._had_handovers:
+            return
+        have = {pid: dict(c.picked_kinds()) for pid, c in self.customers.items()}
+        for c in self.customers.values():
+            c.gave, c.got, c.paid_moved = [], [], 0
+        for h in sorted(self.handovers, key=lambda h: h.ms):
+            h.giver, h.receiver = self.resolve(h.giver), self.resolve(h.receiver)
+            mine = have.get(h.giver)
+            if h.giver == h.receiver or mine is None or h.receiver not in have:
+                h.void = True
+                continue
+            key = h.name if mine.get(h.name, 0) > 0 else (UNKNOWN_KIND if mine.get(UNKNOWN_KIND, 0) > 0 else None)
+            if key is None:
+                h.void = True
+                continue
+            h.void = False
+            mine[key] -= 1
+            have[h.receiver][h.name] = have[h.receiver].get(h.name, 0) + 1
+            g, r = self.customers[h.giver], self.customers[h.receiver]
+            g.gave.append(h)
+            r.got.append(h)
+            if h.paid:
+                g.paid_moved -= 1
+                r.paid_moved += 1
+        for pid, c in self.customers.items():
+            c.kinds = {name: n for name, n in have[pid].items() if n > 0}
 
     # ------------------------------------------------------------------ 기록
 
     def add_take(self, candidate: TakeCandidate, now_ms: float) -> Customer:
         customer = self._get(candidate.person_id, now_ms)
         customer.takes.append(candidate)
+        self.rebalance()
         return customer
 
     def add_held(self, item: HeldItem, now_ms: float) -> Customer:
         """전체 카메라가 그 손님 손에 든 상품을 봤다 — 선반 방문을 기다리지 않고 먼저 센다 (fusion.overview_instant)."""
         customer = self._get(item.person_id, now_ms)
         customer.held.append(item)
+        self.rebalance()
         return customer
 
     def swap_held(self, a: int, b: int, since_ms: float, now_ms: float) -> int:
@@ -436,6 +622,7 @@ class CustomerBook:
             for h in sorted(c.held, key=lambda h: h.seen_ms):
                 first.setdefault(h.name, h)
             c.held = [h for h in c.held if first[h.name] is h]
+        self.rebalance()
         return len(from_a) + len(from_b)
 
     def drop_held(self, start_ms: float, until_ms: float) -> list[HeldItem]:
@@ -445,6 +632,7 @@ class CustomerBook:
             keep = [h for h in c.held if not start_ms <= h.seen_ms <= until_ms]
             gone += [h for h in c.held if start_ms <= h.seen_ms <= until_ms]
             c.held = keep
+        self.rebalance()
         return gone
 
     def add_shelf_visit(self, visit: ShelfVisit, now_ms: float) -> Customer | None:
@@ -456,6 +644,7 @@ class CustomerBook:
             return None
         customer = self._get(visit.person_id, now_ms)
         customer.shelf_visits.append(visit)
+        self.rebalance()
         self._late_dwell_payment(customer, visit, now_ms)
         return customer
 
@@ -582,7 +771,8 @@ class CustomerBook:
             if c.checkout_since_ms is not None and now_ms - c.checkout_since_ms >= pay_ms:
                 c.stood_until_ms = now_ms
                 # 서 있는 동안 늘어난 것(늦게 확정된 선반 기록 등)까지 결제에 포함한다
-                owed = max(0, c.taken - (c.paid_items - c.dwell_paid_items))
+                # 건넨 물건도 함께 결제한다 — 골라서 일행에게 들려 주고 계산대에 선 손님 (4차 N09, 후속 70)
+                owed = max(0, c.taken + self.given_unpaid(c) - (c.paid - c.dwell_paid_items))
                 if owed > c.dwell_paid_items:
                     first = c.dwell_paid_items == 0
                     c.paid_items += owed - c.dwell_paid_items
@@ -596,7 +786,26 @@ class CustomerBook:
         self.payments.extend(records)
         return records
 
-    def cover_from_surplus(self, customer: Customer) -> int:
+    def given_unpaid(self, customer: Customer) -> int:
+        """이 손님이 건넨 물건 가운데 받은 손님이 아직 결제하지 않은 것의 수 (돌려받은 것은 뺀다).
+        받은 손님마다: (결제 안 된 채 건넨 수 - 돌려받은 수) 와 받은 손님의 모자란 결제 가운데 작은 쪽."""
+        if not customer.gave:
+            return 0
+        net: dict[int, int] = {}
+        for h in customer.gave:
+            if not h.paid:
+                net[h.receiver] = net.get(h.receiver, 0) + 1
+        for h in customer.got:
+            if h.giver in net:
+                net[h.giver] -= 1
+        total = 0
+        for pid, n in net.items():
+            other = self.customers.get(self.resolve(pid))
+            if other is not None and n > 0:
+                total += min(n, max(0, other.taken - other.paid))
+        return total
+
+    def cover_from_surplus(self, customer: Customer, givers_only: bool = False) -> int:
         """남는 결제로 이 손님의 모자란 결제를 메운다 (risk.share_surplus_payments). 메운 개수(이 손님의 covered_items)를 돌려준다.
 
         남는 결제 = 다른 손님이 자기 물건보다 많이 결제한 만큼 + 결제 순간 계산대에 아무도 없어 주인을 못 찾은 결제.
@@ -607,7 +816,14 @@ class CustomerBook:
         need = customer.unpaid
         if need <= 0:
             return 0
-        spare = sum(max(0, c.paid_items - c.taken) for c in self.customers.values() if c is not customer)
+        if givers_only:
+            # 건넨 손님의 남는 결제만 — 건넨 손님이 그 물건 값을 냈다 (남는 결제를 매장 전체로 나누지 않을 때 · 계산대 체류로 어림할 때)
+            givers = {self.resolve(h.giver) for h in customer.got if not h.paid}
+            spare = sum(max(0, c.paid - c.taken) for pid, c in self.customers.items() if pid in givers and c is not customer)
+            spare -= sum(c.covered_items for c in self.customers.values() if c is not customer)
+            customer.covered_items = max(0, min(need, spare))
+            return customer.covered_items
+        spare = sum(max(0, c.paid - c.taken) for c in self.customers.values() if c is not customer)
         spare += sum(p.items for p in self.payments if p.method == "unmatched")
         spare -= sum(c.covered_items for c in self.customers.values() if c is not customer)
         customer.covered_items = max(0, min(need, spare))

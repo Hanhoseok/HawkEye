@@ -339,6 +339,39 @@ class HolderTracker:
         self._fresh = []
         return out
 
+    def holds(self, gap_ms: float = HOLD_WITHIN_MS) -> list[tuple[float, float, int, str]]:
+        """확정된 '들고 있음' 구간들 — (시작 ms, 끝 ms, 신원, 종류), 시작 순. 확실한 장면만 쓴다 (헷갈린 장면은 뺀다).
+
+        구간 = 그 사람 손에서 그 종류를 본 장면이 gap_ms 넘게 끊기지 않고 이어진 것. 그 안에서 min_frames 장면이 HOLD_WITHIN_MS 안에
+        모인 적이 있어야 하고, 시작은 처음 그렇게 모인 장면들의 첫 장면이다 (fresh 와 같은 기준). fresh 와 달리 같은 사람 · 같은 종류도
+        끊겼다 다시 들면 또 나온다 — 건넸다 돌려받은 것을 보려고 (fusion.handover)."""
+        by: dict[tuple[int, str], list[float]] = {}
+        for ms, pid, name in self.samples:
+            by.setdefault((self.resolve(pid), name), []).append(ms)
+        out = []
+        for (pid, name), times in by.items():
+            times.sort()
+            run: list[float] = []
+            for t in times + [None]:
+                if t is not None and (not run or t - run[-1] <= gap_ms):
+                    run.append(t)
+                    continue
+                first = next((run[i] for i in range(len(run) - self.min_frames + 1)
+                              if run[i + self.min_frames - 1] - run[i] <= HOLD_WITHIN_MS), None)
+                if first is not None:
+                    out.append((first, run[-1], pid, name))
+                run = [t] if t is not None else []
+        return sorted(out)
+
+    def count(self, pid: int, name: str, start_ms: float, end_ms: float) -> int:
+        """[start_ms, end_ms] 에 그 사람 손에서 그 종류를 본 (확실한) 장면 수."""
+        return sum(1 for ms, p, cls in self.samples if cls == name and start_ms <= ms <= end_ms and self.resolve(p) == pid)
+
+    def last_seen(self, pid: int, name: str, before_ms: float) -> float | None:
+        """before_ms 전에 그 사람 손에서 그 종류를 마지막으로 본 (확실한) 장면의 시각. 없으면 None."""
+        times = [ms for ms, p, cls in self.samples if cls == name and ms < before_ms and self.resolve(p) == pid]
+        return max(times) if times else None
+
     def first_holders(self, name: str, start_ms: float, until_ms: float, unsure: bool = False) -> list[int]:
         """[start_ms, until_ms] 에 그 종류를 든 사람들 — 먼저 든 순서. 방문 전에 이미 들고 있던 사람은 뺀다."""
         when = self.first_held(name, start_ms, until_ms, unsure)

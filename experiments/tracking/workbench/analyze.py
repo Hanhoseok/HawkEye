@@ -381,7 +381,7 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
     actions = [a for a in data["actions"] if a["kind"] != "LOOK"]
     rows.append({"label": "행동 판정", "group": "결론", "marks": [], "who": None,
                  "segs": [{"s": a["start"], "e": max(a["end"], a["start"] + 200), "who": a["pid"] if a["pid"] in customers else None,
-                           "tone": {"TAKE": "take", "HELD": "take", "PUT": "put"}.get(a["kind"]),
+                           "tone": {"TAKE": "take", "HELD": "take", "GET": "take", "PUT": "put", "GIVE": "put"}.get(a["kind"]),
                            "tip": f"{_who(a['pid'], customers)}: {a['name']}" + (f" {a['count']:+d}개" if a["count"] else "")
                                   + f" · 근거 {a['evidence']}"} for a in actions]})
     per: dict[int, dict] = {}
@@ -398,6 +398,18 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
         facts.append({"level": "info", "text": f"{_who(pid, customers)}: 가져간 물건 {p['items']}개로 셈 ({kinds})"})
     if not per:
         facts.append({"level": "info", "text": "선반에서 일어난 행동이 하나도 잡히지 않음"})
+    handovers = data.get("handovers") or []
+    if handovers:
+        # 손님끼리 건넨 것 (fusion.handover) — 물건은 든 사람의 것으로 세고, 결제 안 된 채 나가면 든 사람이 경보 · 건넨 사람은 확인 필요
+        parts = [f"{h['ms'] / 1000:.1f}초 {_who(h['giver'], customers)} → {_who(h['receiver'], customers)} ({h['name']}"
+                 + (", 결제된 물건" if h["paid"] else "") + ")" for h in handovers[:6]]
+        facts.append({"level": "warn", "ms": handovers[0]["ms"],
+                      "text": f"손님끼리 건넨 것 {len(handovers)}번: " + ", ".join(parts) + (" …" if len(handovers) > 6 else "")
+                              + " — 집은 적 없는 손님 손에서 상품을 봄. 물건은 지금 든 손님의 것으로 셈 "
+                                "(둘이 함께 선반 앞에 있었다면 건넨 것이 아니라 집은 사람을 잘못 정했던 것일 수 있음)"})
+        for h in handovers:
+            log.append({"ms": h["ms"], "level": "warn",
+                        "text": f"건넴: {_who(h['giver'], customers)} → {_who(h['receiver'], customers)} ({h['name']})"})
     if expected == "HIGH_RISK" and total <= 0:
         facts.insert(0, {"level": "bad", "text": ZERO_TAKEN})
     touches = [a for a in actions if a["kind"] == "TOUCH"]

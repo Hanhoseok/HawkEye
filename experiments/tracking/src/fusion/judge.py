@@ -27,12 +27,12 @@ import numpy as np
 from ..core.config import FusionConfig, InteractionConfig
 from ..core.types import Frame, IdentityObservation, RiskEvent, TakeCandidate
 from ..interaction.detector import InteractionDetector
-from ..risk.customers import HeldItem, ShelfVisit
+from ..risk.customers import UNKNOWN_KIND, HeldItem, ShelfVisit
 from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
 from .confusion import ConfusionWatch
-from .overview_count import HolderTracker, OverviewCounter
+from .overview_count import HOLD_WITHIN_MS, HolderTracker, OverviewCounter
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
 
 
@@ -86,6 +86,9 @@ class DualJudge:
             self.holders.resolve = risk.book.resolve   # 든 뒤에 합쳐진 신원은 한 사람으로
         if self.holders is not None and config.swap_since_confusion:
             self.holders.confused = lambda pid, ms: bool(self.watch["overview"].touching(pid, ms, ms))
+        self.handover_on = bool(config.handover and self.holders is not None and getattr(risk, "book", None) is not None)
+        if self.handover_on:
+            risk.before_judge = self._hand_overs   # 이번 장면의 방문 · 결제를 장부에 넣은 뒤, 판정하기 전에
         self.shelf_image = shelf_image
         self.reach = None
         """전체 카메라 팔 뻗기 (손목이 화면의 선반 영역 안). 손목 기록만 있으면 되므로 기록 재실행에서도 같이 돈다."""
@@ -135,6 +138,12 @@ class DualJudge:
         """카메라마다 두 사람을 헷갈린 구간 (겹침 · 합쳐짐). 번호 맞바뀜을 되돌릴 때 '언제부터'를 여기서 묻는다 (fusion.swap_since_confusion)."""
         self.flips: list[dict] = []
         """두 화면 짝이 서로 뒤집혔지만 전체 카메라 번호 맞바뀜으로 안 본 것 — 까닭과 함께 (재 보려고 적어 둔다)."""
+        self.hand_checks: list[dict] = []
+        """자기 것이 아닌 상품을 든 순간마다 따져 본 것 (fusion.handover, 장면마다 새로 쓴다): ms · pid(든 손님) · name ·
+        say("건넴" · "기다림" · "줄 사람 없음" · "못 가름") · giver · why."""
+        self._touch: dict[tuple[int, int], list[float]] = {}
+        """두 손님의 상자가 닿은 장면의 시각들 (전체 카메라, 작은 번호 먼저) — 건넴은 닿을 만큼 가까워야 한다."""
+        self._hand_key = None
         self.asks: list[dict] = []
         """전체 카메라에서 합쳐졌던 상자가 다시 생긴 순간마다 선반 카메라에 물은 것 (fusion.swap_ask_detail): ms · store(사라졌던 번호,
         남아 있던 번호) · say("바뀜" · "그대로" · "못 물음") · why · gap_cm(사라졌던 번호의 사람이 앞이면 +) · samples."""
@@ -474,6 +483,8 @@ class DualJudge:
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
         self._note_boxes("overview", frame.pts_ms, boxes)   # 든 사람을 적기 전에 — 이 장면이 헷갈린 장면인지 먼저 안다
+        if self.handover_on:
+            self._note_touch(frame.pts_ms, boxes)
         if self.config.swap_ask_detail:
             flip = self._ask_detail(frame.pts_ms)
             if flip:   # 이 장면의 자리 표본 · 선반 앞 기록은 _read_swapped 가 고쳤다 — 아직 안 넘긴 손 자리만 여기서 고친다
@@ -514,9 +525,104 @@ class DualJudge:
         if fused_takes or fused_visits:
             events, _ = self.risk.update(frame, [], fused_takes, [], fused_visits)
             self.events.extend(events)
+        if self.handover_on:
+            self._hand_overs(frame)   # 남은 방문을 모두 넘긴 뒤의 장부로 한 번 더
         done = self.risk.finish(frame, self.overview_size)
         self.events.extend(done)
         return done
+
+    # ------------------------------------------------------------------ 건넴 (fusion.handover)
+
+    TOUCH_PAD = 0.15
+    """두 사람의 상자가 '닿았다' — 상자를 폭의 이만큼씩 넓혀 겹치면. 맞춰 정한 값이 아니다."""
+
+    def _note_touch(self, pts_ms: float, boxes: dict) -> None:
+        ids = sorted(boxes)
+        for i, a in enumerate(ids):
+            ax = (boxes[a][2] - boxes[a][0]) * self.TOUCH_PAD
+            for b in ids[i + 1:]:
+                bx = (boxes[b][2] - boxes[b][0]) * self.TOUCH_PAD
+                if (min(boxes[a][2] + ax, boxes[b][2] + bx) > max(boxes[a][0] - ax, boxes[b][0] - bx)
+                        and min(boxes[a][3], boxes[b][3]) > max(boxes[a][1], boxes[b][1])):
+                    self._touch.setdefault((a, b), []).append(pts_ms)
+
+    def _touched(self, a: int, b: int, start_ms: float, end_ms: float) -> bool:
+        return any(start_ms <= t <= end_ms for t in self._touch.get((min(a, b), max(a, b)), ()))
+
+    def _hand_overs(self, frame: Frame) -> None:
+        """손님끼리 건넨 것을 찾아 손님 장부의 건넴 기록을 맞춘다 (fusion.handover — 규칙은 설정의 설명).
+
+        처음부터 다시 따진다: 든 구간을 시간순으로 보며, 그때까지 집은 것(선반 방문 · 든 것) + 앞선 건넴으로 가진 것이 없는 손님이
+        든 것을 건넴으로 본다. 장부에 이미 있는 건넴은 그대로 두고(건넬 때의 결제 상태를 지킨다), 새로 생긴 것은 넣고, 없어진 것은 지운다."""
+        book = self.risk.book
+        key = (len(self.holders.samples), book.changes, len(self._pending_visits), len(self._open_visits))
+        if key == self._hand_key:
+            return
+        axis = self.fuser.overview_axis
+        slack = self.config.event_tolerance_seconds * 1000.0
+        near = self.config.handover_near_seconds * 1000.0
+        waiting = [s for s, _ in self._open_visits] + [s for _, _, s, _ in self._pending_visits]
+        wanted: list[tuple[float, int, int, str]] = []   # (ms, 건넨 손님, 받은 손님, 종류)
+        checks = []
+
+        def have(pid: int, at: int) -> dict[str, int]:
+            customer = book.customers.get(pid)
+            out = dict(customer.picked_kinds(at)) if customer is not None else {}
+            for _, giver, receiver, name in wanted:
+                if giver == pid:
+                    k = name if out.get(name, 0) > 0 else UNKNOWN_KIND
+                    out[k] = out.get(k, 0) - 1
+                if receiver == pid:
+                    out[name] = out.get(name, 0) + 1
+            return {k: n for k, n in out.items() if n > 0}
+
+        for start, end, pid, name in self.holders.holds():
+            pid = book.resolve(pid)
+            at = axis.to_frame(start)
+            mine = have(pid, at)
+            if mine.get(name) or mine.get(UNKNOWN_KIND) or (mine and self.config.handover_own_any):
+                continue   # 자기 것을 들었다
+            row = {"ms": round(start, 1), "pid": pid, "name": name, "giver": None, "why": ""}
+            checks.append(row)
+            if any(s <= start + slack for s in waiting):
+                row["say"] = "기다림"   # 이 순간을 덮을 수 있는 선반 방문이 아직 안 끝났다 — 직접 집었을 수 있다
+                continue
+            cands, why = [], []
+            for q, other in book.customers.items():
+                if q == pid:
+                    continue
+                theirs = have(q, at)
+                if not (theirs.get(name) or theirs.get(UNKNOWN_KIND)):
+                    continue
+                if not (other.first_seen_ms <= start <= other.last_seen_ms + 1000.0):
+                    why.append(f"손님 {q} 는 그때 매장에 없었음")
+                elif not self._touched(pid, q, start - near, start + near):
+                    why.append(f"손님 {q} 와 닿지 않았음")
+                elif self.holders.count(q, name, start, min(end, start + HOLD_WITHIN_MS)) >= self.holders.min_frames:
+                    why.append(f"손님 {q} 도 그때 들고 있었음")
+                else:
+                    cands.append(q)
+            if len(cands) > 1:   # 그 종류를 가장 늦게까지 들고 있던 손님
+                seen = {q: self.holders.last_seen(q, name, start) for q in cands}
+                best = sorted((t, q) for q, t in seen.items() if t is not None)
+                cands = [best[-1][1]] if best and (len(best) == 1 or best[-1][0] > best[-2][0]) else cands
+            if len(cands) == 1:
+                row["say"], row["giver"] = "건넴", cands[0]
+                wanted.append((start, cands[0], pid, name))
+            else:
+                row["say"] = "못 가름" if cands else "줄 사람 없음"
+                row["why"] = (f"줄 수 있던 손님이 {len(cands)}명" if cands else "; ".join(why))
+        self.hand_checks = checks
+
+        old = {(h.ms, h.giver, h.receiver, h.name): h for h in book.handovers}
+        for k, h in old.items():
+            if k not in wanted:
+                book.drop_handover(h)
+        for k in wanted:
+            if k not in old:
+                ms, giver, receiver, name = k
+                book.hand_over(giver, receiver, name, ms, axis.to_frame(ms), frame.pts_ms)
+        self._hand_key = (len(self.holders.samples), book.changes, len(self._pending_visits), len(self._open_visits))
 
     def _sensor_hold(self) -> list[tuple[float, float, str]]:
         """센서 기록을 붙들어 둘 방문들 (시작 ms, 끝 ms, 선반): 전체 카메라 개수를 기다리는 방문 + (fusion.sensor_hold_visits)

@@ -244,6 +244,7 @@ def use_product_records(cfg: AppConfig) -> None:
     cfg.shelves.model_path = PRODUCT_MODEL
     cfg.fusion.overview_count = cfg.fusion.overview_owner = True
     cfg.fusion.overview_instant = True   # 손에 든 것을 보면 바로 센다 (후속 59) — 방문이 끝나면 그 개수 · 주인으로 바뀐다
+    cfg.fusion.handover = True   # 손님끼리 건넨 것을 장부에 넣는다 (후속 70) — 든 손님이 경보, 건넨 손님은 확인 필요
 
 
 def missing_model(cfg: AppConfig) -> Path | None:

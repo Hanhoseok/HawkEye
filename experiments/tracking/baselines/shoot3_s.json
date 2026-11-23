@@ -272,9 +272,9 @@
  {
   "pair": "N09",
   "verdicts": [
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -380,7 +380,7 @@
  {
   "pair": "T09",
   "verdicts": [
-   "CLEAR",
+   "REVIEW",
    "HIGH_RISK"
   ],
   "correct": true,

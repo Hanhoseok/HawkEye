@@ -34,7 +34,7 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card, sensor_log  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 18
+VERSION = 19
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -51,7 +51,9 @@ VERSION = 18
 17: 맞바뀜을 되돌릴 때 전체 카메라가 본 것은 번호가 바뀐 때부터, 헷갈린 장면의 든 기록은 따로 (fusion.swap_since_confusion, 후속 68) —
     4차 C05 · C06 의 주인이 달라진다. 보기 데이터에 confusion(카메라마다 두 사람을 헷갈린 구간)이 생긴다.
 18: 상자가 다시 생긴 순간 선반 카메라의 앞뒤 순서로 번호를 정한다 (fusion.swap_ask_detail, 후속 69) — 4차 C05 · C06 의 맞바뀜을
-    그 순간에 되돌린다. 보기 데이터에 asks(물은 것)가 생기고 swaps 에 how("ask" · "pair")가 붙는다."""
+    그 순간에 되돌린다. 보기 데이터에 asks(물은 것)가 생기고 swaps 에 how("ask" · "pair")가 붙는다.
+19: 손님끼리 건넨 것을 장부에 넣는다 (fusion.handover, 후속 70) — 물건은 든 손님의 것, 건넨 손님은 확인 필요. 4차 T09 · N09 ·
+    C12 ~ C15, 3차 C01 · C05 · N09 · T09 의 손님별 개수 · 판정이 달라진다. 보기 데이터에 handovers · hand_checks 가 생긴다."""
 RUN_KEY = "current"
 
 

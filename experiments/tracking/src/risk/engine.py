@@ -72,6 +72,9 @@ class RiskEngine:
         self.book = CustomerBook(config, zone_map)
         self.payments = payments or PaymentFeed.empty()
         self.consistency = consistency
+        self.before_judge: Callable[[Frame], None] | None = None
+        """이번 장면의 기록(방문 · 결제)을 장부에 넣은 뒤, 판정하기 바로 전에 부른다 — 두 카메라 판정이 건넴을 장부에 맞춘다
+        (fusion.handover). 없으면 아무 일도 없다."""
         self.reset()
 
     def reset(self) -> None:
@@ -84,6 +87,8 @@ class RiskEngine:
         self.retracted: list[tuple[int, int]] = []
         """(손님, 프레임): '나갔다'고 확정했는데 다시 나타난 경우. 이른 판정이 있었다는 기록."""
         self._merges_seen = 0
+        self._handover_people: set[int] = set()
+        """건넴에 얽힌 적이 있는 손님 (건넴이 나중에 무효가 돼도 남긴다 — 그때도 다시 판정해야 한다)."""
 
     def update(
         self,
@@ -131,6 +136,8 @@ class RiskEngine:
         records = [self.book.pay(e, now) for e in self.payments.due(now)]
         if self.config.payment_mode == "dwell":
             records += self.book.dwell_payments(now, visible)
+        if self.before_judge is not None:
+            self.before_judge(frame)
 
         events = []
 
@@ -182,8 +189,38 @@ class RiskEngine:
                 continue
             events.append(self._release_hold(customer, frame))
 
+        self._rejudge_handovers(frame, events)
         self.events.extend(events)
         return events, records
+
+    def _rejudge_handovers(self, frame: Frame, events: list[RiskEvent]) -> None:
+        """건넴에 얽힌 손님 가운데 **이미 나간** 손님을 다시 판정해, 마지막 판정과 달라졌으면 새 판정을 낸다 (events 에 더한다).
+
+        - 건넨 손님이 먼저(또는 같은 장면에) 나가 '통과'였는데, 받은 손님이 결제 없이 나갔다 → 건넨 손님 확인 필요.
+        - 받은 손님이 나간 뒤에야 건넴이 확인됐다 → 받은 손님을 다시 판정한다.
+        같은 장면에 낸 판정이면 그 판정을 바꿔 넣는다 (한 손님에게 한 장면에 판정 둘을 내지 않는다).
+        나감 보류 중인 손님은 보류가 풀릴 때 판정하므로 건드리지 않는다. 건넴이 없으면 아무 일도 없다."""
+        for h in self.book.handovers:
+            self._handover_people.update((h.giver, h.receiver))
+        if not self._handover_people:
+            return
+        for pid in sorted({self.book.resolve(p) for p in self._handover_people}):
+            customer = self.book.customers.get(pid)
+            if customer is None or not customer.departed or customer.held_since_ms is not None:
+                continue
+            last = next((e for e in reversed(self.events + events)
+                         if e.person_id == pid and e.level != RiskLevel.WARNING), None)
+            if last is None:
+                continue
+            now = self._check_identity(customer, self._judge(customer, frame, how="건넴을 반영해 다시 판정"))
+            if (now.level, now.taken, now.unpaid) == (last.level, last.taken, last.unpaid):
+                continue
+            if any(e is last for e in events):
+                events[next(i for i, e in enumerate(events) if e is last)] = replace(
+                    now, reason=now.reason.replace(" — 건넴을 반영해 다시 판정", last.reason[last.reason.rfind(" — "):]
+                                                   if " — " in last.reason else ""))
+            else:
+                events.append(now)
 
     def finish(self, frame: Frame, frame_size: tuple[int, int] | None = None) -> list[RiskEvent]:
         """영상이 끝났다 — 출구 쪽에서 사라졌지만 확정 시간(exit_confirm_seconds)을 다 못 채운 손님을 나간 것으로 확정한다.
@@ -214,8 +251,23 @@ class RiskEngine:
                     continue
             customer.departed = True
             events.append(self._check_identity(customer, self._judge(customer, frame, how="출구 쪽에서 사라짐 (영상 끝)")))
+        self._rejudge_handovers(frame, events)
         self.events.extend(events)
         return events
+
+    def given_unpaid(self, customer: Customer) -> list[int]:
+        """이 손님이 결제 안 된 물건을 건넸고, 그것을 받은 손님이 결제가 모자란 채 나갔다 — 그 받은 손님들.
+        받은 손님이 모자란 것이 건네받은 그 물건인지는 가르지 못한다 (받은 손님의 것 전체로 본다)."""
+        out = []
+        for h in customer.gave:
+            other = self.book.customers.get(self.book.resolve(h.receiver))
+            if h.paid or other is None or not other.departed or other.person_id in out:
+                continue
+            shares = self.config.share_surplus_payments and self.config.payment_mode == "feed"
+            self.book.cover_from_surplus(other, givers_only=not shares)
+            if other.unpaid > 0:
+                out.append(other.person_id)
+        return out
 
     @staticmethod
     def _at_edge(bbox, frame_size, margin: float = 0.02) -> bool:
@@ -275,13 +327,18 @@ class RiskEngine:
     def _judge(self, customer: Customer, frame: Frame, how: str = "") -> RiskEvent:
         # 남는 결제로 메우기는 결제 기록이 있을 때만 — 계산대 체류로 어림한 결제의 '남음'은 개수가 나중에 고쳐져 생긴 것이라 뜻이 없다
         shares = self.config.share_surplus_payments and self.config.payment_mode == "feed"
-        covered = self.book.cover_from_surplus(customer) if shares else 0
+        if shares:
+            covered = self.book.cover_from_surplus(customer)
+        elif customer.got:
+            covered = self.book.cover_from_surplus(customer, givers_only=True)   # 건넨 손님이 낸 결제는 건넨 물건을 메운다 (후속 70)
+        else:
+            covered = 0
         unpaid = customer.unpaid
         detail = customer.count_detail()
         short = RiskLevel.HIGH_RISK if self.config.partial_payment_alert else RiskLevel.REVIEW
         """결제가 물건보다 적을 때의 판정 — 기본은 확인 필요, risk.partial_payment_alert 면 경보."""
-        paid = customer.paid_items + covered
-        paid_text = f"{customer.paid_items}" + (f" + 다른 손님의 남는 결제 {covered}" if covered else "")
+        paid = customer.paid + covered
+        paid_text = f"{customer.paid}" + (f" + 다른 손님의 남는 결제 {covered}" if covered else "")
         if not detail:
             # 선반 지도가 없으면 지금까지처럼 집기 행동 수로 말한다.
             if unpaid > 0 and paid == 0:
@@ -311,6 +368,13 @@ class RiskEngine:
                     else f"모두 결제함 (물건 {customer.taken} / 결제 {paid_text})"
                 )
             reason += f" [{detail}]"
+        if level == RiskLevel.CLEAR and customer.gave:
+            # 건넨 물건이 결제 없이 나갔다 — 든 사람이 경보, 건넨 사람은 확인 필요 (사용자 결정 2026-11-23, 후속 70)
+            took = self.given_unpaid(customer)
+            if took:
+                level = RiskLevel.REVIEW
+                reason += (" — 건넨 물건이 결제 없이 나감 (받은 사람: "
+                           + ", ".join(f"손님 {p}" for p in took) + ") — 확인 필요")
         if how:
             reason += f" — {how}"
         return RiskEvent(
@@ -322,7 +386,7 @@ class RiskEngine:
             time_sec=round(frame.pts_ms / 1000.0, 3),
             bbox=customer.last_bbox or (0.0, 0.0, 0.0, 0.0),
             taken=customer.taken,
-            paid=customer.paid_items,
+            paid=customer.paid,
             unpaid=unpaid,
             take_frames=tuple((c.start_frame, c.end_frame) for c in customer.takes),
             reason=reason,

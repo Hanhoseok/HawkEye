@@ -115,7 +115,7 @@ class LivePanel:
                 level = self.verdict.get(c.person_id)
                 color = COLORS.get(level, (230, 230, 230))
                 d.text((10, y), f"손님 {c.person_id}", font=mid, fill=color)
-                d.text((80, y), f"물건 {c.taken} · 결제 {c.paid_items}", font=mid, fill=(230, 230, 230))
+                d.text((80, y), f"물건 {c.taken} · 결제 {c.paid}", font=mid, fill=(230, 230, 230))
                 d.text((210, y), where, font=mid, fill=(180, 180, 180))
                 if level is not None:
                     d.text((275, y), level.value, font=small, fill=color)

@@ -410,6 +410,10 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
         "swaps": [{**s, "ms": round(s["ms"]), "found_ms": round(s["found_ms"]), "seen_ms": round(s.get("seen_ms", s["ms"]))}
                   for s in judge.swaps],
         "asks": [{**a, "ms": round(a["ms"]), "gone_ms": round(a["gone_ms"])} for a in judge.asks],
+        # 손님끼리 건넨 것 (fusion.handover, 후속 70) — 성립한 것만. hand_checks = 자기 것이 아닌 상품을 든 순간마다 따져 본 것
+        "handovers": [{"ms": round(h.ms), "giver": h.giver, "receiver": h.receiver, "name": h.name, "paid": h.paid}
+                      for h in sorted(risk.book.handovers, key=lambda h: h.ms) if not h.void],
+        "hand_checks": [{**c, "ms": round(c["ms"])} for c in judge.hand_checks],
         "confusion": {cam: [e.to_dict() for e in judge.watch[view].episodes]
                       for cam, view in (("angle1", "overview"), ("angle0", "detail"))},
         "shelf_events": result["shelf_events"],

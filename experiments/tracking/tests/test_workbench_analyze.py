@@ -231,3 +231,17 @@ def test_track_lens_lists_what_was_asked_when_a_box_came_back():
     assert ("전체 카메라의 상자가 다시 생긴 순간 선반 카메라에 물은 것 3번: 7.2초 바뀜 (+17cm), 20.5초 그대로 (-26cm), "
             "못 물음 1번 (선반 카메라도 두 사람을 헷갈림)") in texts
     assert not any("물은 것" in f["text"] for f in analyze(make(), result())["lenses"]["track"]["facts"])
+
+
+def test_take_lens_says_who_handed_what_to_whom():
+    """fusion.handover (후속 70): 손님끼리 건넨 것은 '물건 집기'에 한 줄로 — 물건은 든 손님의 것으로 센다."""
+    hand = [{"ms": 6600, "giver": 1, "receiver": 2, "name": "cantata", "paid": False}]
+    acts = [{"pid": 1, "kind": "GIVE", "name": "건넴", "count": -1, "evidence": "전체 카메라", "detail": "cantata → 손님 2",
+             "start": 6600, "end": 6600, "text": "손님 1: 건넴 — cantata → 손님 2 (전체 카메라)"}]
+    take = analyze(make(handovers=hand, actions=acts), result())["lenses"]["take"]
+    texts = [f["text"] for f in take["facts"]]
+    assert any(t.startswith("손님끼리 건넨 것 1번: 6.6초 손님 1 → 손님 아님 #2 (cantata)") for t in texts)
+    assert any(r["text"] == "건넴: 손님 1 → 손님 아님 #2 (cantata)" for r in take["log"])
+    row = next(r for r in take["rows"] if r["label"] == "행동 판정")
+    assert row["segs"][0]["tone"] == "put"
+    assert not any("건넨 것" in f["text"] for f in analyze(make(), result())["lenses"]["take"]["facts"])

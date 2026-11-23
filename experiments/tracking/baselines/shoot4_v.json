@@ -101,6 +101,7 @@
   "pair": "C13",
   "verdicts": [
    "CLEAR",
+   "CLEAR",
    "CLEAR"
   ],
   "correct": true,
@@ -111,7 +112,6 @@
  {
   "pair": "C14",
   "verdicts": [
-   "CLEAR",
    "CLEAR",
    "CLEAR"
   ],
@@ -420,8 +420,8 @@
  {
   "pair": "T09",
   "verdicts": [
-   "HIGH_RISK",
-   "CLEAR"
+   "REVIEW",
+   "HIGH_RISK"
   ],
   "correct": true,
   "people": 2,
