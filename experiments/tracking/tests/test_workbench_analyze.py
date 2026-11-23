@@ -245,3 +245,16 @@ def test_take_lens_says_who_handed_what_to_whom():
     row = next(r for r in take["rows"] if r["label"] == "행동 판정")
     assert row["segs"][0]["tone"] == "put"
     assert not any("건넨 것" in f["text"] for f in analyze(make(), result())["lenses"]["take"]["facts"])
+
+
+def test_take_lens_separates_a_corrected_owner_from_a_hand_over():
+    """건넨 것이 아니라 든 손님이 직접 집은 것 (handovers 의 direct) — '건넴'이라 부르지 않는다 (4차 C12)."""
+    hand = [{"ms": 5770, "giver": 2, "receiver": 1, "name": "donggwaru", "paid": False, "direct": True}]
+    acts = [{"pid": 1, "kind": "MINE", "name": "직접 집음", "count": 1, "evidence": "전체 카메라",
+             "detail": "donggwaru — 손에 든 것을 봄 (손님 2 에게 적혀 있던 것)", "start": 5770, "end": 5770, "text": "손님 1: 직접 집음"}]
+    take = analyze(make(handovers=hand, actions=acts), result())["lenses"]["take"]
+    texts = [f["text"] for f in take["facts"]]
+    assert any(t.startswith("집은 사람을 바로잡은 것 1번: 5.8초 donggwaru 을 손님 1 이 든 것을 봄") and "건넨 것이 아님" in t for t in texts)
+    assert not any(t.startswith("손님끼리 건넨 것") for t in texts)
+    row = next(r for r in take["rows"] if r["label"] == "행동 판정")
+    assert row["segs"][0]["tone"] == "take" and "+1개" not in row["segs"][0]["tip"] and "손님 2 에게 적혀 있던 것" in row["segs"][0]["tip"]

@@ -140,7 +140,7 @@ class DualJudge:
         """두 화면 짝이 서로 뒤집혔지만 전체 카메라 번호 맞바뀜으로 안 본 것 — 까닭과 함께 (재 보려고 적어 둔다)."""
         self.hand_checks: list[dict] = []
         """자기 것이 아닌 상품을 든 순간마다 따져 본 것 (fusion.handover, 장면마다 새로 쓴다): ms · pid(든 손님) · name ·
-        say("건넴" · "기다림" · "줄 사람 없음" · "못 가름") · giver · why."""
+        say("건넴" · "직접 집음" · "기다림" · "줄 사람 없음" · "못 가름") · giver · giver_frames(건넨 손님 손에서 그 종류를 본 장면 수) · why."""
         self._touch: dict[tuple[int, int], list[float]] = {}
         """두 손님의 상자가 닿은 장면의 시각들 (전체 카메라, 작은 번호 먼저) — 건넴은 닿을 만큼 가까워야 한다."""
         self._hand_key = None
@@ -562,13 +562,13 @@ class DualJudge:
         slack = self.config.event_tolerance_seconds * 1000.0
         near = self.config.handover_near_seconds * 1000.0
         waiting = [s for s, _ in self._open_visits] + [s for _, _, s, _ in self._pending_visits]
-        wanted: list[tuple[float, int, int, str]] = []   # (ms, 건넨 손님, 받은 손님, 종류)
+        wanted: list[tuple[float, int, int, str, bool]] = []   # (ms, 건넨 손님, 받은 손님, 종류, 직접 집음)
         checks = []
 
         def have(pid: int, at: int) -> dict[str, int]:
             customer = book.customers.get(pid)
             out = dict(customer.picked_kinds(at)) if customer is not None else {}
-            for _, giver, receiver, name in wanted:
+            for _, giver, receiver, name, _ in wanted:
                 if giver == pid:
                     k = name if out.get(name, 0) > 0 else UNKNOWN_KIND
                     out[k] = out.get(k, 0) - 1
@@ -607,21 +607,24 @@ class DualJudge:
                 best = sorted((t, q) for q, t in seen.items() if t is not None)
                 cands = [best[-1][1]] if best and (len(best) == 1 or best[-1][0] > best[-2][0]) else cands
             if len(cands) == 1:
-                row["say"], row["giver"] = "건넴", cands[0]
-                wanted.append((start, cands[0], pid, name))
+                # 건넨 손님 손에서 그 종류를 본 적이 없으면 건넨 것이 아니다 — 받은 손님이 직접 집었고 주인을 잘못 정했던 것 (4차 C12)
+                seen = self.holders.count(cands[0], name, 0.0, start - 0.1)
+                direct = seen < self.config.handover_giver_frames
+                row["say"], row["giver"], row["giver_frames"] = ("직접 집음" if direct else "건넴"), cands[0], seen
+                wanted.append((start, cands[0], pid, name, direct))
             else:
                 row["say"] = "못 가름" if cands else "줄 사람 없음"
                 row["why"] = (f"줄 수 있던 손님이 {len(cands)}명" if cands else "; ".join(why))
         self.hand_checks = checks
 
-        old = {(h.ms, h.giver, h.receiver, h.name): h for h in book.handovers}
+        old = {(h.ms, h.giver, h.receiver, h.name, h.direct): h for h in book.handovers}
         for k, h in old.items():
             if k not in wanted:
                 book.drop_handover(h)
         for k in wanted:
             if k not in old:
-                ms, giver, receiver, name = k
-                book.hand_over(giver, receiver, name, ms, axis.to_frame(ms), frame.pts_ms)
+                ms, giver, receiver, name, direct = k
+                book.hand_over(giver, receiver, name, ms, axis.to_frame(ms), frame.pts_ms, direct)
         self._hand_key = (len(self.holders.samples), book.changes, len(self._pending_visits), len(self._open_visits))
 
     def _sensor_hold(self) -> list[tuple[float, float, str]]:

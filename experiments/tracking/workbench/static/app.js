@@ -572,7 +572,9 @@ class Player {
       if (this.data.actions.some(a => a.pid === pid && a.end <= this.t && Math.abs(a.end - h.until) < 100)) continue;
       n += 1;
     }
-    return n;
+    // 가진 개수는 결과 값이다 — 0 아래로 안 내려간다. 건넴(-1)은 받은 손님 손에서 본 때에 적히고, 그 물건을 집은 것(+1)은
+    // 선반 방문이 끝난 때에 적힌다. 그 사이를 그대로 더하면 -1 로 보였다 (4차 N09 8.6 ~ 10.1초).
+    return Math.max(0, n);
   }
   paidOf(pid) {
     let n = 0;

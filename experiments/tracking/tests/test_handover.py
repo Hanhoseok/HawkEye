@@ -268,6 +268,21 @@ def test_hand_over_found_after_the_receiver_left_rejudges_them():
     assert levels(step(eng, 6.2, 1.0, {1: EXIT}) + step(eng, 7.2, 4.0, {})) == [R]
 
 
+def test_direct_pick_moves_the_item_without_payment_or_review():
+    # 직접 집은 것(direct): 든 손님이 결제 없이 나가면 그 손님만 경보다. 물건이 적혀 있던 손님은 건넨 적이 없다 — 통과
+    eng = engine(payments=[PaymentEvent(0.5, 1, person_id=1)])
+    step(eng, 0.0, 1.0, {1: AISLE, 2: AISLE})
+    eng.book.add_shelf_visit(visit(1, start=2), 1000.0)
+    h = eng.book.hand_over(1, 2, "cantata", 1500.0, 15, 1800.0, direct=True)
+    assert h.direct and not h.paid                                             # 적혀 있던 손님이 결제를 마쳤어도 결제는 안 따라간다
+    assert eng.book.given_unpaid(eng.book.customers[1]) == 0
+    events = step(eng, 2.0, 1.0, {1: EXIT, 2: EXIT}) + step(eng, 3.0, 4.0, {})
+    assert last_by_person(events) == {1: C, 2: H}
+    assert "다른 손님의 남는 결제" not in "".join(e.reason for e in events)      # 남의 결제로 메우지도 않는다 (나누기 꺼짐)
+    taker = next(e for e in events if e.person_id == 2 and e.level == H)
+    assert "물건 1개, 결제 없음 [직접 집음 1개 (손님 1 에게 적혀 있던 것)]" in taker.reason
+
+
 def test_engine_without_hand_overs_is_untouched():
     eng = engine()
     step(eng, 0.0, 1.0, {1: AISLE})
@@ -313,9 +328,12 @@ def test_hold_starts_at_the_first_dense_frames_not_at_a_stray_one():
 
 # ---------------------------------------------------------------------- 건넴 찾기 (DualJudge._hand_overs)
 
-def judge_with_pick(giver_kinds=("cantata",), **cfg):
-    """1번이 선반에서 집었다 (0.3초에 시작한 방문). 2번은 매장에 있다. 두 사람의 상자는 4 ~ 6초에 닿아 있었다."""
+def judge_with_pick(giver_kinds=("cantata",), giver_held=True, **cfg):
+    """1번이 선반에서 집었다 (0.3초에 시작한 방문). 2번은 매장에 있다. 두 사람의 상자는 4 ~ 6초에 닿아 있었다.
+    giver_held: 1번이 3 ~ 3.5초에 그것을 들고 있는 것이 보였다 (건넴이려면 건넨 손님 손에서 먼저 봤어야 한다)."""
     judge, risk = make_judge(handover=True, **cfg)
+    if giver_held:
+        hold(judge.holders, 3.0, 3.5, A_ITEM, [A, B])
     b = risk.book
     b.add_shelf_visit(visit(1, start=10, kinds=giver_kinds), 3000.0)
     b._get(2, 1000.0)
@@ -336,8 +354,34 @@ def test_item_seen_in_the_hand_of_someone_who_picked_nothing_was_handed_over():
     hold(judge.holders, 5.0, 6.0, B_ITEM, [A, B])
     assert found(judge, b) == [(1, 2, "cantata", 5000.0)]
     assert b.customers[1].taken == 0 and b.customers[2].taken == 1
-    assert [(c["say"], c["giver"]) for c in judge.hand_checks] == [("건넴", 1)]
+    assert [(c["say"], c["giver"]) for c in judge.hand_checks] == [("건넴", 1)] and not b.handovers[0].direct
     assert found(judge, b) == [(1, 2, "cantata", 5000.0)]                      # 다시 따져도 같은 건넴 하나
+
+
+def test_item_never_seen_in_the_givers_hand_was_picked_by_the_holder():
+    # 4차 C12 (장면으로 확인): 두 사람이 함께 선반 앞에 있던 방문의 물건 2개가 한 손님에게 다 적혔다. 다른 손님은 자기 것을 직접 집어 들고 있었다.
+    # 적혀 있던 손님 손에서는 그 물건을 본 적이 없다 — 건넨 것이 아니라 집은 사람을 잘못 정했던 것이다
+    judge, b = judge_with_pick(giver_held=False)
+    hold(judge.holders, 5.0, 6.0, B_ITEM, [A, B])
+    assert found(judge, b) == [(1, 2, "cantata", 5000.0)] and b.handovers[0].direct
+    assert [(c["say"], c["giver"], c["giver_frames"]) for c in judge.hand_checks] == [("직접 집음", 1, 0)]
+    a, c = b.customers[1], b.customers[2]
+    assert (a.taken, c.taken) == (0, 1)                                        # 개수는 든 손님에게 옮긴다
+    assert [x.kind for x in a.actions] == ["TAKE", "THEIRS"] and [x.kind for x in c.actions] == ["MINE"]
+    assert a.count_detail() == "집음 1개, 다른 손님이 집음 1개 (손님 2)"
+    assert c.count_detail() == "직접 집음 1개 (손님 1 에게 적혀 있던 것)"
+    assert c.actions[0].describe() == "손님 2: 직접 집음 — cantata — 손에 든 것을 봄 (손님 1 에게 적혀 있던 것) (전체 카메라)"
+
+
+def test_one_stray_frame_in_the_givers_hand_is_enough_unless_more_are_asked():
+    judge, b = judge_with_pick(giver_held=False)
+    judge.holders.update(3000.0, A_ITEM, [A, B], REGION)                       # 1번 손에서 한 장면
+    hold(judge.holders, 5.0, 6.0, B_ITEM, [A, B])
+    assert found(judge, b) == [(1, 2, "cantata", 5000.0)] and not b.handovers[0].direct
+    judge, b = judge_with_pick(giver_held=False, handover_giver_frames=3)
+    judge.holders.update(3000.0, A_ITEM, [A, B], REGION)
+    hold(judge.holders, 5.0, 6.0, B_ITEM, [A, B])
+    assert len(found(judge, b)) == 1 and b.handovers[0].direct
 
 
 def test_holding_your_own_item_is_not_a_hand_over():
@@ -356,7 +400,7 @@ def test_no_hand_over_between_people_who_never_touched():
 
 def test_no_hand_over_when_both_hold_that_kind_at_once():
     # 둘이 함께 들고 있으면 물건이 둘이다 — 받은 쪽의 방문을 놓친 것이지 건넨 것이 아니다
-    judge, b = judge_with_pick()
+    judge, b = judge_with_pick(giver_held=False)
     hold(judge.holders, 5.0, 6.0, A_ITEM + B_ITEM, [A, B])
     assert found(judge, b) == []
     assert "그때 들고 있었음" in next(c for c in judge.hand_checks if c["pid"] == 2)["why"]
@@ -418,12 +462,12 @@ def test_handing_back_is_a_second_hand_over():
     for c in b.customers.values():
         c.last_seen_ms = 12000.0
     judge._hand_overs(frame_at(12000.0))
-    assert [(h.giver, h.receiver) for h in b.handovers] == [(1, 2), (2, 1)]
+    assert [(h.giver, h.receiver, h.direct) for h in b.handovers] == [(1, 2, False), (2, 1, False)]
     assert b.customers[1].taken == 1 and b.customers[2].taken == 0
 
 
 def test_hand_over_search_is_off_by_default_and_needs_the_holder_record():
-    assert FusionConfig().handover is False and FusionConfig().handover_own_any is True
+    assert FusionConfig().handover is False and FusionConfig().handover_own_any is True and FusionConfig().handover_giver_frames == 1
     judge, risk = make_judge()
     assert judge.handover_on is False and risk.before_judge is None
     from src.fusion.judge import DualJudge
@@ -437,3 +481,21 @@ def test_hand_over_search_is_off_by_default_and_needs_the_holder_record():
     assert judge.handover_on is False                                          # 전체 카메라가 든 사람을 안 보면 찾을 수 없다
     judge, risk = make_judge(handover=True)
     assert judge.handover_on is True and risk.before_judge == judge._hand_overs
+
+
+def test_item_moved_after_the_holder_already_stood_at_the_counter_is_paid_in_dwell_mode():
+    # 4차 C13 센서 모드: 손님이 5.5초부터 들고 계산대에 섰다 떠났다. 그 물건은 선반 방문이 끝난 뒤에야 그 손님의 것으로 옮겨졌다
+    eng = RiskEngine(RiskConfig(payment_mode="dwell"), zones(), PaymentFeed.empty())
+    step(eng, 0.0, 1.0, {1: AISLE, 2: AISLE})
+    step(eng, 1.0, 2.5, {1: AISLE, 2: CHECKOUT})                               # 2번이 계산대에 섰다 — 장부에는 아직 가진 것이 없다
+    eng.book.add_shelf_visit(visit(1, start=2), 3500.0)
+    h = eng.book.hand_over(1, 2, "cantata", 500.0, 5, 3600.0, direct=True)     # 0.5초부터 2번 손에 있었다
+    assert h is not None and eng.book.customers[2].unpaid == 0
+    events = step(eng, 3.6, 1.0, {1: EXIT, 2: EXIT}) + step(eng, 4.6, 4.0, {})
+    assert last_by_person(events) == {1: C, 2: C}
+    eng = RiskEngine(RiskConfig(payment_mode="dwell"), zones(), PaymentFeed.empty())
+    step(eng, 0.0, 1.0, {1: AISLE, 2: AISLE})
+    step(eng, 1.0, 2.5, {1: AISLE, 2: CHECKOUT})
+    eng.book.add_shelf_visit(visit(1, start=2), 3500.0)
+    eng.book.hand_over(1, 2, "cantata", 3550.0, 35, 3600.0, direct=True)       # 계산대를 떠난 뒤에 든 것은 결제한 것이 아니다
+    assert eng.book.customers[2].unpaid == 1

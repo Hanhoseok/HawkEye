@@ -53,7 +53,8 @@ VERSION = 19
 18: 상자가 다시 생긴 순간 선반 카메라의 앞뒤 순서로 번호를 정한다 (fusion.swap_ask_detail, 후속 69) — 4차 C05 · C06 의 맞바뀜을
     그 순간에 되돌린다. 보기 데이터에 asks(물은 것)가 생기고 swaps 에 how("ask" · "pair")가 붙는다.
 19: 손님끼리 건넨 것을 장부에 넣는다 (fusion.handover, 후속 70) — 물건은 든 손님의 것, 건넨 손님은 확인 필요. 4차 T09 · N09 ·
-    C12 ~ C15, 3차 C01 · C05 · N09 · T09 의 손님별 개수 · 판정이 달라진다. 보기 데이터에 handovers · hand_checks 가 생긴다."""
+    C12 ~ C15, 3차 C01 · C05 · N09 · T09 의 손님별 개수 · 판정이 달라진다. 보기 데이터에 handovers · hand_checks 가 생긴다.
+    handovers 의 direct = 건넨 것이 아니라 든 손님이 직접 집은 것 (집은 사람을 바로잡음 — 4차 C12 등)."""
 RUN_KEY = "current"
 
 

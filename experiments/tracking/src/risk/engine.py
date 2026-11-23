@@ -261,8 +261,8 @@ class RiskEngine:
         out = []
         for h in customer.gave:
             other = self.book.customers.get(self.book.resolve(h.receiver))
-            if h.paid or other is None or not other.departed or other.person_id in out:
-                continue
+            if h.paid or h.direct or other is None or not other.departed or other.person_id in out:
+                continue   # 직접 집은 것(direct)은 건넨 것이 아니다 — 확인 필요를 붙이지 않는다
             shares = self.config.share_surplus_payments and self.config.payment_mode == "feed"
             self.book.cover_from_surplus(other, givers_only=not shares)
             if other.unpaid > 0:
@@ -329,7 +329,7 @@ class RiskEngine:
         shares = self.config.share_surplus_payments and self.config.payment_mode == "feed"
         if shares:
             covered = self.book.cover_from_surplus(customer)
-        elif customer.got:
+        elif any(not h.direct for h in customer.got):
             covered = self.book.cover_from_surplus(customer, givers_only=True)   # 건넨 손님이 낸 결제는 건넨 물건을 메운다 (후속 70)
         else:
             covered = 0
@@ -368,7 +368,7 @@ class RiskEngine:
                     else f"모두 결제함 (물건 {customer.taken} / 결제 {paid_text})"
                 )
             reason += f" [{detail}]"
-        if level == RiskLevel.CLEAR and customer.gave:
+        if level == RiskLevel.CLEAR and any(not h.direct for h in customer.gave):
             # 건넨 물건이 결제 없이 나갔다 — 든 사람이 경보, 건넨 사람은 확인 필요 (사용자 결정 2026-11-23, 후속 70)
             took = self.given_unpaid(customer)
             if took:

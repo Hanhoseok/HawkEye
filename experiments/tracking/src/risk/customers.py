@@ -51,6 +51,10 @@
     결제됨은 물건과 함께 간다    건넨 손님이 그때 가진 것을 모두 결제했으면 결제 1개도 받은 손님에게 옮긴다
     나갈 때                   결제 안 된 물건을 **든** 손님이 경보. 그 물건을 건넨 손님은 확인 필요 (engine.py)
 
+직접 집음 (Handover.direct): 물건이 한 손님에게 적혀 있는데 다른 손님 손에서 보였고, **적혀 있던 손님 손에서는 한 번도 못 봤다**.
+건넨 것이 아니다 — 함께 선반 앞에 있던 두 사람 가운데 집은 사람을 잘못 정했던 것이다 (4차 C12: 장면으로 확인). 물건은 든 손님의
+것으로 옮기지만 '건넴'이라 부르지 않고, 결제도 따라가지 않고, 적혀 있던 손님에게 확인 필요도 붙이지 않는다.
+
 물건마다 줄을 따로 두지는 않는다 — 집은 개수(선반 근거)는 그대로 두고, 건넴 기록을 시간순으로 다시 따라가 손님별 순변화를 낸다
 (CustomerBook.rebalance). 선반 근거가 나중에 고쳐져 건넨 손님에게 그 물건이 없게 되면 그 건넴은 무효(void)다.
 건넴이 없으면 모든 수가 예전과 같다.
@@ -130,7 +134,7 @@ class HeldItem:
 KIND_NAMES = {
     "TAKE": "집음", "RETURN": "놓음", "MOVE": "자리 바뀜",
     "TOUCH": "만지기만", "LOOK": "구경", "UNVERIFIED": "확인 못 한 집기 동작", "HELD": "든 것을 봄",
-    "GIVE": "건넴", "GET": "건네받음",
+    "GIVE": "건넴", "GET": "건네받음", "MINE": "직접 집음", "THEIRS": "다른 손님이 집음",
 }
 
 UNKNOWN_KIND = "?"
@@ -150,6 +154,9 @@ class Handover:
     """상품 종류."""
     paid: bool = False
     """건넬 때 이미 결제된 물건이었나 — 건넨 손님이 그때 가진 것을 모두 결제한 상태였다. 그러면 결제 1개가 물건을 따라간다."""
+    direct: bool = False
+    """건넨 것이 아니라 받은 손님이 **직접 집은 것** — giver 는 그 물건이 (선반 방문의 주인 정하기로) 적혀 있던 손님일 뿐이다.
+    그 손님 손에서 그 종류를 본 적이 없으면 이렇게 본다. 개수는 똑같이 옮기고, 결제 · 확인 필요는 따라가지 않는다."""
     void: bool = False
     """지금 장부로는 성립하지 않는다 (건넨 손님에게 그 물건이 없다 · 두 사람이 한 사람으로 합쳐졌다). rebalance 가 매번 다시 정한다."""
 
@@ -165,7 +172,7 @@ class ShelfAction:
     kind: str
     count: int
     """가진 물건 수의 변화. 집음 +n, 놓음 -n, 자리 바뀜은 순변화, 만지기만·구경 0, 확인 못 함 +1, 든 것을 봄 +1,
-    건넴 -1, 건네받음 +1."""
+    건넴 -1, 건네받음 +1, 직접 집음 +1, 다른 손님이 집음 -1."""
     start_frame: int
     end_frame: int
     evidence: str
@@ -323,11 +330,14 @@ class Customer:
         """이 손님의 행동 목록 (시간순). 선반 방문마다 하나 + 선반 기록이 없는 집기 행동마다 하나 + 건넴 · 건네받음마다 하나."""
         acts = self.own_actions
         for h in self.gave:
-            acts.append(ShelfAction(person_id=self.person_id, kind="GIVE", count=-1, start_frame=h.frame, end_frame=h.frame,
-                                    evidence="전체 카메라", detail=f"{h.name} → 손님 {h.receiver}"))
+            acts.append(ShelfAction(person_id=self.person_id, kind="THEIRS" if h.direct else "GIVE", count=-1,
+                                    start_frame=h.frame, end_frame=h.frame, evidence="전체 카메라",
+                                    detail=(f"{h.name} — 손님 {h.receiver} 손에서 봄" if h.direct else f"{h.name} → 손님 {h.receiver}")))
         for h in self.got:
-            acts.append(ShelfAction(person_id=self.person_id, kind="GET", count=1, start_frame=h.frame, end_frame=h.frame,
-                                    evidence="전체 카메라", detail=f"{h.name} ← 손님 {h.giver}"))
+            acts.append(ShelfAction(person_id=self.person_id, kind="MINE" if h.direct else "GET", count=1,
+                                    start_frame=h.frame, end_frame=h.frame, evidence="전체 카메라",
+                                    detail=(f"{h.name} — 손에 든 것을 봄 (손님 {h.giver} 에게 적혀 있던 것)" if h.direct
+                                            else f"{h.name} ← 손님 {h.giver}")))
         return sorted(acts, key=lambda a: a.start_frame)
 
     @property
@@ -411,12 +421,12 @@ class Customer:
         held = sum(a.count for a in acts if a.kind == "HELD")
         if held:
             parts.append(f"든 것을 봄 {held}개")
-        if self.got:
-            who = ", ".join(f"손님 {p}" for p in sorted({h.giver for h in self.got}))
-            parts.append(f"건네받음 {len(self.got)}개 ({who} 에게서)")
-        if self.gave:
-            who = ", ".join(f"손님 {p}" for p in sorted({h.receiver for h in self.gave}))
-            parts.append(f"건넴 {len(self.gave)}개 ({who} 에게)")
+        for direct, items, text in ((True, self.got, "직접 집음 {n}개 ({who} 에게 적혀 있던 것)"), (False, self.got, "건네받음 {n}개 ({who} 에게서)"),
+                                    (True, self.gave, "다른 손님이 집음 {n}개 ({who})"), (False, self.gave, "건넴 {n}개 ({who} 에게)")):
+            some = [h for h in items if h.direct == direct]
+            if some:
+                others = sorted({h.giver if items is self.got else h.receiver for h in some})
+                parts.append(text.format(n=len(some), who=", ".join(f"손님 {p}" for p in others)))
         put = -sum(a.count for a in acts if a.kind == "RETURN")
         if put:
             parts.append(f"놓음 {put}개")
@@ -521,8 +531,10 @@ class CustomerBook:
 
     # ------------------------------------------------------------------ 건넴
 
-    def hand_over(self, giver: int, receiver: int, name: str, ms: float, frame: int, now_ms: float) -> Handover | None:
+    def hand_over(self, giver: int, receiver: int, name: str, ms: float, frame: int, now_ms: float,
+                  direct: bool = False) -> Handover | None:
         """giver 가 receiver 에게 name 하나를 건넸다. 건넨 손님에게 그 물건이 없으면 적지 않는다 (None).
+        direct = 건넨 것이 아니라 receiver 가 직접 집은 것 (giver 에게 잘못 적혀 있었다) — 결제는 따라가지 않는다.
 
         결제됨은 물건과 함께 간다: 건넨 손님이 지금 가진 것을 모두 결제한 상태면(결제 ≥ 가진 수 ≥ 1) 그 물건은 결제된 것 —
         결제 1개가 받은 손님에게 옮겨 간다. 결제 안 한 것이 하나라도 있으면 결제 안 된 물건을 건넨 것으로 본다
@@ -530,7 +542,7 @@ class CustomerBook:
         g, r = self._get(giver, now_ms), self._get(receiver, now_ms)
         if g is r:
             return None
-        item = Handover(ms, frame, g.person_id, r.person_id, name, self._paid_then(g, ms, frame))
+        item = Handover(ms, frame, g.person_id, r.person_id, name, False if direct else self._paid_then(g, ms, frame), direct)
         self.handovers.append(item)
         self._had_handovers = True
         self.rebalance()
@@ -538,6 +550,14 @@ class CustomerBook:
             self.handovers.remove(item)
             self.rebalance()
             return None
+        # payment_mode="dwell": 받은 손님이 그 물건을 든 뒤(ms) 계산대에 섰다 떠났는데, 건넴 · 직접 집음이 그 뒤에야 확인됐다 — 그 물건도
+        # 결제한 것이다. 늦게 들어온 선반 방문과 같은 규칙 (_late_dwell_payment). 4차 C13 센서 모드: 손님 1 이 5.5초부터 들고 계산했는데
+        # 그 물건은 방문이 끝난 뒤에야 손님 1 의 것으로 옮겨졌다
+        if (self.config.payment_mode == "dwell" and not item.paid and r.stood_until_ms is not None
+                and r.stood_until_ms >= ms and r.unpaid > 0):
+            r.paid_items += 1
+            r.dwell_paid_items += 1
+            self.payments.append(PaymentRecord(round(now_ms / 1000.0, 3), 1, r.person_id, "dwell", 1))
         return item
 
     def _paid_then(self, giver: Customer, ms: float, frame: int) -> bool:
@@ -793,10 +813,10 @@ class CustomerBook:
             return 0
         net: dict[int, int] = {}
         for h in customer.gave:
-            if not h.paid:
+            if not h.paid and not h.direct:
                 net[h.receiver] = net.get(h.receiver, 0) + 1
         for h in customer.got:
-            if h.giver in net:
+            if h.giver in net and not h.direct:
                 net[h.giver] -= 1
         total = 0
         for pid, n in net.items():
@@ -818,7 +838,7 @@ class CustomerBook:
             return 0
         if givers_only:
             # 건넨 손님의 남는 결제만 — 건넨 손님이 그 물건 값을 냈다 (남는 결제를 매장 전체로 나누지 않을 때 · 계산대 체류로 어림할 때)
-            givers = {self.resolve(h.giver) for h in customer.got if not h.paid}
+            givers = {self.resolve(h.giver) for h in customer.got if not h.paid and not h.direct}
             spare = sum(max(0, c.paid - c.taken) for pid, c in self.customers.items() if pid in givers and c is not customer)
             spare -= sum(c.covered_items for c in self.customers.values() if c is not customer)
             customer.covered_items = max(0, min(need, spare))
