@@ -197,3 +197,18 @@ def test_payment_log_view_does_not_say_payment_was_guessed():
     said = lambda dwell: " ".join(f["text"] for f in analyze(make(payments=paid), result(), dwell)["lenses"]["verdict"]["facts"])  # noqa: E731
     assert "실제 결제가 아님" in said(1.5)
     assert "결제 기록 사용" in said(None) and "실제 결제가 아님" not in said(None)
+
+
+def test_track_lens_lists_the_spans_where_a_camera_confused_two_people():
+    data = make(confusion={"angle1": [{"a": 1, "b": 2, "start_ms": 8600.0, "end_ms": 9600.0, "switch_ms": 8866.4,
+                                       "peak": 0.61, "merged": True}], "angle0": []})
+    texts = [f["text"] for f in analyze(data, result())["lenses"]["track"]["facts"]]
+    assert "전체 카메라가 두 사람을 헷갈린 구간 1번: 8.6~9.6초 (상자 하나로 합쳐짐)" in texts
+    assert not any(t.startswith("선반 카메라가 두 사람을 헷갈린") for t in texts)
+
+
+def test_swap_text_says_when_the_overview_records_were_reread_from():
+    swap = {"ms": 10133, "found_ms": 10666, "screen": [1, 2], "store": [1, 2], "detail": [1, 2], "overview_overlap": 0.51,
+            "detail_overlap": 0.475, "seen_ms": 8866.4, "held_moved": 2}
+    texts = [f["text"] for f in analyze(make(swaps=[swap]), result())["lenses"]["track"]["facts"]]
+    assert any("8.9초부터 바꿔 읽음" in t and "'든 것' 2개의 주인을 옮김" in t for t in texts)

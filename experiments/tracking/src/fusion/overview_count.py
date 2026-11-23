@@ -273,11 +273,17 @@ class HolderTracker:
         self.min_frames, self.reach, self.score, self.merge_iou = min_frames, reach, score, merge_iou
         self.resolve = lambda pid: pid
         """적어 둔 신원 → 지금의 신원 (그 뒤 합쳐진 신원을 한 사람으로 보게). 판정이 손님 장부의 것을 넣는다."""
+        self.confused = None
+        """(신원, ms) → 그 장면에 전체 카메라가 그 사람을 다른 사람과 헷갈리고 있었나. 판정이 넣는다 (fusion.swap_since_confusion).
+        헷갈린 장면의 '든 사람'은 따로 적는다 (unsure) — 두 상자가 겹치면 상품이 누구 손에 있는지도 못 가른다 (4차 C05, 후속 68).
+        '방금 들었다'(fresh)에는 안 쓰고, 방문의 주인을 나눌 때 **확실한 장면만으로는 든 사람이 모자란 종류**에만 쓴다 (owners)."""
         self.reset()
 
     def reset(self) -> None:
         self.samples: list[tuple[float, int, str]] = []
         """(ms, 신원, 종류) — 그 장면에서 그 사람이 그 종류를 들고 있었다."""
+        self.unsure: list[tuple[float, int, str]] = []
+        """같은 꼴 — 전체 카메라가 그 사람을 다른 사람과 헷갈리던 장면의 것."""
         self._recent: dict[tuple[int, str], deque] = {}
         self._fresh: list[tuple[int, str, float, float]] = []
         self._told: set[tuple[int, str]] = set()
@@ -292,12 +298,31 @@ class HolderTracker:
             if x1 <= cx <= x2 and y1 <= cy <= y2:
                 continue
             pid = holder_of(it, people, self.reach)
+            if pid is not None and self.confused is not None and self.confused(pid, ms):
+                self.unsure.append((ms, pid, it[0]))
+                continue
             if pid is not None:
                 self.samples.append((ms, pid, it[0]))
                 recent = self._recent.setdefault((pid, it[0]), deque(maxlen=self.min_frames))
                 recent.append(ms)
                 if len(recent) == self.min_frames and ms - recent[0] <= HOLD_WITHIN_MS:
                     self._fresh.append((pid, it[0], recent[0], ms))
+
+    def swap(self, a: int, b: int, since_ms: float) -> None:
+        """since_ms 부터 적어 둔 '든 사람'에서 신원 a · b 를 서로 바꾼다 — 그때부터 전체 카메라가 두 사람의 번호를 뒤바꿔 붙였다
+        (fusion.swap_since_confusion). 아직 안 알린 '방금 든 것'도 바꾼다. 이미 알린 것은 판정이 장부에서 옮긴다."""
+        flip = {a: b, b: a}
+        self.samples = [(ms, flip.get(pid, pid) if ms >= since_ms else pid, name) for ms, pid, name in self.samples]
+        self.unsure = [(ms, flip.get(pid, pid) if ms >= since_ms else pid, name) for ms, pid, name in self.unsure]
+        recent: dict[tuple[int, str], deque] = {}
+        for ms, pid, name in self.samples:
+            recent.setdefault((pid, name), deque(maxlen=self.min_frames)).append(ms)
+        self._recent = recent
+        self._fresh = [(flip.get(pid, pid) if first >= since_ms else pid, name, first, ms) for pid, name, first, ms in self._fresh]
+
+    def mark_told(self, pid: int, name: str) -> None:
+        """그 사람의 그 종류는 이미 '방금 든 것'으로 알렸다 — 다시 알리지 않는다 (번호를 바꿔 읽어 주인이 옮겨진 것)."""
+        self._told.add((self.resolve(pid), name))
 
     def fresh(self) -> list[tuple[int, str, float, float]]:
         """지난번 물은 뒤로 '들었다'고 확정된 것 — (신원, 종류, 손에서 처음 본 ms, 확정한 ms).
@@ -314,16 +339,17 @@ class HolderTracker:
         self._fresh = []
         return out
 
-    def first_holders(self, name: str, start_ms: float, until_ms: float) -> list[int]:
+    def first_holders(self, name: str, start_ms: float, until_ms: float, unsure: bool = False) -> list[int]:
         """[start_ms, until_ms] 에 그 종류를 든 사람들 — 먼저 든 순서. 방문 전에 이미 들고 있던 사람은 뺀다."""
-        when = self.first_held(name, start_ms, until_ms)
+        when = self.first_held(name, start_ms, until_ms, unsure)
         return sorted(when, key=lambda pid: when[pid])
 
-    def first_held(self, name: str, start_ms: float, until_ms: float) -> dict[int, float]:
-        """[start_ms, until_ms] 에 그 종류를 든 사람 → 든 것으로 본 시각 (min_frames 번째 장면). 방문 전에 이미 들고 있던 사람은 뺀다."""
+    def first_held(self, name: str, start_ms: float, until_ms: float, unsure: bool = False) -> dict[int, float]:
+        """[start_ms, until_ms] 에 그 종류를 든 사람 → 든 것으로 본 시각 (min_frames 번째 장면). 방문 전에 이미 들고 있던 사람은 뺀다.
+        unsure = 전체 카메라가 그 사람을 헷갈리던 장면의 것도 넣는다."""
         seen: dict[int, list[float]] = {}
         had: Counter = Counter()
-        for ms, pid, cls in self.samples:
+        for ms, pid, cls in (self.samples + self.unsure if unsure else self.samples):
             if cls != name or ms > until_ms:
                 continue
             pid = self.resolve(pid)
@@ -342,6 +368,12 @@ class HolderTracker:
         '칸타타를 먼저 든 사람'까지 됐다 — 두 사람이 하나씩 꺼냈는데 2개가 한 사람에게 붙었다). 그래서 종류마다 따로 '먼저 든 사람'을
         고르지 않고, 든 사람들에게 하나씩 돌아가게 나눈다. 한 종류만 줄었을 때는 예전과 같다 (먼저 든 사람부터 — 3차 T09)."""
         holders = {name: self.first_holders(name, start_ms, until_ms) for name in removed_by}
+        if self.unsure:
+            # 확실한 장면에서 든 사람이 줄어든 개수보다 적은 종류만 — 헷갈리던 장면에서 든 사람을 뒤에 붙인다 (4차 L1: 셋째 손님은
+            # 다른 손님과 겹친 채로만 들고 있었다). 모자라지 않으면 안 쓴다 (4차 C05: 앞에 선 손님 손목 곁에 뒷사람의 상품이 보였다)
+            for name, n in removed_by.items():
+                if n > len(holders[name]):
+                    holders[name] += [p for p in self.first_holders(name, start_ms, until_ms, True) if p not in holders[name]]
         given: Counter = Counter()
         picked: dict[str, list[int | None]] = {}
         for name in sorted(removed_by, key=lambda n: (len(holders[n]), n)):

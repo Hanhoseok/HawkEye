@@ -46,8 +46,8 @@
  {
   "pair": "C05",
   "verdicts": [
-   "HIGH_RISK",
-   "CLEAR"
+   "CLEAR",
+   "HIGH_RISK"
   ],
   "correct": false,
   "people": 2,

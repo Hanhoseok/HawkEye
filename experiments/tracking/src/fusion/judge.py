@@ -9,6 +9,10 @@
 
 매장 신원은 전체 카메라의 화면 신원 그대로다. 단 전체 카메라가 두 사람의 번호를 뒤바꿔 붙인 것을 선반 카메라로 알아챘을 때
 (fusion.swap_repair)는 그때부터 두 번호를 서로 바꿔 읽는다 — 짝·손님 장부·판정에는 바꿔 읽은 번호(매장 신원)가 들어간다.
+
+두 카메라 모두 '두 사람을 헷갈린 구간'(상자 겹침 · 합쳐짐)을 적는다 (confusion.ConfusionWatch). 전체 카메라가 헷갈린 구간은
+선반 카메라로 정한다 (fusion.swap_since_confusion): 맞바뀜을 되돌릴 때 전체 카메라가 본 것은 번호가 바뀐 때부터 바꿔 읽고,
+헷갈린 장면에서 본 '손에 든 상품'은 따로 둔다 (후속 68).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from ..risk.customers import HeldItem, ShelfVisit
 from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
+from .confusion import ConfusionWatch
 from .overview_count import HolderTracker, OverviewCounter
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
 
@@ -78,6 +83,8 @@ class DualJudge:
         self.fuser.hold_wait_ms = self.visit_delay_ms
         if self.holders is not None and getattr(risk, "book", None) is not None:
             self.holders.resolve = risk.book.resolve   # 든 뒤에 합쳐진 신원은 한 사람으로
+        if self.holders is not None and config.swap_since_confusion:
+            self.holders.confused = lambda pid, ms: bool(self.watch["overview"].touching(pid, ms, ms))
         self.shelf_image = shelf_image
         self.reach = None
         """전체 카메라 팔 뻗기 (손목이 화면의 선반 영역 안). 손목 기록만 있으면 되므로 기록 재실행에서도 같이 돈다."""
@@ -123,6 +130,10 @@ class DualJudge:
         self._boxes: dict[str, deque] = {"detail": deque(), "overview": deque()}
         """최근 장면의 사람 상자 (ms, {신원: 상자}) — 번호 맞바뀜 확인에 쓴다."""
         self._closed_seen = 0
+        self.watch = {view: ConfusionWatch(limit=self.config.swap_overlap) for view in ("detail", "overview")}
+        """카메라마다 두 사람을 헷갈린 구간 (겹침 · 합쳐짐). 번호 맞바뀜을 되돌릴 때 '언제부터'를 여기서 묻는다 (fusion.swap_since_confusion)."""
+        self.flips: list[dict] = []
+        """두 화면 짝이 서로 뒤집혔지만 전체 카메라 번호 맞바뀜으로 안 본 것 — 까닭과 함께 (재 보려고 적어 둔다)."""
 
     # ------------------------------------------------------------------ 번호 맞바뀜 되돌리기 (fusion.swap_repair)
 
@@ -161,6 +172,7 @@ class DualJudge:
         return self._merges
 
     def _note_boxes(self, view: str, pts_ms: float, boxes: dict) -> None:
+        self.watch[view].update(pts_ms, boxes)
         if not self.config.swap_repair:
             return
         seen = self._boxes[view]
@@ -194,17 +206,57 @@ class DualJudge:
             over = self._most_overlap("overview", a, b, start, end)
             shelf = self._most_overlap("detail", d1, d2, start, end)
             if over is None or shelf is None or over < limit or shelf >= limit:
+                why = ("함께 나온 장면 없음" if over is None or shelf is None
+                       else "두 카메라 모두 겹침" if over >= limit else "전체 카메라가 안 겹침")
+                self.flips.append({"ms": since, "found_ms": now_ms, "store": [a, b], "detail": [d1, d2], "why": why,
+                                   "overview_overlap": None if over is None else round(over, 3),
+                                   "detail_overlap": None if shelf is None else round(shelf, 3)})
                 continue
             screen_a, screen_b = self.screen_id(a), self.screen_id(b)
-            self.linker.swap_overview(a, b, since)
-            self.fuser.swap_overview(a, b, since)
+            seen_since = since
+            """전체 카메라가 본 것(자리 · 선반 앞에 있던 사람 · 팔 뻗기 · 든 상품)을 바꿔 읽기 시작할 때."""
+            episode = self.watch["overview"].find(a, b, start, end) if self.config.swap_since_confusion else None
+            if episode is not None and episode.switch_ms is not None:
+                seen_since = min(since, episode.switch_ms)
+            moved = 0
+            self.linker.swap_overview(a, b, since, seen_since)
+            self.fuser.swap_overview(a, b, seen_since)
+            if seen_since < since:
+                moved = self._swap_held(a, b, seen_since, now_ms)
+            self.watch["overview"].rename(a, b)
             for screen, store in ((screen_a, b), (screen_b, a)):
                 if screen == store:
                     self._store.pop(screen, None)
                 else:
                     self._store[screen] = store
             self.swaps.append({"ms": since, "found_ms": now_ms, "screen": [screen_a, screen_b], "store": [a, b],
-                               "detail": [d1, d2], "overview_overlap": round(over, 3), "detail_overlap": round(shelf, 3)})
+                               "detail": [d1, d2], "overview_overlap": round(over, 3), "detail_overlap": round(shelf, 3),
+                               "seen_ms": seen_since, "held_moved": moved,
+                               "episode": None if episode is None else episode.to_dict()})
+
+    def _swap_held(self, a: int, b: int, since_ms: float, now_ms: float) -> int:
+        """since_ms 부터 전체 카메라가 본 '손에 든 상품'의 주인을 a · b 사이에서 서로 바꾼다: 든 사람 기록, 이미 센 것(손님 장부), 적어 둔 줄."""
+        if self.holders is None:
+            return 0
+        self.holders.swap(a, b, since_ms)
+        flip = {a: b, b: a}
+        moved = 0
+        for row in self.held:
+            if row["seen_ms"] >= since_ms and row["pid"] in flip:
+                row["pid"] = flip[row["pid"]]
+                self.holders.mark_told(row["pid"], row["name"])   # 옮겨 받은 사람에게 같은 종류를 또 세지 않게
+                moved += 1
+        seen: set[tuple[int, str]] = set()
+        for row in sorted(self.held, key=lambda r: r["seen_ms"]):
+            key = (row["pid"], row["name"])
+            if row["counted"] and row["until_ms"] is None and key in seen:
+                row["counted"], row["why"] = False, "번호를 바꿔 읽어 옮겨 옴 — 이미 센 종류"
+            elif row["counted"] and row["until_ms"] is None:
+                seen.add(key)
+        book = getattr(self.risk, "book", None)
+        if book is not None and hasattr(book, "swap_held"):
+            book.swap_held(a, b, since_ms, now_ms)
+        return moved
 
     # ------------------------------------------------------------------
 
@@ -346,11 +398,11 @@ class DualJudge:
                                 candidate)
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
+        self._note_boxes("overview", frame.pts_ms, boxes)   # 든 사람을 적기 전에 — 이 장면이 헷갈린 장면인지 먼저 안다
         if self.holders is not None and products is not None:
             self.holders.update(frame.pts_ms, products, hands, self.counter.region)
             if self.config.overview_instant:
                 self._count_held(frame)
-        self._note_boxes("overview", frame.pts_ms, boxes)
         self.linker.update(frame.pts_ms)
         if self.config.swap_repair and self.linker.closed != self._closed_seen:
             self._closed_seen = self.linker.closed

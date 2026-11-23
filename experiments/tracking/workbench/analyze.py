@@ -130,10 +130,20 @@ def lens_track(data: dict, result: dict, customers: set[int]) -> dict:
         text = (f"전체 카메라가 {_who(a, customers)}·{_who(b, customers)} 의 번호를 서로 바꿔 붙임 (화면 번호 #{s['screen'][0]}⇄#{s['screen'][1]}) — "
                 f"선반 카메라로 알아채 {s['ms'] / 1000:.1f}초부터 되돌려 읽음 "
                 f"(상자 겹침: 전체 카메라 {s['overview_overlap']:.2f} · 선반 카메라 {s['detail_overlap']:.2f})")
+        if s.get("seen_ms") is not None and s["seen_ms"] < s["ms"]:
+            text += (f". 전체 카메라가 본 것(자리 · 든 상품)은 가려졌던 사람의 상자가 다시 생긴 {s['seen_ms'] / 1000:.1f}초부터 바꿔 읽음"
+                     + (f" — 먼저 센 '든 것' {s['held_moved']}개의 주인을 옮김" if s.get("held_moved") else ""))
         facts.append({"level": "warn", "text": text, "ms": s["ms"]})
         log.append({"ms": s["ms"], "level": "warn", "text": text})
         for pid in (a, b):
             marks.setdefault(pid, []).append({"ms": s["ms"], "tone": "warn", "tip": "전체 카메라 번호 맞바뀜 — 되돌려 읽기 시작"})
+    for cam, name in (("angle1", "전체 카메라"), ("angle0", "선반 카메라")):
+        spans = (data.get("confusion") or {}).get(cam) or []
+        if spans:
+            # 한 카메라가 두 사람을 헷갈린 구간 (상자 겹침 · 합쳐짐) — 번호가 틀렸다는 뜻은 아니다. 그동안 본 '든 상품'은 따로 둔다
+            times = ", ".join(f"{e['start_ms'] / 1000:.1f}~{e['end_ms'] / 1000:.1f}초" + (" (상자 하나로 합쳐짐)" if e["merged"] else "")
+                              for e in spans[:6]) + (" …" if len(spans) > 6 else "")
+            facts.append({"level": "info", "text": f"{name}가 두 사람을 헷갈린 구간 {len(spans)}번: {times}"})
     for r in data["revivals"]["angle1"]:
         if r["before_pid"] > 0 and r["after_pid"] > 0 and r["before_pid"] != r["after_pid"]:
             text = (f"추적 번호 t{r['track']} 가 {r['gap_ms'] / 1000:.1f}초 끊겼다 되살아나 "

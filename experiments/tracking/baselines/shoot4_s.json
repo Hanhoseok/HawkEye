@@ -46,10 +46,10 @@
  {
   "pair": "C05",
   "verdicts": [
-   "HIGH_RISK",
+   "CLEAR",
    "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -58,7 +58,7 @@
   "pair": "C06",
   "verdicts": [
    "HIGH_RISK",
-   "HIGH_RISK"
+   "CLEAR"
   ],
   "correct": false,
   "people": 2,

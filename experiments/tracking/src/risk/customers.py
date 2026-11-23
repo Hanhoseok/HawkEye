@@ -46,7 +46,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 from ..core.config import RiskConfig
 from ..core.types import BBox, IdentityObservation, TakeCandidate, ZoneType
@@ -418,6 +418,25 @@ class CustomerBook:
         customer = self._get(item.person_id, now_ms)
         customer.held.append(item)
         return customer
+
+    def swap_held(self, a: int, b: int, since_ms: float, now_ms: float) -> int:
+        """since_ms 부터 손에서 본 '든 것'을 손님 a · b 사이에서 서로 옮긴다 — 그때부터 두 사람의 번호가 뒤바뀌어 있었다
+        (fusion.swap_since_confusion). 옮긴 개수를 돌려준다."""
+        ca, cb = self.customers.get(self.resolve(a)), self.customers.get(self.resolve(b))
+        from_a = [h for h in ca.held if h.seen_ms >= since_ms] if ca else []
+        from_b = [h for h in cb.held if h.seen_ms >= since_ms] if cb else []
+        if not from_a and not from_b:
+            return 0
+        ca, cb = ca or self._get(a, now_ms), cb or self._get(b, now_ms)
+        ca.held = [h for h in ca.held if h.seen_ms < since_ms] + [replace(h, person_id=ca.person_id) for h in from_b]
+        cb.held = [h for h in cb.held if h.seen_ms < since_ms] + [replace(h, person_id=cb.person_id) for h in from_a]
+        for c in (ca, cb):
+            # 한 손님의 '든 것'은 종류마다 하나다 (HolderTracker.fresh) — 옮겨 받아 같은 종류가 둘이 되면 먼저 본 것만 남긴다
+            first: dict[str, HeldItem] = {}
+            for h in sorted(c.held, key=lambda h: h.seen_ms):
+                first.setdefault(h.name, h)
+            c.held = [h for h in c.held if first[h.name] is h]
+        return len(from_a) + len(from_b)
 
     def drop_held(self, start_ms: float, until_ms: float) -> list[HeldItem]:
         """[start_ms, until_ms] 에 손에서 처음 본 '든 것'을 모든 손님에게서 지운다 — 그 시간을 덮는 선반 방문이 대신한다."""
