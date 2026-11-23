@@ -94,3 +94,11 @@ def test_apply_judge_overrides_sets_values_and_rejects_unknown(tmp_path):
         path.write_text(bad, encoding="utf-8")
         with pytest.raises(ValueError):
             apply_judge_overrides(AppConfig(), path)
+
+
+def test_payment_record_views_do_not_offer_the_standing_time_knob():
+    from workbench.tune import knobs_for
+
+    keys = lambda payments: [k[0] for k in knobs_for(3, payments)]  # noqa: E731
+    assert "risk.dwell_pay_seconds" in keys(False) and "risk.dwell_pay_seconds" not in keys(True)
+    assert len(keys(False)) == len(keys(True)) + 1

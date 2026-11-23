@@ -182,6 +182,14 @@ def test_take_lens_draws_the_sensor_log_row():
 def test_no_sensor_row_without_a_sensor_log():
     take = analyze(make(), result())["lenses"]["take"]
     assert all(r["label"] != "센서 로그" for r in take["rows"])
+    take = analyze(make(sensor_log=None), result())["lenses"]["take"]             # 센서를 판정에 안 넣는 보기
+    assert all(r["label"] != "센서 로그" for r in take["rows"])
+
+
+def test_sensor_view_says_so_when_the_sensor_recorded_nothing():
+    take = analyze(make(sensor_log=[]), result())["lenses"]["take"]
+    assert next(r for r in take["rows"] if r["label"] == "센서 로그")["marks"] == []
+    assert any(f["text"].startswith("센서 로그: 이 영상에는 빠짐 · 놓임 기록이 없음") for f in take["facts"])
 
 
 def test_payment_log_view_does_not_say_payment_was_guessed():

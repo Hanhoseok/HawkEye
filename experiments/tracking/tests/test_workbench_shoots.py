@@ -96,16 +96,18 @@ def other_records(monkeypatch):
     return PROFILES[OTHER]
 
 
-def test_previous_view_judges_the_same_records_without_the_instant_count():
+def test_previous_view_judges_the_same_records_from_video_only():
+    """3차 기준 = 센서 기록(L1 · L2) + 결제 라벨 (후속 64). 바로 전 판정 = 같은 기록을 영상만으로."""
     three, prev = PROFILES[3], PROFILES[SHOOT3_PREV]
     assert SHOOT3_PREV == 31 and prev.shoot == 3 and Builder(SHOOT3_PREV).shoot == 3 and Builder(SHOOT3_PREV).key == SHOOT3_PREV
     assert prev.records == three.records and prev.out != three.out          # 같은 기록, 만든 것은 따로
-    assert prev.overrides == ("fusion.overview_instant=false",)
-    for name in ("labels", "zones", "judge_file", "signature_files", "payment"):
+    assert three.sensor_lanes == ("L1", "L2") and three.payments and three.overrides == ()
+    assert prev.sensor_lanes == () and not prev.payments and prev.overrides == () and prev.payment != three.payment
+    for name in ("labels", "zones", "judge_file", "signature_files"):
         assert getattr(prev, name) == getattr(three, name), name            # 정답표 · 구역 · 적용한 값은 3차 것
     assert three.can_tune and not prev.can_tune and not prev.can_add        # 적용한 값을 함께 쓰므로 여기서는 못 바꾼다
-    assert prev.note and not three.note and prev.thumbs == three.out / "thumbs"
-    assert Builder(SHOOT3_PREV).signature("C01") != Builder(3).signature("C01")       # 얹는 값이 다르면 다시 만든다
+    assert prev.note and three.note and prev.thumbs == three.out / "thumbs"
+    assert Builder(SHOOT3_PREV).signature("C01") != Builder(3).signature("C01")       # 넣는 입력이 다르면 다시 만든다
     assert main_views() == [2, 3, 4]
 
 

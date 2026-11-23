@@ -34,7 +34,7 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card, sensor_log  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 15
+VERSION = 16
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -46,7 +46,8 @@ VERSION = 15
 14: 전체 카메라의 '선반 앞 머묾' 줄을 없앴다 (코드에서 지움, 후속 58). 손에 든 것을 보면 바로 세는 기록(held)과 그 줄이 생겼다 (후속 59).
     31 = 바로 세기를 끈 판정.
 15: 센서 로그의 기록을 보기 데이터에 넣는다 (sensor_log — '물건 집기'에 줄로 그린다). 결제 로그로 판정한 보기는
-    '계산대에 서 있으면 결제'라는 문장을 안 쓴다 (후속 63)."""
+    '계산대에 서 있으면 결제'라는 문장을 안 쓴다 (후속 63).
+16: 3차 보기의 기준이 센서 기록(L1 · L2) + 결제 라벨 판정으로 (후속 64). 31 = 바로 전 판정 = 영상만. 서명에 센서 레인 · 결제 기록 여부를 넣었다."""
 RUN_KEY = "current"
 
 
@@ -101,9 +102,14 @@ PROFILES = {
                ROOT / "zones" / "store01_shoot3", OUT / "shoot3", ROOT / "configs" / "store01_shoot3_judge.yaml",
                (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot3" / n for n in
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
-                ROOT / "outputs" / "sync_floor" / "register.csv"), False),
+                ROOT / "outputs" / "sync_floor" / "register.csv"), False,
+               # 3차도 최종 판정 흐름으로 본다 (사용자 결정 2026-11-23, 후속 64): 센서 기록(L1 · L2) + 결제 라벨. 3차에는 실제 결제 로그가 없어
+               # 사람이 적은 결제 라벨(payments.csv)을 쓴다. 수치 조정의 초안도 같은 입력으로 판정한다 (Builder._build).
+               payment="결제 라벨 (사람이 적음)", sensor_lanes=("L1", "L2"), payments=True,
+               note="센서 기록(L1 · L2)과 사람이 적은 결제 라벨을 넣은 판정입니다. 센서 L3(애플사이다)은 판정에 안 씁니다."),
     # 4차(2026-11-19)는 최종 판정 흐름 그대로 본다: 상품 모델 기록 + 센서 로그(L1 · L2) + 결제 로그 (사용자 방향, 2026-11-20).
-    # 수치 조정은 아직 '영상만' 판정으로 돌아서 이 보기와 점수가 다르다 — 붙일 때까지 끈다.
+    # 수치 조정은 꺼 둔다. 처음 끈 까닭("초안이 '영상만'으로 돈다")은 이제 맞지 않는다 — 초안도 같은 입력으로 판정한다 (3차로 확인, 후속 64).
+    # 4차에서 켜 보지는 않았다.
     4: Profile(4, "4차 촬영", ROOT / "outputs" / "dual_eval_shoot4", ROOT / "labels" / "store01_shoot4",
                ROOT / "zones" / "store01_shoot4", OUT / "shoot4", ROOT / "configs" / "store01_shoot4_judge.yaml",
                (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot4" / n for n in
@@ -117,18 +123,18 @@ PROFILES = {
 
 MAX_VIEWS = 2
 """한 회차의 보기는 최신 2개까지 (사용자 규칙, 2026-11-20): 지금 기준(#/3)과 바로 전 판정(#/31).
-새 판정이 기준이 되면 — 지금 것을 '바로 전'으로 옮기고, 그 전 것은 지운다 (보기 데이터 폴더는 `--prune`).
+새 판정이 기준이 되면 — 지금 것을 '바로 전'으로 옮기고, 그 전 것은 지운다 (보기 데이터 폴더는 `--prune`). 3차: 2026-11-23 에 한 번 옮겼다 (후속 64).
 더 옛 판정은 점수만 본다: `scripts/dual_eval.py judge --out <기록> --set …` (docs/shelf-map.md)."""
 
 SHOOT3_PREV = 31
-"""바로 전 판정: 지금 기록(상품 모델)을 '손에 든 것을 보면 바로 세기'(fusion.overview_instant, 후속 59) 없이 본 것 —
-물건 개수가 선반 방문이 끝난 뒤에야 오른다. 최종 판정은 같고 개수가 오르는 때만 다르다.
+"""바로 전 판정: 지금 기록(상품 모델)을 **영상만**으로 판정한 것 — 센서 기록과 결제 라벨을 안 넣고 계산대 체류를 결제로 본다
+(2026-11-23 후속 64 전까지 3차 보기의 기준이었다). 그 전의 '방문이 끝나야 셈'(fusion.overview_instant 끔) 보기는 규칙대로 지웠다.
 정답표 · 시차 · 결제 · 구역 · 적용한 값은 3차 것을 그대로 쓴다 — 여기서 정답을 고치면 3차의 정답이 바뀐다."""
 PROFILES[SHOOT3_PREV] = replace(
-    PROFILES[3], name="3차 · 바로 전 판정 (방문이 끝나야 셈)", out=OUT / "shoot3_prev", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
-    overrides=("fusion.overview_instant=false",),
-    note="'3차 촬영'과 같은 기록입니다. 손에 든 것을 봐도 바로 세지 않고, 선반 방문이 끝나야 물건 개수가 오르던 판정입니다 "
-         "(2026-11-21 후속 59 전). 수치 조정은 3차 촬영에서 합니다.")
+    PROFILES[3], name="3차 · 바로 전 판정 (영상만)", out=OUT / "shoot3_prev", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
+    payment="계산대 체류 = 결제", sensor_lanes=(), payments=False,
+    note="'3차 촬영'과 같은 기록입니다. 센서 기록과 결제 라벨 없이 영상만으로 낸 판정입니다 "
+         "(2026-11-23 후속 64 전의 기준). 수치 조정은 3차 촬영에서 합니다.")
 
 
 def views_of(shoot: int) -> list[int]:
@@ -261,7 +267,7 @@ class Builder:
                  self.records_dir() / pair / "angle1" / "product_items.meta.json"]     # 전체 카메라 상품 (있을 때만)
         if p.sensor_lanes:
             files.append(p.labels / "sensor" / f"{pair}.csv")                          # 센서 로그 (판정에 넣는 회차만)
-        h = hashlib.sha1(f"v{VERSION}{'|'.join(p.overrides)}".encode())
+        h = hashlib.sha1(f"v{VERSION}{'|'.join(p.overrides)}|{','.join(p.sensor_lanes)}|{int(p.payments)}".encode())
         # 짝마다 한 줄씩 있는 표는 그 짝의 줄만 본다 — 한 영상의 시차·결제를 고쳤다고 38쌍을 다 다시 만들지 않게
         for table in (p.labels / "sync.csv", p.labels / "truth.csv", self.payments_file(), p.labels / "added.csv"):
             h.update(self._rows(table).get(pair, "-").encode("utf-8"))
@@ -386,7 +392,7 @@ class Builder:
                 data["sync"] = {"offset_ms": row.offset_ms if row else 0.0, "method": row.method if row else "none",
                                 "checked_by": row.checked_by if row else "", "note": row.note if row else ""}
                 data["sensor_log"] = (sensor_log(self.profile.labels / "sensor" / f"{pair}.csv", data["sync"]["offset_ms"],
-                                                 self.profile.sensor_lanes) if self.profile.sensor_lanes else [])
+                                                 self.profile.sensor_lanes) if self.profile.sensor_lanes else None)   # None = 센서를 판정에 안 넣는 보기
                 cfg = de.dual_config(base, pair)   # 방금 판정에 쓴 값 그대로 (적용한 값·초안 포함)
                 # 결제 로그로 판정한 보기는 계산대 체류를 결제로 안 본다 (dual_config 는 --payments 를 모른다)
                 dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" and not self.profile.payments else None

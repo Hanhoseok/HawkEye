@@ -81,8 +81,12 @@ SHOOT_ONLY = {"fusion.max_band_gap": (2,), "fusion.max_floor_gap_cm": (3,), "fus
 """그 촬영에서만 뜻이 있는 값 — 2차는 선반 앞 띠 한 줄로, 3차는 바닥 위 거리로 두 화면 짝을 맺는다."""
 
 
-def knobs_for(shoot: int) -> list[tuple]:
-    return [k for k in KNOBS if shoot in SHOOT_ONLY.get(k[0], (shoot,))]
+def knobs_for(shoot: int, payments: bool = False) -> list[tuple]:
+    """그 회차에서 바꿀 수 있는 값. payments = 결제 기록으로 판정하는 보기 — 계산대 체류를 결제로 안 보므로 그 시간은 뺀다 (후속 64)."""
+    return [k for k in KNOBS if shoot in SHOOT_ONLY.get(k[0], (shoot,)) and not (payments and k[0] == PAY_BY_STANDING)]
+
+
+PAY_BY_STANDING = "risk.dwell_pay_seconds"
 RERUN_ONLY = [
     "사람 탐지 점수·모델, 추적기 설정", "사람 아님 영역", "신원 기준(가장자리 변, 되살아난 번호 다시 판정)",
     "선반 물건 탐지, 칸 그림 기준(8%)", "손-칸 접촉 시간(0.3초)",
@@ -182,7 +186,7 @@ def compare(before: list[dict], after: list[dict]) -> dict:
 class Tuner:
     def __init__(self, builder: Builder) -> None:
         self.builder = builder
-        self.knobs = knobs_for(builder.shoot)
+        self.knobs = knobs_for(builder.shoot, builder.profile.payments)
         self.log_file = builder.profile.labels / "tune_log.jsonl"
         self.judge_file = builder.profile.judge_file
         self.drafts = builder.out / "drafts"

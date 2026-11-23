@@ -320,7 +320,10 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
         log.append({"ms": c["end"], "level": "info", "text": f"칸 그림: '{c['slot']}' {c['ratio'] * 100:.1f}% 바뀜 ({c['direction']})"})
 
     # 센서 로그 — 판정에 넣는 회차만 (4차). 안 쓰는 기록(L3 · 영상 밖)은 흐리게, 까닭과 함께
-    sensor = data.get("sensor_log") or []
+    sensor = data.get("sensor_log")
+    if sensor is not None and not sensor:
+        rows.append({"label": "센서 로그", "group": "선반 센서", "who": None, "segs": [], "marks": []})
+        facts.append({"level": "info", "text": "센서 로그: 이 영상에는 빠짐 · 놓임 기록이 없음 — 물건 개수는 카메라가 센 것"})
     if sensor:
         rows.append({"label": "센서 로그", "group": "선반 센서", "who": None, "segs": [],
                      "marks": [{"ms": e["ms"], "tone": "quiet" if e["skip"] else ("take" if e["event"] == "REMOVE" else "put"),
