@@ -202,6 +202,75 @@ def test_owner_found_by_other_evidence_is_kept():
     assert fuser_with(TOOK_ONE, tracker, band=(7,)).detail_visit(VISIT, 3000.0, 6000.0).held_ms > 5000.0
 
 
+def owned(plan, tracker) -> ShelfEventFuser:
+    """선반 앞에 7번 한 명 — 다른 근거로 주인이 7번으로 정해진다. 그 위에 '다른 손님이 먼저 든 것은 그 손님에게'를 켠다 (후속 71)."""
+    fuser = fuser_with(plan, tracker, band=(7,))
+    fuser.config.holder_over_owner = True
+    return fuser
+
+
+def test_owned_visit_gives_the_item_another_customer_held_first_to_that_customer():
+    # 4차 C12: 선반 카메라는 한 명에게 방문을 통째로 적었는데, 전체 카메라는 다른 손님이 동과루를 먼저 든 것을 봤다
+    tracker = HolderTracker()
+    hold(tracker, 4.0, 5.0, [held("donggwaru", 900)], PAIR)           # 8번이 동과루를 먼저 듦
+    hold(tracker, 4.5, 5.5, [held("cantata", 680)], PAIR)             # 주인 7번은 칸타타
+    fuser = owned(TOOK_TWO, tracker)
+    fused = fuser.detail_visit(VISIT, 3000.0, 6000.0)
+    rest = fuser.take_shares()
+    assert [(v.person_id, v.removed, v.removed_kinds) for v in [fused, *rest]] == [(7, 1, ("cantata",)), (8, 1, ("donggwaru",))]
+    assert "(선반 앞 한 명)" in fused.detail and "(전체 카메라에서 먼저 든 사람) -> 손님 8" in rest[0].detail
+    assert fuser.records[-1].how == "선반 앞 한 명 — 다른 손님이 먼저 든 것은 그 손님에게 (전체 카메라)"
+
+
+def test_owned_visit_of_one_item_moves_whole_to_the_customer_who_held_it():
+    tracker = HolderTracker()
+    hold(tracker, 4.0, 5.0, [held("donggwaru", 900)], PAIR)
+    fuser = owned(TOOK_ONE, tracker)
+    fused = fuser.detail_visit(VISIT, 3000.0, 6000.0)
+    assert (fused.person_id, fused.removed) == (8, 1) and fuser.take_shares() == []
+
+
+def test_owned_visit_is_kept_when_the_owner_held_that_kind_first():
+    # 주인이 꺼내 건넨 것일 수 있다 — 건넴은 fusion.handover 가 가른다
+    tracker = HolderTracker()
+    hold(tracker, 4.0, 4.3, [held("donggwaru", 680)], PAIR)           # 7번 손에서 몇 장면 (든 것으로 굳기 전)
+    hold(tracker, 4.5, 5.5, [held("donggwaru", 900)], PAIR)           # 그 뒤 8번
+    fuser = owned(TOOK_ONE, tracker)
+    fused = fuser.detail_visit(VISIT, 3000.0, 6000.0)
+    assert fused.person_id == 7 and fuser.records[-1].how == "선반 앞 한 명" and fuser.take_shares() == []
+
+
+def test_owned_visit_moves_only_one_item_to_each_other_customer():
+    # 든 상품 하나가 장면마다 다른 종류로 읽힐 수 있다 (4차 C19) — 8번이 두 종류를 든 것으로 보여도 하나만 옮긴다
+    tracker = HolderTracker()
+    hold(tracker, 4.0, 5.0, [held("donggwaru", 900)], PAIR)
+    hold(tracker, 5.0, 6.0, [held("cantata", 900)], PAIR)
+    fuser = owned(TOOK_TWO, tracker)
+    fused = fuser.detail_visit(VISIT, 3000.0, 6000.0)
+    rest = fuser.take_shares()
+    assert sorted((v.person_id, v.removed) for v in [fused, *rest]) == [(7, 1), (8, 1)]
+
+
+def test_owned_visit_is_kept_when_nobody_else_was_seen_holding():
+    tracker = HolderTracker()
+    hold(tracker, 4.0, 5.0, [held("applecider", 900)], PAIR)          # 줄어든 종류가 아니다
+    fuser = owned(TOOK_TWO, tracker)
+    fused = fuser.detail_visit(VISIT, 3000.0, 6000.0)
+    assert fused.person_id == 7 and fused.removed == 2 and fuser.take_shares() == []
+
+
+def test_split_parts_carry_only_their_own_kinds():
+    # 4차 C13: 몫마다 방문 전체의 종류 목록을 들고 있어, 장부가 동과루만 집은 손님을 칸타타도 가진 것으로 읽었다
+    tracker = HolderTracker()
+    hold(tracker, 4.0, 5.0, [held("donggwaru", 680)], PAIR)
+    hold(tracker, 4.5, 5.5, [held("cantata", 900)], PAIR)
+    fuser = fuser_with(TOOK_TWO, tracker)
+    whole = ShelfVisit(-1, "shelf", 90, 180, 2, 0, "shelf", "[shelf] 사라짐: 1단 1번째 donggwaru, 1단 2번째 cantata",
+                       removed_kinds=("donggwaru", "cantata"))
+    parts = [fuser.detail_visit(whole, 3000.0, 6000.0), *fuser.take_shares()]
+    assert sorted((v.person_id, v.removed_kinds) for v in parts) == [(7, ("donggwaru",)), (8, ("cantata",))]
+
+
 def test_visit_is_not_split_when_the_sensor_count_differs():
     tracker = HolderTracker()
     hold(tracker, 4.0, 5.0, [held("donggwaru", 680)], PAIR)

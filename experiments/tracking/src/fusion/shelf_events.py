@@ -280,6 +280,8 @@ class ShelfEventFuser:
         if not covered and seen:
             by_kind = dict(cam_removed) if (removed, added) == (sum(cam_removed.values()), sum(cam_added.values())) else {}
         held: list[tuple[str, int | None]] = []
+        kept: int | None = None
+        """주인을 정한 방문을 든 사람별로 나눴을 때의 그 주인 (fusion.holder_over_owner) — 안 나눴으면 None."""
         asked = covered or seen
         if owner is None and self.holders is not None and asked:
             # 주인을 못 정했는데 어느 종류가 줄었는지 안다 — 그 종류를 먼저 든 사람이 꺼낸 사람
@@ -292,12 +294,18 @@ class ShelfEventFuser:
             elif who == {None} or not by_kind:
                 # 아무도 든 것을 못 봤다 / 센서 개수와 달라 종류별로 나눌 수 없다 — 모름 그대로
                 held = []
+        elif owner is not None and self.holders is not None and asked and by_kind and self.config.holder_over_owner:
+            # 주인은 정했는데 전체 카메라가 다른 손님이 먼저 든 것을 봤다 — 그 상품은 그 손님이 꺼낸 것 (4차 C12)
+            held = self._held_by_others(owner, by_kind, start_ms, end_ms)
+            if added and all(p != owner for _, p in held):
+                held = []   # 놓은 것도 있는 방문인데 주인 몫이 안 남는다 — 놓은 개수를 둘 데가 없어 그대로 둔다
+            kept = owner if held else None
         out = replace(visit, person_id=owner if owner is not None else -1, removed=removed, added=added,
                       source=source, zone=self.config.shelf_zone, slot_change=slot_change,
                       start_frame=self.overview_axis.to_frame(start_ms), end_frame=self.overview_axis.to_frame(end_ms),
                       detail=detail + extra)
         if held:
-            out, how = self._share(out, held, how, start_ms, end_ms)
+            out, how = self._share(out, held, how, start_ms, end_ms, kept)
         elif owner is not None and self.holders is not None and (by_kind if covered else seen):
             out = replace(out, held_ms=self._held_ms(sorted(by_kind if covered else cam_removed), owner, start_ms, end_ms))
         self.records.append(FusedRecord("visit", start_ms, end_ms, out.person_id, how,
@@ -314,10 +322,36 @@ class ShelfEventFuser:
                  for pid, t in self.holders.first_held(name, start_ms, end_ms + self.hold_wait_ms).items() if pid == owner]
         return min(times) if times else None
 
+    def _held_by_others(self, owner: int, by_kind: dict[str, int], start_ms: float, end_ms: float) -> list[tuple[str, int | None]]:
+        """주인을 정한 방문에서 **다른 손님이 먼저 든 상품** 찾기 (fusion.holder_over_owner). 옮길 것이 있으면 상품마다 (종류, 가져간 사람)
+        — 주인 몫이 앞, 없으면 빈 목록.
+
+        다른 손님에게 옮기는 조건 (건넴의 '직접 집음'과 같은 기준, fusion.handover_giver_frames):
+          ① 전체 카메라가 그 손님 손에서 그 종류를 방문 중 ~ 직후에 처음 봤다 (방문 전부터 들고 있던 사람은 아님)
+          ② 방문이 시작한 뒤 그 전까지 주인 손에서는 그 종류를 본 적이 없다 — 봤으면 주인이 꺼내 건넨 것일 수 있어 그대로 둔다 (건넴은 fusion.handover 가 가른다)
+          ③ 한 손님에게는 이 방문에서 하나만 — 든 상품 하나가 장면마다 다른 종류로 읽힐 수 있다 (4차 C19, 한계 D-25)
+        든 사람을 못 본 상품은 주인 것 그대로다 (숨겨 가져간 것일 수 있다)."""
+        until = end_ms + self.hold_wait_ms
+        mine, theirs, moved = [], [], set()
+        for name, pid in self.holders.owners(by_kind, start_ms, until):
+            if pid is None or pid == owner or pid in moved:
+                mine.append((name, owner))
+                continue
+            # 그 손님 손에서 그 종류를 처음 본 장면 (든 것으로 굳은 장면이 아니라 첫 장면 — 건넴과 같은 기준, 3차 C01)
+            first = self.holders.first_seen(pid, name, start_ms, until)
+            # 주인 손은 이 방문이 시작한 뒤만 본다 — 방문 전에 잠깐 잘못 읽힌 장면(4차 C15: 들어오는 길 1.9 ~ 2.7초)으로 막지 않는다
+            if first is None or self.holders.count(owner, name, start_ms, first - 0.1) >= self.config.handover_giver_frames:
+                mine.append((name, owner))
+                continue
+            moved.add(pid)
+            theirs.append((name, pid))
+        return mine + theirs if theirs else []
+
     def _share(self, out: ShelfVisit, held: list[tuple[str, int | None]], how: str,
-               start_ms: float, end_ms: float) -> tuple[ShelfVisit, str]:
+               start_ms: float, end_ms: float, kept: int | None = None) -> tuple[ShelfVisit, str]:
         """종류마다 든 사람이 다른 방문 → 사람별 방문으로 나눈다. 첫 사람의 방문을 돌려주고 나머지는 shares 에 쌓는다
-        (든 사람을 못 본 상품은 '주인 모름' 방문으로 남는다). 놓은 개수는 첫 사람의 방문에 둔다."""
+        (든 사람을 못 본 상품은 '주인 모름' 방문으로 남는다). 놓은 개수는 첫 사람의 방문에 둔다.
+        kept = 다른 근거(how)로 이미 정한 주인 — 그 사람 몫은 '먼저 든 사람'이 아니라 그 근거로 적는다."""
         head, sep, _ = out.detail.partition("] ")
         tail = out.detail.partition(" / ")[2]
         by: dict[int | None, list[str]] = {}
@@ -327,12 +361,17 @@ class ShelfEventFuser:
         parts = []
         for i, p in enumerate(people):
             names = by[p]
-            text = (f"{head}{sep}" if sep else "") + f"꺼냄: {', '.join(names)} (전체 카메라에서 먼저 든 사람)"
+            text = (f"{head}{sep}" if sep else "") + f"꺼냄: {', '.join(names)} ({how if p == kept and kept is not None else '전체 카메라에서 먼저 든 사람'})"
             text += (f" -> 손님 {p}" if p is not None else "") + (f" / {tail}" if tail else "")
+            # 종류 목록도 그 사람 몫만 — 통째로 두면 장부가 다른 사람 몫의 종류까지 그 사람이 가진 것으로 읽는다 (4차 C13: 건넴 감지가
+            # 동과루만 집은 손님에게서 칸타타를 옮겼다)
             parts.append(replace(out, person_id=p if p is not None else -1, removed=len(names),
-                                 added=out.added if i == 0 else 0, detail=text,
+                                 added=out.added if i == 0 else 0, detail=text, removed_kinds=tuple(names),
+                                 added_kinds=out.added_kinds if i == 0 else (),
                                  held_ms=self._held_ms(names, p, start_ms, end_ms) if p is not None else None))
         self.shares.extend(parts[1:])
+        if kept is not None:
+            return parts[0], f"{how} — 다른 손님이 먼저 든 것은 그 손님에게 (전체 카메라)"
         return parts[0], f"전체 카메라에서 먼저 든 사람 — 사람별로 나눔 ({how})"
 
     def take_shares(self) -> list[ShelfVisit]:

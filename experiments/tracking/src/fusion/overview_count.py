@@ -372,6 +372,11 @@ class HolderTracker:
         times = [ms for ms, p, cls in self.samples if cls == name and ms < before_ms and self.resolve(p) == pid]
         return max(times) if times else None
 
+    def first_seen(self, pid: int, name: str, start_ms: float, until_ms: float) -> float | None:
+        """[start_ms, until_ms] 에 그 사람 손에서 그 종류를 처음 본 (확실한) 장면의 시각. 없으면 None."""
+        times = [ms for ms, p, cls in self.samples if cls == name and start_ms <= ms <= until_ms and self.resolve(p) == pid]
+        return min(times) if times else None
+
     def first_holders(self, name: str, start_ms: float, until_ms: float, unsure: bool = False) -> list[int]:
         """[start_ms, until_ms] 에 그 종류를 든 사람들 — 먼저 든 순서. 방문 전에 이미 들고 있던 사람은 뺀다."""
         when = self.first_held(name, start_ms, until_ms, unsure)
