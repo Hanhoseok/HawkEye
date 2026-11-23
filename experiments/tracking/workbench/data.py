@@ -31,10 +31,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from workbench import labels as label_store  # noqa: E402
-from workbench.analyze import analyze, card  # noqa: E402
+from workbench.analyze import analyze, card, sensor_log  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 14
+VERSION = 15
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -44,7 +44,9 @@ VERSION = 14
 13: 3차의 기본 기록이 상품 모델 기록으로, 3차 기본 판정이 전체 카메라 개수 · 든 사람 · 머묾 안 씀으로 (후속 56). 보기 31 · 32 의 뜻이 바뀌고 33 은 없어졌다.
 (같은 날, 후속 57) 보기는 회차마다 최신 2개만 둔다 — 31 = 3차의 바로 전 판정, 32 는 없앴다. 만드는 내용은 그대로라 번호를 안 올렸다.
 14: 전체 카메라의 '선반 앞 머묾' 줄을 없앴다 (코드에서 지움, 후속 58). 손에 든 것을 보면 바로 세는 기록(held)과 그 줄이 생겼다 (후속 59).
-    31 = 바로 세기를 끈 판정."""
+    31 = 바로 세기를 끈 판정.
+15: 센서 로그의 기록을 보기 데이터에 넣는다 (sensor_log — '물건 집기'에 줄로 그린다). 결제 로그로 판정한 보기는
+    '계산대에 서 있으면 결제'라는 문장을 안 쓴다 (후속 63)."""
 RUN_KEY = "current"
 
 
@@ -108,7 +110,7 @@ PROFILES = {
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
                 ROOT / "outputs" / "sync_floor_shoot4" / "register.csv"), False,
                payment="결제 로그 (POS)", can_tune=False, sensor_lanes=("L1", "L2"), payments=True,
-               note="센서 로그(L1 · L2)와 결제 로그를 넣은 판정입니다. 정답표는 3차 이름에서 가져온 초안이고, L1 은 정답을 몰라 채점하지 않습니다."),
+               note="센서 로그(L1 · L2)와 결제 로그(POS)를 넣은 판정입니다. 센서 L3(애플사이다)은 판정에 안 쓰고 카메라와 결제 로그로 셉니다."),
 }
 """열쇠는 보기 번호 — 주소(#/3)와 요청(?shoot=3)에 쓴다. 회차의 기본 기록은 회차 번호 그대로이고,
 같은 회차의 다른 기록(견줘 보기)은 다른 번호를 쓴다 (Profile.shoot 는 그대로 회차)."""
@@ -257,6 +259,8 @@ class Builder:
                  self.records_dir() / pair / ".done",
                  self.records_dir() / pair / "meta.json",
                  self.records_dir() / pair / "angle1" / "product_items.meta.json"]     # 전체 카메라 상품 (있을 때만)
+        if p.sensor_lanes:
+            files.append(p.labels / "sensor" / f"{pair}.csv")                          # 센서 로그 (판정에 넣는 회차만)
         h = hashlib.sha1(f"v{VERSION}{'|'.join(p.overrides)}".encode())
         # 짝마다 한 줄씩 있는 표는 그 짝의 줄만 본다 — 한 영상의 시차·결제를 고쳤다고 38쌍을 다 다시 만들지 않게
         for table in (p.labels / "sync.csv", p.labels / "truth.csv", self.payments_file(), p.labels / "added.csv"):
@@ -381,8 +385,11 @@ class Builder:
                 row = table.rows.get(pair)
                 data["sync"] = {"offset_ms": row.offset_ms if row else 0.0, "method": row.method if row else "none",
                                 "checked_by": row.checked_by if row else "", "note": row.note if row else ""}
+                data["sensor_log"] = (sensor_log(self.profile.labels / "sensor" / f"{pair}.csv", data["sync"]["offset_ms"],
+                                                 self.profile.sensor_lanes) if self.profile.sensor_lanes else [])
                 cfg = de.dual_config(base, pair)   # 방금 판정에 쓴 값 그대로 (적용한 값·초안 포함)
-                dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" else None
+                # 결제 로그로 판정한 보기는 계산대 체류를 결제로 안 본다 (dual_config 는 --payments 를 모른다)
+                dwell = cfg.risk.dwell_pay_seconds if cfg.risk.payment_mode == "dwell" and not self.profile.payments else None
                 summary = analyze(data, result, dwell)
                 data["summary"] = summary
                 (out / "pairs" / f"{pair}.json").write_text(
