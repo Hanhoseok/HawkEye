@@ -245,6 +245,38 @@ def _floor_facts(data: dict) -> list[dict]:
     return facts
 
 
+def sensor_log(path, offset_ms: float, lanes: tuple[str, ...]) -> list[dict]:
+    """센서 로그(labels/<회차>/sensor/<짝>.csv)의 꺼냄 · 놓음 기록 — 화면에 그릴 모양. 시각은 판정과 같게 선반 카메라 시각 + 시차.
+
+    판정이 읽는 것(scripts/shoot3_eval.load_sensor)은 영상 안 + lanes 의 레인뿐이다. 여기서는 안 쓰는 기록도 함께 싣고 까닭(skip)을 적는다.
+    RESYNC(개수 변화 0)는 뺀다.
+    """
+    import csv
+
+    if not path.exists():
+        return []
+    out = []
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            if r["event"] not in ("REMOVE", "ADD"):
+                continue
+            skip = ""
+            if str(r.get("in_video", "1")).strip() != "1":
+                skip = "영상 밖의 기록"
+            elif lanes and r["lane"] not in lanes:
+                skip = "판정에 안 쓰는 레인"
+            out.append({"ms": float(r["time_sec"]) * 1000.0 + offset_ms, "lane": r["lane"], "product": r.get("product", ""),
+                        "event": r["event"], "count": abs(int(float(r["delta"]))),
+                        "before": r.get("before", ""), "after": r.get("after", ""), "skip": skip})
+    return sorted(out, key=lambda e: e["ms"])
+
+
+def _sensor_text(e: dict) -> str:
+    what = "빠짐" if e["event"] == "REMOVE" else "놓임"
+    change = f" ({e['before']} → {e['after']})" if e["before"] != "" and e["after"] != "" else ""
+    return f"{e['lane']} {e['product']} {e['count']}개 {what}{change}".replace("  ", " ") + (f" — 판정에 안 씀: {e['skip']}" if e["skip"] else "")
+
+
 def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> dict:
     facts, rows, log = [], [], []
     owner_of = {(round(e["start_ms"]), e["kind"]): e for e in data["shelf_events"]}
@@ -286,6 +318,21 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
                            "tip": f"'{c['slot']}' 칸 화소 {c['ratio'] * 100:.1f}% 바뀜 · {c['direction']}"} for c in slot]})
     for c in slot:
         log.append({"ms": c["end"], "level": "info", "text": f"칸 그림: '{c['slot']}' {c['ratio'] * 100:.1f}% 바뀜 ({c['direction']})"})
+
+    # 센서 로그 — 판정에 넣는 회차만 (4차). 안 쓰는 기록(L3 · 영상 밖)은 흐리게, 까닭과 함께
+    sensor = data.get("sensor_log") or []
+    if sensor:
+        rows.append({"label": "센서 로그", "group": "선반 센서", "who": None, "segs": [],
+                     "marks": [{"ms": e["ms"], "tone": "quiet" if e["skip"] else ("take" if e["event"] == "REMOVE" else "put"),
+                                "tip": _sensor_text(e), "who": None} for e in sensor]})
+        for e in sensor:
+            log.append({"ms": e["ms"], "level": "quiet" if e["skip"] else "info", "text": f"센서: {_sensor_text(e)}"})
+        used = [e for e in sensor if not e["skip"]]
+        out_n = sum(e["count"] for e in used if e["event"] == "REMOVE")
+        in_n = sum(e["count"] for e in used if e["event"] == "ADD")
+        left = len(sensor) - len(used)
+        facts.append({"level": "info", "ms": used[0]["ms"] if used else None,
+                      "text": f"센서 로그: 빠짐 {out_n}개 · 놓임 {in_n}개를 판정에 넣음" + (f" (안 쓴 기록 {left}건)" if left else "")})
 
     # 전체 카메라가 손에 든 상품을 본 때 (fusion.overview_instant) — 센 것은 그때부터 그 손님의 물건이고, 선반 방문이 끝나면 방문의 개수로 바뀐다
     held = data.get("held") or []

@@ -142,3 +142,50 @@ def test_card_keeps_only_what_the_gallery_needs():
 def test_natural_order_groups_sets_and_sorts_numbers():
     names = ["C10", "N10", "T2", "N2", "C2", "N8-2", "N8-1", "T10"]
     assert sorted(names, key=natural) == ["N2", "N8-1", "N8-2", "N10", "T2", "T10", "C2", "C10"]
+
+
+# ---------------------------------------------------------------- 센서 로그 · 결제 로그 표시 (후속 63)
+
+SENSOR_CSV = """time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
+7.17,17:25:57,L2,동과루,REMOVE,3,1,-2,333,1,7.17,7.15
+10.17,17:26:00,L3,애플사이다,RESYNC,2,2,0,264,1,10.17,10.15
+12.00,17:26:02,L3,애플사이다,REMOVE,2,1,-1,264,1,12.00,11.98
+20.00,17:26:10,L2,동과루,ADD,1,2,1,300,1,20.00,19.98
+95.00,17:27:25,L1,칸타타,ADD,0,2,2,300,0,95.00,94.98
+"""
+
+
+def test_sensor_log_keeps_unused_records_with_the_reason(tmp_path):
+    from workbench.analyze import sensor_log
+
+    path = tmp_path / "N05.csv"
+    path.write_text(SENSOR_CSV, encoding="utf-8")
+    log = sensor_log(path, -20.0, ("L1", "L2"))
+    assert [(e["lane"], e["event"], e["count"], e["skip"]) for e in log] == [
+        ("L2", "REMOVE", 2, ""), ("L3", "REMOVE", 1, "판정에 안 쓰는 레인"), ("L2", "ADD", 1, ""), ("L1", "ADD", 2, "영상 밖의 기록")]
+    assert log[0]["ms"] == 7150.0                       # 선반 카메라 시각 + 시차 — 판정이 읽는 시각과 같다
+    assert sensor_log(tmp_path / "없음.csv", 0.0, ("L1",)) == []
+
+
+def test_take_lens_draws_the_sensor_log_row():
+    log = [{"ms": 7150.0, "lane": "L2", "product": "동과루", "event": "REMOVE", "count": 2, "before": "3", "after": "1", "skip": ""},
+           {"ms": 11980.0, "lane": "L3", "product": "애플사이다", "event": "REMOVE", "count": 1, "before": "2", "after": "1",
+            "skip": "판정에 안 쓰는 레인"}]
+    take = analyze(make(sensor_log=log), result())["lenses"]["take"]
+    row_ = next(r for r in take["rows"] if r["label"] == "센서 로그")
+    assert [m["tone"] for m in row_["marks"]] == ["take", "quiet"]
+    assert row_["marks"][0]["tip"] == "L2 동과루 2개 빠짐 (3 → 1)" and "판정에 안 씀" in row_["marks"][1]["tip"]
+    assert any(f["text"] == "센서 로그: 빠짐 2개 · 놓임 0개를 판정에 넣음 (안 쓴 기록 1건)" for f in take["facts"])
+    assert any(line["text"].startswith("센서: L2 동과루") for line in take["log"])
+
+
+def test_no_sensor_row_without_a_sensor_log():
+    take = analyze(make(), result())["lenses"]["take"]
+    assert all(r["label"] != "센서 로그" for r in take["rows"])
+
+
+def test_payment_log_view_does_not_say_payment_was_guessed():
+    paid = [{"ms": 5000, "items": 1, "pid": 1, "method": "checkout"}]
+    said = lambda dwell: " ".join(f["text"] for f in analyze(make(payments=paid), result(), dwell)["lenses"]["verdict"]["facts"])  # noqa: E731
+    assert "실제 결제가 아님" in said(1.5)
+    assert "결제 기록 사용" in said(None) and "실제 결제가 아님" not in said(None)
