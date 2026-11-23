@@ -314,6 +314,12 @@ def dual_config(base: AppConfig, pair: str, offset_ms: float = 0.0, judge_file=_
     # 선반 카메라 두 사람의 짝이 서로 맞바뀌고 · 그 무렵 전체 카메라 두 상자는 겹쳤고 · 선반 카메라 두 상자는 떨어져 있었을 때만.
     # 3차 39쌍·2차 38쌍에서 걸린 곳은 3차 C20 16.1초 한 곳. --set fusion.swap_repair=false 로 끈다.
     cfg.fusion.swap_repair = True
+    # 맞바뀜을 되돌릴 때 전체 카메라가 본 것은 '헷갈리기 시작한 구간에서 번호가 바뀐 때'부터 바꿔 읽고, 헷갈린 장면의 '든 사람'은
+    # 적지 않는다 (후속 68, 4차 C05). 판정 점수 2 · 3 · 4차 그대로. --set fusion.swap_since_confusion=false 로 끈다.
+    cfg.fusion.swap_since_confusion = True
+    # 전체 카메라에서 합쳐졌던 사람의 상자가 다시 생긴 순간, 선반 카메라의 앞뒤 순서로 번호가 바뀌었는지 바로 묻는다 (후속 69, 2단계).
+    # 선반 카메라 바닥 지도가 있는 3 · 4차에서만 일한다. 걸린 곳: 4차 C05 8.87초, C06 7.20 · 7.93초. --set fusion.swap_ask_detail=false 로 끈다.
+    cfg.fusion.swap_ask_detail = True
     _apply_set(cfg, overrides, early=True)   # 아래에서 이 값을 베껴 쓰는 설정(선반 카메라 손 뻗기 등)에도 반영되게 먼저 한 번
     video, ref = sync_pair.pair_files(pair, SHOOT)
     zdir = zones_dir(pair)

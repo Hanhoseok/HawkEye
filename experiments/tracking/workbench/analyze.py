@@ -127,13 +127,40 @@ def lens_track(data: dict, result: dict, customers: set[int]) -> dict:
         facts.append({"level": "info", "text": f"한 사람이 여러 신원으로 쪼개졌다가 나중에 합쳐진 것 {len(data['merges']['angle1'])}건"})
     for s in data.get("swaps", []):
         a, b = s["store"]
-        text = (f"전체 카메라가 {_who(a, customers)}·{_who(b, customers)} 의 번호를 서로 바꿔 붙임 (화면 번호 #{s['screen'][0]}⇄#{s['screen'][1]}) — "
-                f"선반 카메라로 알아채 {s['ms'] / 1000:.1f}초부터 되돌려 읽음 "
-                f"(상자 겹침: 전체 카메라 {s['overview_overlap']:.2f} · 선반 카메라 {s['detail_overlap']:.2f})")
+        text = f"전체 카메라가 {_who(a, customers)}·{_who(b, customers)} 의 번호를 서로 바꿔 붙임 (화면 번호 #{s['screen'][0]}⇄#{s['screen'][1]}) — "
+        if s.get("how") == "ask":
+            # 상자가 다시 생긴 순간에 선반 카메라의 앞뒤 순서로 바로 정한 것 (fusion.swap_ask_detail)
+            text += (f"합쳐졌던 상자가 다시 생긴 {s['ms'] / 1000:.1f}초에 선반 카메라의 앞뒤 순서로 바로 되돌려 읽음 "
+                     f"(사라졌던 번호의 사람이 {s['gap_cm']:.0f}cm 앞에 서 있었음, 선반 카메라 {s['samples']}장면). "
+                     f"전체 카메라가 본 것(자리 · 든 상품)은 상자가 사라진 {s['seen_ms'] / 1000:.1f}초부터 바꿔 읽음"
+                     + (f" — 먼저 센 '든 것' {s['held_moved']}개의 주인을 옮김" if s.get("held_moved") else ""))
+        else:
+            text += (f"선반 카메라로 알아채 {s['ms'] / 1000:.1f}초부터 되돌려 읽음 "
+                     f"(상자 겹침: 전체 카메라 {s['overview_overlap']:.2f} · 선반 카메라 {s['detail_overlap']:.2f})")
+        if s.get("how") != "ask" and s.get("seen_ms") is not None and s["seen_ms"] < s["ms"]:
+            text += (f". 전체 카메라가 본 것(자리 · 든 상품)은 가려졌던 사람의 상자가 다시 생긴 {s['seen_ms'] / 1000:.1f}초부터 바꿔 읽음"
+                     + (f" — 먼저 센 '든 것' {s['held_moved']}개의 주인을 옮김" if s.get("held_moved") else ""))
         facts.append({"level": "warn", "text": text, "ms": s["ms"]})
         log.append({"ms": s["ms"], "level": "warn", "text": text})
         for pid in (a, b):
             marks.setdefault(pid, []).append({"ms": s["ms"], "tone": "warn", "tip": "전체 카메라 번호 맞바뀜 — 되돌려 읽기 시작"})
+    for cam, name in (("angle1", "전체 카메라"), ("angle0", "선반 카메라")):
+        spans = (data.get("confusion") or {}).get(cam) or []
+        if spans:
+            # 한 카메라가 두 사람을 헷갈린 구간 (상자 겹침 · 합쳐짐) — 번호가 틀렸다는 뜻은 아니다. 그동안 본 '든 상품'은 따로 둔다
+            times = ", ".join(f"{e['start_ms'] / 1000:.1f}~{e['end_ms'] / 1000:.1f}초" + (" (상자 하나로 합쳐짐)" if e["merged"] else "")
+                              for e in spans[:6]) + (" …" if len(spans) > 6 else "")
+            facts.append({"level": "info", "text": f"{name}가 두 사람을 헷갈린 구간 {len(spans)}번: {times}"})
+    asks = data.get("asks") or []
+    if asks:
+        # 전체 카메라에서 합쳐졌던 상자가 다시 생긴 순간마다 선반 카메라에 물은 것 — '그대로'와 못 물은 까닭도 보인다
+        said = [a for a in asks if a["say"] != "못 물음"]
+        parts = [f"{a['ms'] / 1000:.1f}초 {a['say']} ({a['gap_cm']:+.0f}cm)" for a in said[:6]]
+        missed = [a for a in asks if a["say"] == "못 물음"]
+        if missed:
+            why = sorted({a["why"] for a in missed})
+            parts.append(f"못 물음 {len(missed)}번 ({' · '.join(why[:3])})")
+        facts.append({"level": "info", "text": f"전체 카메라의 상자가 다시 생긴 순간 선반 카메라에 물은 것 {len(asks)}번: " + ", ".join(parts)})
     for r in data["revivals"]["angle1"]:
         if r["before_pid"] > 0 and r["after_pid"] > 0 and r["before_pid"] != r["after_pid"]:
             text = (f"추적 번호 t{r['track']} 가 {r['gap_ms'] / 1000:.1f}초 끊겼다 되살아나 "

@@ -273,9 +273,12 @@ class CrossViewLinker:
                     out.append((d1, d2, a, b))
         return out
 
-    def swap_overview(self, a: int, b: int, since_ms: float) -> None:
+    def swap_overview(self, a: int, b: int, since_ms: float, seen_since_ms: float | None = None) -> None:
         """since_ms 부터의 기록에서 전체 카메라 신원 a·b 를 서로 바꾼다 — 그때부터 전체 카메라가 두 사람의 번호를 뒤바꿔 붙였다.
-        짝 기록(links·구간), 지금 짝, 닫힌 조각, 두 신원의 위치 표본·외형."""
+        짝 기록(links·구간), 지금 짝, 닫힌 조각, 두 신원의 위치 표본·외형.
+
+        seen_since_ms (fusion.swap_since_confusion): 두 신원의 **위치 표본**만 이때부터 바꾼다 (since_ms 보다 이르다).
+        번호는 그때 바뀌었지만 짝은 더 늦게 뒤집혔다 — 그 사이의 짝 기록은 선반 카메라 번호를 따라 이어진 것이라 안 바꾼다."""
         flip = {a: b, b: a}
         since = since_ms - 1e-6
         gap = self.config.window_seconds * 1000.0 * 1.5
@@ -300,6 +303,8 @@ class CrossViewLinker:
                 for d, o in list(pairs.items()):
                     pairs[d] = flip.get(o, o)
         ta, tb = self._overview.setdefault(a, _Track()), self._overview.setdefault(b, _Track())
+        if seen_since_ms is not None:
+            since = min(since, seen_since_ms - 1e-6)
         old_a, new_a = [x for x in ta.samples if x.pts_ms < since], [x for x in ta.samples if x.pts_ms >= since]
         old_b, new_b = [x for x in tb.samples if x.pts_ms < since], [x for x in tb.samples if x.pts_ms >= since]
 
@@ -338,3 +343,15 @@ class CrossViewLinker:
 
     def current(self, detail_id: int) -> int | None:
         return self._current.get(detail_id)
+
+    def detail_ids(self, since_ms: float) -> list[int]:
+        """since_ms 뒤로 선반 카메라에 보인 신원."""
+        return [pid for pid, t in self._detail.items() if t.last_ms >= since_ms]
+
+    def detail_feet(self, detail_id: int, start_ms: float, end_ms: float) -> dict[float, tuple[float, float]]:
+        """선반 카메라 신원의 그 시간 발 자리 {시각: 바닥 cm} — **발목이 보인 장면만** (가려서 짐작한 자리는 뺀다)."""
+        track = self._detail.get(detail_id)
+        if track is None:
+            return {}
+        return {s.pts_ms: s.floor for s in track.samples
+                if start_ms <= s.pts_ms <= end_ms and s.floor is not None and s.ray is None}
