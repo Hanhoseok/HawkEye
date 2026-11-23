@@ -63,3 +63,11 @@ def test_other_view_takes_the_longest_state():
     assert cc.other_view(view, 0.0, 250.0) == "갈라 봄"
     assert cc.other_view(view, 150.0, 1000.0) == "함께 헷갈림"
     assert cc.other_view(view, 2000.0, 3000.0) == "두 사람이 안 보임"
+
+
+def test_pair_table_has_one_row_per_video():
+    rows = [{"pair": "C05", "cam": "angle1", "start": 8600.0, "end": 9600.0, "other": "갈라 봄"},
+            {"pair": "C05", "cam": "angle0", "start": 7000.0, "end": 7500.0, "other": "함께 헷갈림"}]
+    table = cc.pair_table(rows, ["C05", "C06"], {"C05": {"people": 2}, "C06": {"people": 2}})
+    assert table[2] == "| C05 | 2 | 1번 1.0초 | 1 / 0 / 0 | 1번 0.5초 | 0 / 1 / 0 |"
+    assert table[3] == "| C06 | 2 | 0 | - | 0 | - |"

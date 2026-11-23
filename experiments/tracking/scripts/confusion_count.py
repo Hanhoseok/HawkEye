@@ -3,6 +3,7 @@
     python scripts/confusion_count.py                    # 2 · 3 · 4차 전부
     python scripts/confusion_count.py --shoot 4          # 한 회차
     python scripts/confusion_count.py --shoot 4 --pairs C05 --list   # 그 짝의 구간을 하나씩 찍는다
+    python scripts/confusion_count.py --by-pair          # 영상마다 몇 번인지 표로
     python scripts/confusion_count.py --solo             # 한 명만 나오는 영상에서 잡히는 구간 = 잘못 세는 양 (가짜 상자)
 
 왜 세나: "헷갈리는 순간은 덜 헷갈리는 카메라가 정한다"를 만들기 전에, 그런 순간이 실제로 얼마나 있는지 본다.
@@ -138,7 +139,22 @@ def pair_rows(pair: str, offset_ms: float) -> list[dict]:
     return rows
 
 
-def run(shoot: int, pattern: str | None, show: bool, solo: bool = False) -> None:
+def pair_table(rows: list[dict], names: list[str], truth: dict) -> list[str]:
+    """영상마다 한 줄 — 카메라별 헷갈린 구간 수와 그동안 다른 카메라의 상태 (갈라 봄 / 함께 헷갈림 / 두 사람이 안 보임)."""
+    out = ["| 영상 | 손님 | 전체 카메라가 헷갈림 | 갈라 봄 / 함께 / 안 보임 | 선반 카메라가 헷갈림 | 갈라 봄 / 함께 / 안 보임 |",
+           "| --- | --- | --- | --- | --- | --- |"]
+    for pair in names:
+        cells = [pair, str(truth.get(pair, {}).get("people", "?"))]
+        for cam in CAMS:
+            mine = [r for r in rows if r["pair"] == pair and r["cam"] == cam]
+            secs = sum(r["end"] - r["start"] for r in mine) / 1000.0
+            cells.append(f"{len(mine)}번 {secs:.1f}초" if mine else "0")
+            cells.append(" / ".join(str(sum(r["other"] == k for r in mine)) for k in KINDS) if mine else "-")
+        out.append("| " + " | ".join(cells) + " |")
+    return out
+
+
+def run(shoot: int, pattern: str | None, show: bool, solo: bool = False, table_too: bool = False) -> None:
     de.set_profile(shoot)
     table = SyncTable.load(de.LABELS / "sync.csv")
     truth = de.load_truth()
@@ -162,6 +178,9 @@ def run(shoot: int, pattern: str | None, show: bool, solo: bool = False) -> None
     print("한쪽만 헷갈린 구간이 있는 영상:", len(by_pair), "편 —", ", ".join(f"{p} {n}" for p, n in by_pair.most_common(12)))
     none = [p for p in multi if p not in {r["pair"] for r in rows}]
     print("헷갈린 구간이 없는 영상:", len(none), "편")
+    if table_too:
+        for line in pair_table(rows, multi, truth):
+            print(line)
     if show:
         for r in rows:
             print(f"   {r['pair']} {CAMS[r['cam']]} 카메라 {r['start'] / 1000:.2f}~{r['end'] / 1000:.2f}초 — 다른 카메라: {r['other']}")
@@ -172,10 +191,11 @@ def main() -> None:
     ap.add_argument("--shoot", type=int, choices=(2, 3, 4))
     ap.add_argument("--pairs", help="짝 이름 (쉼표, * 가능)")
     ap.add_argument("--list", action="store_true", help="구간을 하나씩 찍는다")
+    ap.add_argument("--by-pair", action="store_true", help="영상마다 한 줄로 찍는다")
     ap.add_argument("--solo", action="store_true", help="한 명만 나오는 영상으로 센다 — 여기서 잡히는 구간은 잘못 센 것")
     args = ap.parse_args()
     for shoot in ([args.shoot] if args.shoot else [2, 3, 4]):
-        run(shoot, args.pairs, args.list, args.solo)
+        run(shoot, args.pairs, args.list, args.solo, args.by_pair)
 
 
 if __name__ == "__main__":
