@@ -161,7 +161,8 @@ def _store_ids(log, judge, resolve_end):
     """전체 카메라가 번호를 뒤바꿔 붙인 것을 판정이 되돌린 짝(fusion.swap_repair)에서: (장면 번호, 화면 신원) → 그 장면에 그릴 매장 신원.
     되돌린 적이 없으면 None — 화면 신원을 끝까지 합친 번호(resolve_end) 그대로 그린다.
     바꿔 읽기는 판정이 알아챈 때(found_ms)가 아니라 번호가 바뀐 때부터 그린다 — 화면에서 사람과 번호가 계속 맞게.
-    번호가 바뀐 때 = seen_ms (fusion.swap_since_confusion: 합쳐졌던 사람의 상자가 다시 생긴 때), 없으면 ms (짝이 뒤집힌 조각의 시작)."""
+    번호가 바뀐 때 = seen_ms (fusion.swap_since_confusion: 합쳐졌던 사람의 상자가 다시 생긴 때 · fusion.swap_ask_detail: 그 상자가
+    사라진 때 — 그동안 남은 상자는 앞사람이었다), 없으면 ms (짝이 뒤집힌 조각의 시작)."""
     if not judge.swaps:
         return None
     swaps = sorted(judge.swaps, key=lambda s: s["ms"])
@@ -406,7 +407,9 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
         "revivals": {"angle1": _revivals(log, "angle1"), "angle0": _revivals(log, "angle0")},
         "events": events, "actions": actions, "customers": customers, "payments": payments, "links": links,
         "takes0": takes0, "held": held, "visits": visits, "merges": merges,
-        "swaps": [{**s, "ms": round(s["ms"]), "found_ms": round(s["found_ms"])} for s in judge.swaps],
+        "swaps": [{**s, "ms": round(s["ms"]), "found_ms": round(s["found_ms"]), "seen_ms": round(s.get("seen_ms", s["ms"]))}
+                  for s in judge.swaps],
+        "asks": [{**a, "ms": round(a["ms"]), "gone_ms": round(a["gone_ms"])} for a in judge.asks],
         "confusion": {cam: [e.to_dict() for e in judge.watch[view].episodes]
                       for cam, view in (("angle1", "overview"), ("angle0", "detail"))},
         "shelf_events": result["shelf_events"],

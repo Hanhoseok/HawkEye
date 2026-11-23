@@ -343,3 +343,15 @@ class CrossViewLinker:
 
     def current(self, detail_id: int) -> int | None:
         return self._current.get(detail_id)
+
+    def detail_ids(self, since_ms: float) -> list[int]:
+        """since_ms 뒤로 선반 카메라에 보인 신원."""
+        return [pid for pid, t in self._detail.items() if t.last_ms >= since_ms]
+
+    def detail_feet(self, detail_id: int, start_ms: float, end_ms: float) -> dict[float, tuple[float, float]]:
+        """선반 카메라 신원의 그 시간 발 자리 {시각: 바닥 cm} — **발목이 보인 장면만** (가려서 짐작한 자리는 뺀다)."""
+        track = self._detail.get(detail_id)
+        if track is None:
+            return {}
+        return {s.pts_ms: s.floor for s in track.samples
+                if start_ms <= s.pts_ms <= end_ms and s.floor is not None and s.ray is None}

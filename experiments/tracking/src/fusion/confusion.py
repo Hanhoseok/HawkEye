@@ -48,6 +48,10 @@ class Episode:
     """상자 하나로 합쳐진 적이 있나."""
     back_ms: float | None = None
     """합쳐졌던 사람의 상자가 다시 생긴 시각 (여러 번이면 마지막)."""
+    gone_ms: float | None = None
+    """그 사람의 상자가 사라진 첫 장면의 시각 (back_ms 와 같은 합쳐짐의 것)."""
+    hidden: int | None = None
+    """그때 상자가 사라졌던 번호 (남은 상자의 번호는 a · b 가운데 다른 쪽)."""
 
     @property
     def switch_ms(self) -> float | None:
@@ -61,7 +65,8 @@ class Episode:
     def to_dict(self) -> dict:
         return {"a": self.a, "b": self.b, "start_ms": round(self.start_ms, 1), "end_ms": round(self.end_ms, 1),
                 "switch_ms": None if self.switch_ms is None else round(self.switch_ms, 1),
-                "peak": round(self.peak, 3), "merged": self.merged}
+                "peak": round(self.peak, 3), "merged": self.merged,
+                "gone_ms": None if self.gone_ms is None else round(self.gone_ms, 1), "hidden": self.hidden}
 
 
 class ConfusionWatch:
@@ -78,15 +83,20 @@ class ConfusionWatch:
         self._merged: dict[int, tuple[int, float]] = {}
         """사라진 번호 → (덮은 번호, 사라진 ms)."""
         self._open: dict[frozenset, Episode] = {}
+        self.returned: list[tuple[int, int, Episode]] = []
+        """방금 장면에서 상자가 다시 생긴 사람들: (사라졌던 번호, 그동안 남아 있던 번호, 구간)."""
 
     def update(self, ms: float, boxes: dict[int, tuple]) -> None:
         """boxes = 이 장면의 {번호: 상자}. 사람이 없는 장면은 안 불러도 된다."""
         back = [pid for pid in boxes if pid in self._merged]
+        self.returned = []
         for pid in back:
-            into, _ = self._merged.pop(pid)
+            into, since = self._merged.pop(pid)
             ep = self._open.get(frozenset((pid, into)))
             if ep is not None:
-                ep.back_ms = ms
+                ep.back_ms, ep.gone_ms, ep.hidden = ms, since, pid
+                if into in boxes:
+                    self.returned.append((pid, into, ep))
         for pid, box in self._last.items():
             if pid in boxes or pid in self._merged:
                 continue
@@ -120,10 +130,11 @@ class ConfusionWatch:
         if amount > ep.peak:
             ep.peak, ep.peak_ms = amount, ms
 
-    def find(self, a: int, b: int, start_ms: float, end_ms: float) -> Episode | None:
-        """그 시간([start_ms, end_ms], 앞뒤 join_ms 여유)에 닿는 a · b 의 구간 — 여럿이면 가장 늦은 것."""
+    def find(self, a: int, b: int, start_ms: float, end_ms: float, slack_ms: float | None = None) -> Episode | None:
+        """그 시간([start_ms, end_ms], 앞뒤 slack_ms 여유 — 안 주면 join_ms)에 닿는 a · b 의 구간 — 여럿이면 가장 늦은 것."""
+        slack = self.join_ms if slack_ms is None else slack_ms
         hits = [e for e in self.episodes if e.has(a) and e.has(b)
-                and e.start_ms <= end_ms + self.join_ms and e.end_ms >= start_ms - self.join_ms]
+                and e.start_ms <= end_ms + slack and e.end_ms >= start_ms - slack]
         return hits[-1] if hits else None
 
     def touching(self, pid: int, start_ms: float, end_ms: float) -> list[Episode]:
@@ -135,3 +146,4 @@ class ConfusionWatch:
         flip = {a: b, b: a}
         self._last = {flip.get(pid, pid): box for pid, box in self._last.items()}
         self._merged = {flip.get(pid, pid): (flip.get(into, into), since) for pid, (into, since) in self._merged.items()}
+        self.returned = [(flip.get(pid, pid), flip.get(into, into), ep) for pid, into, ep in self.returned]

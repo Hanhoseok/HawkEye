@@ -34,7 +34,7 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card, sensor_log  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 17
+VERSION = 18
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -49,7 +49,9 @@ VERSION = 17
     '계산대에 서 있으면 결제'라는 문장을 안 쓴다 (후속 63).
 16: 3차 보기의 기준이 센서 기록(L1 · L2) + 결제 라벨 판정으로 (후속 64). 31 = 바로 전 판정 = 영상만. 서명에 센서 레인 · 결제 기록 여부를 넣었다.
 17: 맞바뀜을 되돌릴 때 전체 카메라가 본 것은 번호가 바뀐 때부터, 헷갈린 장면의 든 기록은 따로 (fusion.swap_since_confusion, 후속 68) —
-    4차 C05 · C06 의 주인이 달라진다. 보기 데이터에 confusion(카메라마다 두 사람을 헷갈린 구간)이 생긴다."""
+    4차 C05 · C06 의 주인이 달라진다. 보기 데이터에 confusion(카메라마다 두 사람을 헷갈린 구간)이 생긴다.
+18: 상자가 다시 생긴 순간 선반 카메라의 앞뒤 순서로 번호를 정한다 (fusion.swap_ask_detail, 후속 69) — 4차 C05 · C06 의 맞바뀜을
+    그 순간에 되돌린다. 보기 데이터에 asks(물은 것)가 생기고 swaps 에 how("ask" · "pair")가 붙는다."""
 RUN_KEY = "current"
 
 

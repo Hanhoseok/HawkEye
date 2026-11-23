@@ -212,3 +212,22 @@ def test_swap_text_says_when_the_overview_records_were_reread_from():
             "detail_overlap": 0.475, "seen_ms": 8866.4, "held_moved": 2}
     texts = [f["text"] for f in analyze(make(swaps=[swap]), result())["lenses"]["track"]["facts"]]
     assert any("8.9초부터 바꿔 읽음" in t and "'든 것' 2개의 주인을 옮김" in t for t in texts)
+
+
+def test_swap_decided_by_the_shelf_cameras_depth_order_says_so():
+    """fusion.swap_ask_detail (후속 69): 상자가 다시 생긴 순간에 바로 정한 맞바뀜은 겹침 수치가 없다."""
+    swap = {"ms": 8866, "found_ms": 8866, "screen": [1, 2], "store": [2, 1], "detail": [2, 1], "overview_overlap": None,
+            "detail_overlap": None, "seen_ms": 8599.8, "held_moved": 0, "how": "ask", "gap_cm": 22.6, "samples": 11}
+    texts = [f["text"] for f in analyze(make(swaps=[swap]), result())["lenses"]["track"]["facts"]]
+    assert any("다시 생긴 8.9초에 선반 카메라의 앞뒤 순서로 바로 되돌려 읽음" in t and "23cm 앞" in t and "8.6초부터" in t for t in texts)
+
+
+def test_track_lens_lists_what_was_asked_when_a_box_came_back():
+    asks = [{"ms": 7200, "gone_ms": 6800, "store": [2, 1], "say": "바뀜", "why": "", "detail": [2, 1], "gap_cm": 16.6, "samples": 13},
+            {"ms": 20533, "gone_ms": 20300, "store": [1, 2], "say": "그대로", "why": "", "detail": [1, 2], "gap_cm": -25.7, "samples": 14},
+            {"ms": 9366, "gone_ms": 9100, "store": [1, 2], "say": "못 물음", "why": "선반 카메라도 두 사람을 헷갈림", "detail": [1, 2],
+             "gap_cm": None, "samples": 0}]
+    texts = [f["text"] for f in analyze(make(asks=asks), result())["lenses"]["track"]["facts"]]
+    assert ("전체 카메라의 상자가 다시 생긴 순간 선반 카메라에 물은 것 3번: 7.2초 바뀜 (+17cm), 20.5초 그대로 (-26cm), "
+            "못 물음 1번 (선반 카메라도 두 사람을 헷갈림)") in texts
+    assert not any("물은 것" in f["text"] for f in analyze(make(), result())["lenses"]["track"]["facts"])

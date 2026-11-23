@@ -13,6 +13,7 @@
 두 카메라 모두 '두 사람을 헷갈린 구간'(상자 겹침 · 합쳐짐)을 적는다 (confusion.ConfusionWatch). 전체 카메라가 헷갈린 구간은
 선반 카메라로 정한다 (fusion.swap_since_confusion): 맞바뀜을 되돌릴 때 전체 카메라가 본 것은 번호가 바뀐 때부터 바꿔 읽고,
 헷갈린 장면에서 본 '손에 든 상품'은 따로 둔다 (후속 68).
+합쳐졌던 사람의 상자가 다시 생긴 순간에는 선반 카메라의 앞뒤 순서로 번호가 바뀌었는지 바로 묻는다 (fusion.swap_ask_detail, 후속 69).
 """
 
 from __future__ import annotations
@@ -134,6 +135,9 @@ class DualJudge:
         """카메라마다 두 사람을 헷갈린 구간 (겹침 · 합쳐짐). 번호 맞바뀜을 되돌릴 때 '언제부터'를 여기서 묻는다 (fusion.swap_since_confusion)."""
         self.flips: list[dict] = []
         """두 화면 짝이 서로 뒤집혔지만 전체 카메라 번호 맞바뀜으로 안 본 것 — 까닭과 함께 (재 보려고 적어 둔다)."""
+        self.asks: list[dict] = []
+        """전체 카메라에서 합쳐졌던 상자가 다시 생긴 순간마다 선반 카메라에 물은 것 (fusion.swap_ask_detail): ms · store(사라졌던 번호,
+        남아 있던 번호) · say("바뀜" · "그대로" · "못 물음") · why · gap_cm(사라졌던 번호의 사람이 앞이면 +) · samples."""
 
     # ------------------------------------------------------------------ 번호 맞바뀜 되돌리기 (fusion.swap_repair)
 
@@ -212,27 +216,98 @@ class DualJudge:
                                    "overview_overlap": None if over is None else round(over, 3),
                                    "detail_overlap": None if shelf is None else round(shelf, 3)})
                 continue
-            screen_a, screen_b = self.screen_id(a), self.screen_id(b)
             seen_since = since
             """전체 카메라가 본 것(자리 · 선반 앞에 있던 사람 · 팔 뻗기 · 든 상품)을 바꿔 읽기 시작할 때."""
             episode = self.watch["overview"].find(a, b, start, end) if self.config.swap_since_confusion else None
             if episode is not None and episode.switch_ms is not None:
                 seen_since = min(since, episode.switch_ms)
-            moved = 0
-            self.linker.swap_overview(a, b, since, seen_since)
-            self.fuser.swap_overview(a, b, seen_since)
-            if seen_since < since:
-                moved = self._swap_held(a, b, seen_since, now_ms)
-            self.watch["overview"].rename(a, b)
-            for screen, store in ((screen_a, b), (screen_b, a)):
-                if screen == store:
-                    self._store.pop(screen, None)
-                else:
-                    self._store[screen] = store
-            self.swaps.append({"ms": since, "found_ms": now_ms, "screen": [screen_a, screen_b], "store": [a, b],
+            screens, moved = self._read_swapped(a, b, since, seen_since, now_ms)
+            self.swaps.append({"ms": since, "found_ms": now_ms, "screen": screens, "store": [a, b],
                                "detail": [d1, d2], "overview_overlap": round(over, 3), "detail_overlap": round(shelf, 3),
-                               "seen_ms": seen_since, "held_moved": moved,
+                               "seen_ms": seen_since, "held_moved": moved, "how": "pair",
                                "episode": None if episode is None else episode.to_dict()})
+
+    def _read_swapped(self, a: int, b: int, since_ms: float, seen_ms: float, now_ms: float) -> tuple[list[int], int]:
+        """매장 신원 a · b 를 서로 바꿔 읽기 시작한다 — 짝 기록은 since_ms 부터, 전체 카메라가 본 것은 seen_ms 부터.
+        (그 두 사람의 화면 신원, 주인을 옮긴 '든 것' 수)를 돌려준다."""
+        screen_a, screen_b = self.screen_id(a), self.screen_id(b)
+        self.linker.swap_overview(a, b, since_ms, seen_ms)
+        self.fuser.swap_overview(a, b, seen_ms)
+        moved = self._swap_held(a, b, seen_ms, now_ms) if seen_ms < since_ms else 0
+        self.watch["overview"].rename(a, b)
+        for screen, store in ((screen_a, b), (screen_b, a)):
+            if screen == store:
+                self._store.pop(screen, None)
+            else:
+                self._store[screen] = store
+        return [screen_a, screen_b], moved
+
+    # ------------------------------------------------------------------ 상자가 다시 생긴 순간에 선반 카메라에 묻기 (fusion.swap_ask_detail)
+
+    def _toward_camera(self, point: tuple[float, float]) -> tuple[float, float] | None:
+        """그 바닥 점에서 전체 카메라 쪽을 가리키는 방향 (단위 벡터) — 화면에서 아래쪽이 카메라에 가깝다."""
+        if not self.floor.image_side_ok(*point):
+            return None
+        x, y = self.floor.to_image(*point)
+        if not self.floor.on_floor_side(x, y + self.RAY_STEP):
+            return None
+        below = self.floor.to_floor(x, y + self.RAY_STEP)
+        dx, dy = below[0] - point[0], below[1] - point[1]
+        norm = (dx * dx + dy * dy) ** 0.5
+        return (dx / norm, dy / norm) if norm > 1e-9 else None
+
+    def _depth_order(self, hidden: int, kept: int, episode, now_ms: float) -> dict:
+        """사라졌던 번호(hidden)와 남아 있던 번호(kept)의 사람 가운데 누가 전체 카메라 쪽에 가까웠나 — 선반 카메라의 발 자리로.
+        say: "바뀜"(사라졌던 번호의 사람이 앞 — 남은 상자는 앞사람을 따라가므로 번호가 바뀐 것) · "그대로" · "못 물음"."""
+        window = self.config.window_seconds * 1000.0
+        ask = {"ms": now_ms, "gone_ms": episode.gone_ms, "store": [hidden, kept], "say": "못 물음", "why": "",
+               "detail": None, "gap_cm": None, "samples": 0}
+        if self.detail_floor is None:
+            return {**ask, "why": "선반 카메라 바닥 지도 없음"}
+        start = episode.start_ms
+        before = {d: self.linker.owner(d, start - 2.0 * window, start) for d in self.linker.detail_ids(start - window)}
+        mine = [d for d, o in before.items() if o == hidden]
+        other = [d for d, o in before.items() if o == kept]
+        if len(mine) != 1 or len(other) != 1:
+            return {**ask, "why": "헷갈리기 전에 선반 카메라 짝이 한 사람씩이 아님"}
+        d1, d2 = mine[0], other[0]
+        ask["detail"] = [d1, d2]
+        since = episode.gone_ms - window
+        if self.watch["detail"].find(d1, d2, since, now_ms, 0.0) is not None:   # 발 자리를 재는 바로 그 시간에
+            return {**ask, "why": "선반 카메라도 두 사람을 헷갈림"}
+        feet1, feet2 = self.linker.detail_feet(d1, since, now_ms), self.linker.detail_feet(d2, since, now_ms)
+        gaps = []
+        for ms in sorted(set(feet1) & set(feet2)):
+            p, q = feet1[ms], feet2[ms]
+            toward = self._toward_camera(((p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0))
+            if toward is not None:
+                gaps.append((p[0] - q[0]) * toward[0] + (p[1] - q[1]) * toward[1])
+        ask["samples"] = len(gaps)
+        if len(gaps) < self.config.swap_ask_min_samples:
+            return {**ask, "why": "두 사람의 발목이 함께 보인 선반 카메라 장면이 모자람"}
+        ask["gap_cm"] = round(sum(gaps) / len(gaps), 1)
+        if min(gaps) < 0.0 < max(gaps):
+            return {**ask, "why": "앞뒤 순서가 장면마다 다름"}
+        if abs(ask["gap_cm"]) < self.config.swap_ask_min_gap_cm:
+            return {**ask, "why": "앞뒤 차이가 작음"}
+        return {**ask, "say": "바뀜" if ask["gap_cm"] > 0 else "그대로"}
+
+    def _ask_detail(self, now_ms: float) -> dict[int, int]:
+        """방금 장면에서 상자가 다시 생긴 사람마다 선반 카메라에 묻고, '바뀜'이면 지금부터 두 번호를 바꿔 읽는다.
+        바꿔 읽기 시작한 두 번호 {a: b, b: a} 를 돌려준다 (없으면 빈 사전) — 이 장면에서 이미 모은 것을 부른 쪽이 고쳐 쓴다.
+        한 장면에 하나만 바꾼다 (세 사람이 한꺼번에 얽힌 장면은 본 적이 없다)."""
+        for hidden, kept, episode in list(self.watch["overview"].returned):
+            ask = self._depth_order(hidden, kept, episode, now_ms)
+            self.asks.append(ask)
+            if ask["say"] != "바뀜":
+                continue
+            screens, moved = self._read_swapped(hidden, kept, now_ms, episode.gone_ms, now_ms)
+            self.swaps.append({"ms": now_ms, "found_ms": now_ms, "screen": screens, "store": [hidden, kept],
+                               "detail": ask["detail"], "overview_overlap": None, "detail_overlap": None,
+                               "seen_ms": episode.gone_ms, "held_moved": moved, "how": "ask",
+                               "gap_cm": ask["gap_cm"], "samples": ask["samples"], "episode": episode.to_dict()})
+            return {hidden: kept, kept: hidden}
+        return {}
 
     def _swap_held(self, a: int, b: int, since_ms: float, now_ms: float) -> int:
         """since_ms 부터 전체 카메라가 본 '손에 든 상품'의 주인을 a · b 사이에서 서로 바꾼다: 든 사람 기록, 이미 센 것(손님 장부), 적어 둔 줄."""
@@ -399,6 +474,10 @@ class DualJudge:
             if in_band:
                 self.fuser.note_band(frame.pts_ms, pid)
         self._note_boxes("overview", frame.pts_ms, boxes)   # 든 사람을 적기 전에 — 이 장면이 헷갈린 장면인지 먼저 안다
+        if self.config.swap_ask_detail:
+            flip = self._ask_detail(frame.pts_ms)
+            if flip:   # 이 장면의 자리 표본 · 선반 앞 기록은 _read_swapped 가 고쳤다 — 아직 안 넘긴 손 자리만 여기서 고친다
+                hands = [(flip.get(pid, pid), bbox, kp) for pid, bbox, kp in hands]
         if self.holders is not None and products is not None:
             self.holders.update(frame.pts_ms, products, hands, self.counter.region)
             if self.config.overview_instant:
