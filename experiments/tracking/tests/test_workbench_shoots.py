@@ -163,7 +163,7 @@ def test_thumbnail_is_copied_from_the_base_view(tmp_path):
 def test_server_never_opens_on_a_compare_view_and_has_no_tuner_for_it(monkeypatch):
     from workbench import server
     assert SHOOT3_PREV in server.BUILDERS and SHOOT3_PREV not in server.TUNERS
-    assert set(server.TUNERS) == {2, 3}
+    assert set(server.TUNERS) == {2, 3, 4}                               # 4차도 수치 조정 (후속 65)
     for key, b in server.BUILDERS.items():
         monkeypatch.setattr(b, "pairs", lambda key=key: ["C01"])            # 모든 보기에 기록이 있다고 치고
     assert server.shoot_of(None, None) == 4                                 # 처음 여는 화면은 가장 최근 회차

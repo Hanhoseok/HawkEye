@@ -102,3 +102,12 @@ def test_payment_record_views_do_not_offer_the_standing_time_knob():
     keys = lambda payments: [k[0] for k in knobs_for(3, payments)]  # noqa: E731
     assert "risk.dwell_pay_seconds" in keys(False) and "risk.dwell_pay_seconds" not in keys(True)
     assert len(keys(False)) == len(keys(True)) + 1
+
+
+def test_shoot4_tunes_the_same_values_as_shoot3():
+    """4차도 바닥 위 거리로 두 화면 짝을 맺는다 — 띠 간격이 아니라 바닥 거리 · 가린 발 여유를 바꾼다 (후속 65)."""
+    from workbench.tune import knobs_for
+
+    three, four = [k[0] for k in knobs_for(3, True)], [k[0] for k in knobs_for(4, True)]
+    assert four == three and "fusion.max_floor_gap_cm" in four and "fusion.max_band_gap" not in four
+

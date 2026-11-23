@@ -21,9 +21,9 @@ python workbench/server.py          # http://127.0.0.1:8770/  (내 컴퓨터에�
 | 정답표·시차·결제·적은 정답 | `labels/store01_dual/` | `labels/store01_shoot3/` | `labels/store01_shoot4/` (사람이 확인한 라벨, 후속 62) |
 | 보기 데이터 | `outputs/workbench/` | `outputs/workbench/shoot3/` | `outputs/workbench/shoot4/` |
 | 판정에 넣는 것 | 영상만 (계산대에 서 있기 = 결제) | **센서 기록(L1 · L2) + 결제 라벨** (사람이 적은 것, 2026-11-23 부터) | **센서 로그(L1 · L2) + 결제 로그** — 최종 흐름 |
-| 수치 조정에서 적용한 값 | `configs/store01_dual_judge.yaml` | `configs/store01_shoot3_judge.yaml` | 없음 (수치 조정 꺼 둠) |
+| 수치 조정에서 적용한 값 | `configs/store01_dual_judge.yaml` | `configs/store01_shoot3_judge.yaml` | `configs/store01_shoot4_judge.yaml` (2026-11-23 부터 수치 조정 켬) |
 | 두 화면 짝 맺는 법 | 선반 앞 띠 한 줄 | 바닥 위 거리 (바닥 지도가 보인다) | 바닥 위 거리 |
-| 수치 칸 | 16개 | 16개 (결제 기록으로 판정해 '계산대에 서 있어야 하는 시간'이 빠짐) | — |
+| 수치 칸 | 16개 | 16개 (결제 기록으로 판정해 '계산대에 서 있어야 하는 시간'이 빠짐) | 16개 (3차와 같은 칸) |
 | 새 영상 추가 | 됨 | 안 됨 (영상마다 카메라 움직임 보정·시차 맞추기가 먼저) | 안 됨 |
 
 아래 설명의 경로는 2차 것으로 적었다 — 3차는 위 표의 자리로 읽는다. 짝 이름이 두 회차에 겹쳐서(C12) 주소도 회차를 품는다: `#/3/pair/C01/link`.

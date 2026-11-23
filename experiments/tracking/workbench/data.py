@@ -108,14 +108,13 @@ PROFILES = {
                payment="결제 라벨 (사람이 적음)", sensor_lanes=("L1", "L2"), payments=True,
                note="센서 기록(L1 · L2)과 사람이 적은 결제 라벨을 넣은 판정입니다. 센서 L3(애플사이다)은 판정에 안 씁니다."),
     # 4차(2026-11-19)는 최종 판정 흐름 그대로 본다: 상품 모델 기록 + 센서 로그(L1 · L2) + 결제 로그 (사용자 방향, 2026-11-20).
-    # 수치 조정은 꺼 둔다. 처음 끈 까닭("초안이 '영상만'으로 돈다")은 이제 맞지 않는다 — 초안도 같은 입력으로 판정한다 (3차로 확인, 후속 64).
-    # 4차에서 켜 보지는 않았다.
+    # 수치 조정도 켠다 (사용자 결정 2026-11-23, 후속 65) — 초안도 같은 입력(센서 로그 + 결제 로그)으로 판정한다. 적용한 값은 configs/store01_shoot4_judge.yaml.
     4: Profile(4, "4차 촬영", ROOT / "outputs" / "dual_eval_shoot4", ROOT / "labels" / "store01_shoot4",
                ROOT / "zones" / "store01_shoot4", OUT / "shoot4", ROOT / "configs" / "store01_shoot4_judge.yaml",
                (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot4" / n for n in
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
                 ROOT / "outputs" / "sync_floor_shoot4" / "register.csv"), False,
-               payment="결제 로그 (POS)", can_tune=False, sensor_lanes=("L1", "L2"), payments=True,
+               payment="결제 로그 (POS)", sensor_lanes=("L1", "L2"), payments=True,
                note="센서 로그(L1 · L2)와 결제 로그(POS)를 넣은 판정입니다. 센서 L3(애플사이다)은 판정에 안 쓰고 카메라와 결제 로그로 셉니다."),
 }
 """열쇠는 보기 번호 — 주소(#/3)와 요청(?shoot=3)에 쓴다. 회차의 기본 기록은 회차 번호 그대로이고,

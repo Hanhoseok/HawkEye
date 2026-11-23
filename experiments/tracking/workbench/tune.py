@@ -77,8 +77,8 @@ KNOBS = [
      "물건 탐지와 칸 그림이 모두 그대로인 방문이면, 그때 선반 앞에 있던 다른 손님의 손 뻗기도 '만지기만'으로 본다.", "bool", (), ""),
 ]
 KNOB = {k[0]: k for k in KNOBS}
-SHOOT_ONLY = {"fusion.max_band_gap": (2,), "fusion.max_floor_gap_cm": (3,), "fusion.ray_slack_cm": (3,)}
-"""그 촬영에서만 뜻이 있는 값 — 2차는 선반 앞 띠 한 줄로, 3차는 바닥 위 거리로 두 화면 짝을 맺는다."""
+SHOOT_ONLY = {"fusion.max_band_gap": (2,), "fusion.max_floor_gap_cm": (3, 4), "fusion.ray_slack_cm": (3, 4)}
+"""그 촬영에서만 뜻이 있는 값 — 2차는 선반 앞 띠 한 줄로, 3 · 4차는 바닥 위 거리로 두 화면 짝을 맺는다."""
 
 
 def knobs_for(shoot: int, payments: bool = False) -> list[tuple]:
