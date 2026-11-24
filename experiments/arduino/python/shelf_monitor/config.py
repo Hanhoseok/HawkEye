@@ -147,6 +147,7 @@ class AppConfig:
     restock_timeout_s: float = 600
     event_log: str = "logs/events.jsonl"
     status_log: str = "logs/status.jsonl"
+    relay_target: str = ""                  # "100.x.x.x:4220" — 서버로 실시간 중계 ("" = 끔)
     lanes: list[LaneConfig] = field(default_factory=list)
     base_dir: Path = Path(".")
     config_path: Optional[Path] = None      # 보정 결과를 다시 쓸 파일
@@ -192,6 +193,14 @@ def load_config(path: str | Path, enable_all: bool = False) -> AppConfig:
     o = raw.get("output", {})
     cfg.event_log = str(o.get("event_log", cfg.event_log))
     cfg.status_log = str(o.get("status_log", cfg.status_log))
+    r = raw.get("relay", {})
+    cfg.relay_target = str(r.get("target", "")).strip()
+    if cfg.relay_target:
+        from .relay import parse_target
+        try:
+            parse_target(cfg.relay_target)
+        except ValueError as e:
+            errors.append(f"relay.target: {e}")
 
     defaults = raw.get("lane_defaults", {})
     for k in defaults:

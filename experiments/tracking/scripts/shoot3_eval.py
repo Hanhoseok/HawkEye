@@ -188,6 +188,7 @@ def load_sensor(path: Path, offset_ms: float, lanes: tuple[str, ...] | None = No
                 continue
             if lanes and r["lane"] not in lanes:
                 continue
+            start = (r.get("start_sec") or "").strip()      # 변화 시작 시각 (센서가 줬을 때만, 1.3 이상)
             out.append(SensorEvent(float(r["time_sec"]) * 1000.0 + offset_ms, r["lane"], float(r["delta"]), 1.0,
-                                   unit="count"))
+                                   unit="count", start_ms=float(start) * 1000.0 + offset_ms if start else None))
     return out

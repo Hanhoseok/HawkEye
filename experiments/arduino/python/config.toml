@@ -27,6 +27,12 @@ restock_timeout_s = 600    # 재입고 모드를 켜둔 채 잊었을 때 자동
 event_log  = "logs/events.jsonl"    # 확정 이벤트(INIT/ADD/REMOVE/RESYNC/SENSOR_ERROR/...) 저장
 status_log = "logs/status.jsonl"    # 주기적 STATUS 저장 ("" 이면 저장 안 함)
 
+[relay]
+# 서버 실시간 중계 (Tailscale). 노트북이 받은 원본 측정·확정 이벤트·상태를 이 주소로 UDP 로 보낸다.
+# 서버에서 python3 relay_server.py 를 켜 둔다. "" 이면 끔. 실행 시 --relay / --no-relay 가 우선.
+# da-perfect57 의 Tailscale IP. 노트북에도 Tailscale 을 설치하고 같은 tailnet 에 로그인해야 닿는다.
+target = "100.118.214.101:4220"
+
 # -----------------------------------------------------------------------------
 # 레인 기본값: 각 [[lanes]] 에서 같은 키를 쓰면 그 레인만 덮어쓴다.
 # -----------------------------------------------------------------------------
@@ -61,80 +67,79 @@ shape              = "box"  # 화면 표시용: "box" 또는 "can"(위에서 본
 
 [[lanes]]
 lane_id = 1
+# 자동 보정 2026-11-24 17:24 · 빈 335 / 1개 311 / 2개 244 mm · 지름 67 · 0↔1 간격 23.5
 enabled = true
 product_id = "CAN-COLA-355"
-product_name = "칸타타 275ml 스위트 아메리카노"
-thickness_mm = 65          # 실제 상품 지름
-empty_distance_mm = 345    # 빈 레인 실측 (배선 수리 후 재기록, 5회 반복 중앙값 약 345)
-max_count = 5
+product_name = "칸타타 스위트아메리카노 275ml"
+thickness_mm = 67
+max_count = 4
 tca_channel = 0
 shape = "can"
-# 이 레일은 밀판 앞에 5cm 고정 블록이 있어, 첫 캔은 밀판을 약 17mm 만 민다 (2개째부터 65mm 씩).
-# 0개·1개는 실측값, 2개 이상은 1개 위치에서 65mm 씩 뺀 추정값 → 캔을 넣어 확인 후 실측값으로 교체할 것.
-#   재기록(배선 수리 후 센서가 약 9mm 이동): 필터 후 0개 338~351 (중앙 345), 1개 321~333 (중앙 328)
-#   녹화 재생: 넣기 5회·빼기 4회 정확. 센서 값이 ±6mm 치우쳐도 판정이 바뀌지 않음
-# 0개 기준을 350 으로 둔 이유: 빈 상태 값은 위쪽으로 더 퍼지므로 1개와 겹치지 않게 구간 중심을 올림
-# 센서·표적 위치가 바뀌면 이 값들을 다시 기록해야 한다.
-count_distance_mm  = [350, 328, 263, 198, 133, 68]
-count_tolerance_mm = [10,  7,   15,  15,  15,  15]
+empty_distance_mm = 335
+block_mm = 50
 hysteresis_mm = 4
+count_distance_mm = [333.5, 310, 244.5, 177.5, 110.5]
+count_tolerance_mm = [12.4, 6.6, 15, 15, 15]
+median_window = 5
 
 [[lanes]]
 lane_id = 2
-# 자동 보정 2026-11-11 14:54 · 빈 353 / 1개 333 / 2개 268 mm · 지름 65 · 0↔1 간격 20
 enabled = true
 product_id = "CAN-CANTATA-SWEET-AMERICANO-275"
 product_name = "동과루"
-thickness_mm = 65
-empty_distance_mm = 353
+thickness_mm = 66
 max_count = 4
 tca_channel = 1
 shape = "can"
-count_distance_mm = [354.5, 334.5, 269.5, 204.5, 139.5]
-count_tolerance_mm = [10.9, 5.6, 15, 15, 15]
-hysteresis_mm = 3
+# 2026-11-24 레일 교체: 빈 레일 330mm, 스페이서 50mm. 예전 거리표(2026-11-19 17:05 보정)는 끔 → 재보정 필요
+#   (교체 전) count_distance_mm  = [358.5, 331.5, 266.5, 200.5, 134.5]
+#   (교체 전) count_tolerance_mm = [11.9, 10.6, 15, 15, 15]
+empty_distance_mm = 330
+block_mm = 50
+hysteresis_mm = 4
 median_window = 5
 
 [[lanes]]
 lane_id = 3
-# 자동 보정 2026-11-11 14:42 · 빈 327 / 1개 309 / 2개 245 mm · 지름 64 · 0↔1 간격 18
 enabled = true
 product_id = "BOX-SNACK-01"
 product_name = "애플사이다"
-thickness_mm = 64
-empty_distance_mm = 327
+thickness_mm = 67
 max_count = 4
 tca_channel = 2
 tolerance_mm = 10
-hysteresis_mm = 3
-count_distance_mm = [328, 310, 244.5, 180.5, 116.5]
-count_tolerance_mm = [8.5, 6, 15, 15, 15]
+# 2026-11-24 레일 교체: 빈 레일 330mm, 스페이서 50mm. 예전 거리표(2026-11-19 17:08 보정)는 끔 → 재보정 필요
+#   (교체 전) count_distance_mm  = [351, 325, 257.5, 190.5, 123.5]
+#   (교체 전) count_tolerance_mm = [10.8, 10.8, 15, 15, 15]
+empty_distance_mm = 330
+block_mm = 50
+hysteresis_mm = 4
 median_window = 5
 
 [[lanes]]
 lane_id = 4
-enabled = true     # ※ 상품·빈 레인 거리는 아직 예시값 (보정 필요)
+enabled = true
 product_id = "BOT-WATER-500"
 product_name = "생수"
 thickness_mm = 65
-empty_distance_mm = 430
 max_count = 5
 tca_channel = 3
 shape = "can"
-# 블록은 다섯 레인이 같다. 1~3번 실측: 첫 상품이 밀판을 18~22mm 밀었다 (지름 65 - 블록 ≈ 43~47) → 45 로 둠.
-# 빈 레인 거리(430)는 예시값이라 개수는 '재입고 시작' 보정 전까지 맞지 않는다. 보정하면 실측 거리표가 이 값을 대신한다.
-block_mm = 45
+# 2026-11-24 레일 교체: 빈 레일 330mm, 스페이서 50mm (다섯 레인 공통)
+empty_distance_mm = 330
+block_mm = 50
 hysteresis_mm = 4
 
 [[lanes]]
 lane_id = 5
-enabled = true     # ※ 상품·빈 레인 거리는 아직 예시값 (보정 필요) — 화면의 '재입고 시작'으로 보정하고 이름을 넣을 것
+enabled = true     # 상품 이름은 아직 미정 — 화면의 '재입고 시작'으로 보정하고 이름을 넣을 것
 product_id = "LANE5-TBD"
 product_name = "레인5 (보정 필요)"
 thickness_mm = 65
-empty_distance_mm = 430
 max_count = 5
 tca_channel = 4
 shape = "can"
-block_mm = 45          # 4번 레인과 같은 블록 (1~3번 실측 평균)
+# 2026-11-24 레일 교체: 빈 레일 330mm, 스페이서 50mm (다섯 레인 공통)
+empty_distance_mm = 330
+block_mm = 50
 hysteresis_mm = 4

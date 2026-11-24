@@ -135,3 +135,38 @@ def test_main_angle0_axis_missing_sync_writes_nothing(tmp_path, monkeypatch):
     folder, out = _setup(tmp_path, "")
     assert _run(monkeypatch, folder, "--out", out) == 1
     assert not (out / "sensor").exists() and not (out / "sensor_index.csv").exists()
+
+
+def test_parse_events_reads_change_start_from_the_text_column():
+    rows = S.parse_events("21:52:55  L1   ADD           0→1            315  1번 레인 / 칸타타 / 1개 추가 / 현재 1개 / 시작 21:52:53.673\n"
+                          "21:53:10  L2   REMOVE        3→2            276  2번 레인 / 동과루 / 1개 제거 / 현재 2개\n")
+    assert rows[0].start == dt.time(21, 52, 53, 673000) and rows[0].product == "칸타타"
+    assert rows[1].start is None
+
+
+def test_parse_events_jsonl_reads_monitor_and_relay_files():
+    import json
+
+    ev = {"message_type": "EVENT", "event": "REMOVE", "lane_id": 2, "product_name": "동과루", "previous_count": 3,
+          "current_count": 2, "distance_mm": 276.4, "pc_time": "2026-11-24T21:53:10.120+09:00",
+          "change_start_time": "2026-11-24T21:53:08.400+09:00"}
+    old = dict(ev, pc_time="2026-11-24T21:54:00.000+09:00")
+    old.pop("change_start_time")
+    lines = [json.dumps(ev), json.dumps({"recv": "x", "data": old}),                  # 모니터 원본 · 중계본
+             json.dumps({"message_type": "SYSTEM", "event": "LINK_UP"}), "깨진 줄"]
+    rows = S.parse_events_jsonl("\n".join(lines))
+    assert [(r.lane, r.event, r.before, r.after, r.distance_mm) for r in rows] == [
+        ("L2", "REMOVE", 3, 2, "276"), ("L2", "REMOVE", 3, 2, "276")]
+    assert rows[0].wall == dt.time(21, 53, 10, 120000) and rows[0].start == dt.time(21, 53, 8, 400000)
+    assert rows[1].start is None
+
+
+def test_assign_moves_start_time_with_the_same_clock_axis_and_shift():
+    rows = S.parse_events("15:08:19  L2   REMOVE        3→2            276  2번 레인 / 동과루 / 1개 제거 / 현재 2개 / 시작 15:08:17.250\n"
+                          "15:08:22  L3   ADD           0→1            309  3번 레인 / 애플사이다 / 1개 추가 / 현재 1개\n")
+    end = dt.datetime(2026, 11, 11, 6, 8, 25, tzinfo=dt.timezone.utc)  # 영상 15:08:11 ~ 15:08:25
+    out = S.assign(rows, S.VideoClock("T01", end, 14.0), dt.date(2026, 11, 11), 0.0)
+    assert [(r["time_sec"], r["start_sec"]) for r in out] == [("8.00", "6.250"), ("11.00", "")]
+    # 시계 보정 · 카메라 시차 · 영상별 보정도 확정 시각과 똑같이 적용된다
+    out = S.assign(rows, S.VideoClock("T01", end, 14.0), dt.date(2026, 11, 11), 1.0, shift=0.5, axis_offset=0.2)
+    assert out[0]["time_sec"] == "8.30" and out[0]["start_sec"] == "6.550"

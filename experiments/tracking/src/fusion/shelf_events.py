@@ -60,13 +60,28 @@ class SensorEvent:
     confidence: float = 1.0
     unit: str = "g"
     """delta_g 의 단위. "g" = 무게(칸 무게 sensor_unit_g 로 개수 환산), "count" = 개수 그대로 (3차 레인 거리 센서)."""
+    start_ms: float | None = None
+    """변화가 **시작된** 시각 (같은 시간축 ms). 레인 거리 센서 1.3 이상(shelf_monitor)은 개수가 안정된 뒤(time_ms) 기록하면서
+    측정이 처음 움직인 시각(change_start_time)도 함께 준다. 있으면 방문·주인 맞추기는 이 시각으로 하고 sensor_lag_seconds 를
+    더하지 않는다 (늦음이 이미 빠져 있다). time_ms 는 그대로 '기록이 도착한 시각' — 기다리기 판단에만 쓴다. 없으면 예전 그대로."""
+
+    @property
+    def at_ms(self) -> float:
+        """맞추기에 쓸 시각: 시작 시각이 있으면 그것, 없으면 기록 시각."""
+        return self.time_ms if self.start_ms is None else self.start_ms
+
+    def lag_ms(self, sensor_lag_seconds: float) -> float:
+        """맞추기 구간을 앞으로 넓힐 늦음 — 시작 시각이 있으면 0."""
+        return 0.0 if self.start_ms is not None else sensor_lag_seconds * 1000.0
 
 
 def load_sensor_events(path: str | Path) -> list[SensorEvent]:
-    """CSV: time_sec, slot, delta_g, confidence (기준 카메라 시간축)."""
+    """CSV: time_sec, slot, delta_g, confidence[, start_sec] (기준 카메라 시간축). start_sec 은 비어 있어도 된다."""
     with Path(path).open(encoding="utf-8", newline="") as f:
         return [SensorEvent(float(r["time_sec"]) * 1000.0, r["slot"], float(r["delta_g"]),
-                            float(r.get("confidence") or 1.0)) for r in csv.DictReader(f)]
+                            float(r.get("confidence") or 1.0),
+                            start_ms=float(r["start_sec"]) * 1000.0 if (r.get("start_sec") or "").strip() else None)
+                for r in csv.DictReader(f)]
 
 
 _KIND = re.compile(r"\d+단 \d+번째 (.+)")
@@ -358,20 +373,22 @@ class ShelfEventFuser:
         for i, s in enumerate(self.sensors):
             if i in self._sensor_used or s.time_ms > now_ms - 3 * tol:
                 continue
-            if any(start - tol <= s.time_ms <= end + tol and self.slot_shelf.get(s.slot, s.slot) == shelf
+            if any(start - tol <= s.at_ms <= end + tol and self.slot_shelf.get(s.slot, s.slot) == shelf
                    for start, end, shelf in hold or []):
                 continue
             self._sensor_used.add(i)
-            early = s.time_ms - tol - self.config.sensor_lag_seconds * 1000.0   # 센서는 꺼낸 뒤 늦게 적는다 — 그만큼 앞까지 본다
-            owners = self._touch_owners(early, s.time_ms + tol, self.slot_shelf.get(s.slot, s.slot))
-            owner, how = (owners.pop(), "손-칸 접촉") if len(owners) == 1 else (self._band_owner(early, s.time_ms + tol), "선반 앞 한 명")
+            # 센서는 꺼낸 뒤 늦게 적는다 — 그만큼 앞까지 본다 (시작 시각을 준 기록은 늦음이 없다)
+            early = s.at_ms - tol - s.lag_ms(self.config.sensor_lag_seconds)
+            late = s.at_ms + tol
+            owners = self._touch_owners(early, late, self.slot_shelf.get(s.slot, s.slot))
+            owner, how = (owners.pop(), "손-칸 접촉") if len(owners) == 1 else (self._band_owner(early, late), "선반 앞 한 명")
             removed, added = self._sensor_counts([s])
             visit = ShelfVisit(person_id=owner if owner is not None else -1, shelf=self.slot_shelf.get(s.slot, s.slot),
                                start_frame=self.overview_axis.to_frame(early),
-                               end_frame=self.overview_axis.to_frame(s.time_ms + tol),
+                               end_frame=self.overview_axis.to_frame(late),
                                removed=removed, added=added, zone=self.config.shelf_zone,
                                detail=f"센서 {s.slot} {self._delta_text(s)}", source="sensor")
-            self.records.append(FusedRecord("sensor", s.time_ms, s.time_ms, visit.person_id,
+            self.records.append(FusedRecord("sensor", s.at_ms, s.time_ms, visit.person_id,
                                             how if owner is not None else "모름", visit.detail))
             out.append(visit)
         return out
@@ -411,10 +428,10 @@ class ShelfEventFuser:
         for i, s in enumerate(self.sensors):
             if i in self._sensor_used or self.slot_shelf.get(s.slot, s.slot) != shelf:
                 continue
-            if start - tol <= s.time_ms <= end + tol:
+            if start - tol <= s.at_ms <= end + tol:
                 hits.append(s)
                 self._sensor_used.add(i)
-        lag = self.config.sensor_lag_seconds * 1000.0
+        lag = self.config.sensor_lag_seconds * 1000.0      # 시작 시각을 준 기록은 아래 '늦게 온 기록' 묶기에서 빠진다
         if lag <= 0 or cam_removed is None:
             return hits
         need = {-1: Counter(cam_removed), 1: Counter(cam_added or {})}
@@ -422,7 +439,8 @@ class ShelfEventFuser:
             sign = -1 if s.delta_g < 0 else 1
             need[sign][self.config.sensor_kinds.get(s.slot)] -= sum(self._sensor_counts([s]))
         for i, s in enumerate(self.sensors):
-            if i in self._sensor_used or self.slot_shelf.get(s.slot, s.slot) != shelf or s.delta_g == 0:
+            if (i in self._sensor_used or self.slot_shelf.get(s.slot, s.slot) != shelf or s.delta_g == 0
+                    or s.start_ms is not None):
                 continue
             kind, sign = self.config.sensor_kinds.get(s.slot), (-1 if s.delta_g < 0 else 1)
             if end + tol < s.time_ms <= end + tol + lag and kind is not None and need[sign][kind] > 0:
