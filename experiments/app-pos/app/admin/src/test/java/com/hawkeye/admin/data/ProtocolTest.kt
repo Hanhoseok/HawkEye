@@ -2,6 +2,7 @@ package com.hawkeye.admin.data
 
 import com.hawkeye.admin.Fixtures
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,5 +55,41 @@ class ProtocolTest {
 
     @Test fun unknownMessageTypeIsIgnored() {
         assertEquals(ServerMessage.Unknown, Protocol.parseMessage("""{"type":"hello","x":1}"""))
+    }
+
+    @Test fun parsesRecordingConfigWithAiUrlAndLiveStatus() {
+        val c = Protocol.parseConfig(Fixtures.read("config_recordings.json"))
+        assertTrue(c.recordings)
+        val (cam1, cam2) = c.streams
+        assertEquals("rtsp://viewer:pw@100.64.0.1:8554/cam1_ai", cam1.aiUrl)
+        assertEquals(LiveStatus(true, "2026-11-24T00:19:11.138344Z"), cam1.live)
+        assertNull(cam2.aiUrl)
+        assertEquals(LiveStatus(false, null), cam2.live)
+    }
+
+    @Test fun oldConfigHasRecordingsOff() {
+        val c = Protocol.parseConfig(Fixtures.read("config.json"))
+        assertFalse(c.recordings)
+        assertNull(c.streams.single().aiUrl)
+    }
+
+    @Test fun parsesCaseClipsIncludingUnavailableCamera() {
+        val c = Protocol.parseCaseClips(Fixtures.read("case_clips.json"))
+        assertEquals("event", c.anchor)
+        assertEquals(0.42, c.delaySec!!, 1e-9)
+        val (cam1, cam2) = c.clips
+        assertTrue(cam1.isCaseCamera)
+        assertEquals("recorded", cam1.status)
+        assertEquals(true, cam1.partial)
+        assertEquals("2026-11-24T00:19:11.138344Z", cam1.videoStart)
+        assertEquals("unavailable", cam2.status)
+        assertNull(cam2.hasRecording)
+    }
+
+    @Test fun parsesRecordingsAndRetryAfterBody() {
+        val r = Protocol.parseRecordings(Fixtures.read("recordings.json"))
+        assertEquals(28.033322222, r.spans.single().duration, 1e-9)
+        assertEquals(9, Protocol.parseRetryAfter("""{"detail": "not_ready", "retry_after": 9}"""))
+        assertNull(Protocol.parseRetryAfter("not json"))
     }
 }

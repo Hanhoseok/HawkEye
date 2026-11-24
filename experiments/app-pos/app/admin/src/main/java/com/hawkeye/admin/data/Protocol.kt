@@ -41,4 +41,15 @@ object Protocol {
     }
 
     fun parseConfig(text: String): AppConfig = json.decodeFromString(AppConfig.serializer(), text)
+
+    fun parseHealth(text: String): Health = json.decodeFromString(Health.serializer(), text)
+
+    fun parseCaseClips(text: String): CaseClips = json.decodeFromString(CaseClips.serializer(), text)
+
+    fun parseRecordings(text: String): RecordingList = json.decodeFromString(RecordingList.serializer(), text)
+
+    /** 202 응답 본문의 retry_after (헤더가 없을 때 대신). */
+    fun parseRetryAfter(text: String): Int? = runCatching {
+        json.parseToJsonElement(text).jsonObject["retry_after"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+    }.getOrNull()
 }

@@ -2,6 +2,7 @@ package com.hawkeye.admin
 
 import android.content.Context
 import com.hawkeye.admin.alerts.AlertRepository
+import com.hawkeye.admin.data.ApiClient
 import com.hawkeye.admin.settings.SettingsStore
 
 /** 앱 전체에서 하나씩만 쓰는 객체. */
@@ -15,6 +16,7 @@ object AppGraph {
     fun init(context: Context) {
         if (::settings.isInitialized) return
         settings = SettingsStore(context.applicationContext)
-        alerts = AlertRepository(settings)
+        val s = settings
+        alerts = AlertRepository { ApiClient(s.settings.value) }
     }
 }

@@ -25,6 +25,10 @@ class CaseStore {
     @Synchronized
     fun get(id: Int): CaseSummary? = cases[id]
 
+    /** 서버에서 사라진 사건 (렌탈 종료 정리 등으로 404). */
+    @Synchronized
+    fun remove(id: Int): Boolean = cases.remove(id) != null
+
     @Synchronized
     fun list(filter: CaseFilter): List<CaseSummary> = cases.values
         .filter {

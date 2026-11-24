@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 화면은 Compose 가 그린다. 여기서는 창 바탕과 상태 표시줄만: 밝은 바탕 + 어두운 상태 표시줄 아이콘 -->
+    <style name="Theme.HawkEye" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

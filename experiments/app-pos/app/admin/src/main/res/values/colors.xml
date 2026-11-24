@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 앱 아이콘 바탕 (가격표 독수리 1번 조합) -->
+    <color name="ic_launcher_background">#0FA596</color>
+    <!-- 창 바탕: 앱 화면 바탕과 같게 해서 처음 열 때 깜빡임이 없게 -->
+    <color name="window_background">#F2F4F6</color>
+    <color name="brand">#0B9E92</color>
+</resources>

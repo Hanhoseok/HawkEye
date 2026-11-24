@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 앱 아이콘 전경: 가격표 독수리 (가격표 끝이 갈고리 부리, 구멍이 눈). 디자인: .ai-review/admin-app-design/icon-tag-colors.html 1번 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="13.69" android:translateY="14.00" android:scaleX="1.25" android:scaleY="1.25">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M12,22.5a4.5,4.5 0,0 1,4.5,-4.5H37c2,0 3.8,0.8 5.2,2.2L51.5,29c1.2,1.2 1.4,3 0.5,4.4c-1.8,2.8 -4.8,4.6 -8.2,4.6h-1.3l-5,8H16.5a4.5,4.5 0,0 1,-4.5,-4.5z"/>
+        <path android:fillColor="#FFF5B83D" android:pathData="M44,25.4l7.5,3.6c1.2,1.2 1.4,3 0.5,4.4c-1.8,2.8 -4.8,4.6 -8.2,4.6z"/>
+        <path android:fillColor="#FF0FA596" android:pathData="M31.9,29a3.6,3.6 0,1 0,7.2,0a3.6,3.6 0,1 0,-7.2,0z"/>
+        <path android:fillColor="#FFFFFFFF" android:pathData="M34.5,29.1a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0z"/>
+        <path android:strokeColor="#FF0FA596" android:strokeWidth="2.4" android:strokeLineCap="round" android:pathData="M29.5,24L40,26.4"/>
+    </group>
+</vector>

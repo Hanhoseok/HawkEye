@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 알림 작은 아이콘: 안드로이드가 한 가지 색으로 칠한다 (모양만 쓰임) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="64" android:viewportHeight="64">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M12,22.5a4.5,4.5 0,0 1,4.5,-4.5H37c2,0 3.8,0.8 5.2,2.2L51.5,29c1.2,1.2 1.4,3 0.5,4.4c-1.8,2.8 -4.8,4.6 -8.2,4.6h-1.3l-5,8H16.5a4.5,4.5 0,0 1,-4.5,-4.5zM31.9,29a3.6,3.6 0,1 0,7.2,0a3.6,3.6 0,1 0,-7.2,0z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M44,25.4l7.5,3.6c1.2,1.2 1.4,3 0.5,4.4c-1.8,2.8 -4.8,4.6 -8.2,4.6z"/>
+</vector>

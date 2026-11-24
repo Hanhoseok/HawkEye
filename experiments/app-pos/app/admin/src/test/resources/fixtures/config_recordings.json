@@ -1,0 +1,8 @@
+{"streams": [
+  {"camera_id": "cam1", "url": "rtsp://viewer:pw@100.64.0.1:8554/cam1",
+   "ai_url": "rtsp://viewer:pw@100.64.0.1:8554/cam1_ai",
+   "live": {"streaming": true, "since": "2026-11-24T00:19:11.138344Z"}},
+  {"camera_id": "cam2", "url": "rtsp://viewer:pw@100.64.0.1:8554/cam2",
+   "live": {"streaming": false, "since": null}}
+ ],
+ "recordings": true}

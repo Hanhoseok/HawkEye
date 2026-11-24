@@ -69,7 +69,7 @@ class AlertService : LifecycleService() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         backoff.reset()
                         repo.setConnection(Connection.Connected)
-                        updateServiceText("경보 서버 연결됨")
+                        updateServiceText("경보 서버에 연결됨")
                         val announce = reconnecting
                         reconnecting = true
                         lifecycleScope.launch {
@@ -99,7 +99,7 @@ class AlertService : LifecycleService() {
             )
             val reason = closed.await()
             repo.setConnection(Connection.Disconnected(reason))
-            updateServiceText("연결 끊김 — 다시 연결 중")
+            updateServiceText("경보 서버와 끊김 · 다시 연결 중")
             delay(backoff.next())
         }
     }

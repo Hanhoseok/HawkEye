@@ -12,9 +12,28 @@ class SettingsStore(context: Context) {
     private val _settings = MutableStateFlow(load())
     val settings: StateFlow<ServerSettings> = _settings.asStateFlow()
 
+    /** 라이브에서 AI 화면(상자·번호)을 볼지. 마지막 선택을 기억한다. */
+    private val _aiOverlay = MutableStateFlow(prefs.getBoolean(KEY_AI, false))
+    val aiOverlay: StateFlow<Boolean> = _aiOverlay.asStateFlow()
+
+    fun setAiOverlay(on: Boolean) {
+        prefs.edit().putBoolean(KEY_AI, on).apply()
+        _aiOverlay.value = on
+    }
+
+    /** 서버 주소를 한 번이라도 저장했는가. 아니면 시작 안내를 보여 준다. */
+    private val _configured = MutableStateFlow(prefs.contains(KEY_URL))
+    val configured: StateFlow<Boolean> = _configured.asStateFlow()
+
+    /** 알림 권한을 이미 물어봤는가 (안드로이드 13+). 거절했으면 다시 자동으로 묻지 않고 설정 화면에서 안내한다. */
+    var notificationAsked: Boolean
+        get() = prefs.getBoolean(KEY_NOTIF_ASKED, false)
+        set(v) { prefs.edit().putBoolean(KEY_NOTIF_ASKED, v).apply() }
+
     fun save(baseUrl: String, apiKey: String) {
         prefs.edit().putString(KEY_URL, baseUrl.trim().trimEnd('/')).putString(KEY_API, apiKey.trim()).apply()
         _settings.value = load()
+        _configured.value = true
     }
 
     private fun load() = ServerSettings(
@@ -27,5 +46,7 @@ class SettingsStore(context: Context) {
         const val DEFAULT_URL = "http://10.0.2.2:8000"
         private const val KEY_URL = "base_url"
         private const val KEY_API = "api_key"
+        private const val KEY_AI = "ai_overlay"
+        private const val KEY_NOTIF_ASKED = "notification_asked"
     }
 }
