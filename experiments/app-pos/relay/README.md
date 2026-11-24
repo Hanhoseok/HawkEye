@@ -59,3 +59,63 @@
 - 경보 서버: `HAWKEYE_STREAMS=cam1=rtsp://<이 PC IP>:9554/cam1` (앱이 이 주소로 라이브를 연다)
   - 에뮬레이터에서 볼 때: `rtsp://10.0.2.2:9554/cam1`
 - 방화벽에서 TCP 9554 를 같은 와이파이에 열어야 폰에서 볼 수 있다.
+
+## 렌탈 서버 (Linux) — 폰 송출 · 녹화 · 재생
+
+촬영 폰 2대가 Larix 로 SRT 송출 → MediaMTX → tracking(RTSP) · 관리자 앱 라이브(RTSP) · 녹화 → 재생 API(경보 서버가 대신 받음).
+설정 `mediamtx.server.yml`, 실행 `run-server.sh`, 대체 송출 `replay-server.sh`, 한 번에 띄우기 `../deploy/start.sh`.
+
+> **이 서버는 공인 IP 가 네트워크 카드에 바로 붙어 있다.** 0.0.0.0 으로 연 포트는 인터넷에 그대로 노출된다.
+> 그래서 RTSP·SRT·경보 서버는 **Tailscale IP** 에만, 재생 API 는 **127.0.0.1** 에만 연다. 스크립트가 0.0.0.0 을 거부한다.
+
+### 처음 한 번
+
+1. Tailscale: 서버·촬영 폰·관리자 폰을 같은 계정(tailnet)으로 로그인.
+2. MediaMTX (Linux amd64) 를 받아 체크섬 확인 후 `relay/bin/` 에 푼다 (또는 다른 곳에 두고 `.env` 의 `HAWKEYE_MEDIAMTX`).
+   ```bash
+   V=v1.21.4; F=mediamtx_${V}_linux_amd64.tar.gz; B=https://github.com/bluenviron/mediamtx/releases/download/$V
+   mkdir -p relay/bin && cd relay/bin && curl -fsSLO "$B/$F" && curl -fsSLO "$B/checksums.sha256"
+   grep -E "[ *]$F\$" checksums.sha256 | sed 's/ \*/  /' | sha256sum -c - && tar xzf "$F" mediamtx && cd ../..
+   ```
+3. 계정 파일: `cp deploy/.env.example deploy/.env && chmod 600 deploy/.env` 후 송출·보기 계정과 API 키를 채운다 (영문·숫자).
+4. 경보 서버 가상환경: `cd server && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd ..`
+5. 확인: `relay/run-server.sh --check`, `deploy/run-alert.sh --check` (비밀번호는 출력하지 않는다)
+
+### 실행
+
+```bash
+deploy/start.sh                 # tmux 세션 'hawkeye': relay · alert · pipeline 창
+tmux attach -t hawkeye          # 보기 (나가기: Ctrl+b 다음 d)
+tmux kill-session -t hawkeye    # 모두 끄기
+```
+
+| 구성 | 주소 | 누가 |
+|---|---|---|
+| SRT 송출 | `srt://<Tailscale IP>:8890?streamid=publish:cam1:<송출 계정>:<비밀번호>&pkt_size=1316` | 촬영 폰 (cam1 전체, cam2 선반) |
+| RTSP | `rtsp://<Tailscale IP>:8554/cam1` | tracking (서버 안 — 계정 없이), 관리자 앱 (보기 계정, 경보 서버가 주소를 내려줌) |
+| AI 화면 | `rtsp://<Tailscale IP>:8554/cam1_ai` | 파이프라인이 서버 안에서 계정 없이 송출 (`hawkeye_client.FrameStreamer`, 원본 `cam1` 에는 못 보냄). 파이프라인 없이 시험: `python -m hawkeye_client.stream_demo` |
+| 재생 API | `http://127.0.0.1:9996` | 경보 서버만 |
+| 경보 서버 | `http://<Tailscale IP>:8000` | 관리자 앱 (API 키), tracking `--alert-server` |
+| 녹화 | `~/hawkeye/recordings/<cam>/` | 자동 삭제 없음 — 렌탈 종료 때 `deploy/cleanup.sh` |
+
+### Larix Broadcaster (촬영 폰)
+
+- 연결: 위 SRT 주소 (cam1 폰은 `cam1`, cam2 폰은 `cam2`)
+- 영상: 1920x1080, 30fps, **H.264**, **5Mbps 고정**, 키프레임 1초
+- 송출 중에는 화면을 켜 두고 앱을 앞에 띄운다 (뒤로 가면 끊김). 충전기 연결.
+
+### 대체 경로 — 미리 녹화한 영상을 실시간처럼 흘리기
+
+폰 기본 카메라로 녹화한 파일을 서버에 올린 뒤:
+
+```bash
+relay/replay-server.sh cam1.mp4 cam2.mp4 --offset-ms 1500   # cam2 에서 같은 장면이 1.5초 뒤에 나오면 +1500
+relay/replay-server.sh cam1.mp4 cam2.mp4 --dry-run          # 명령만 보기
+```
+
+파일을 그대로 복사하지 않고 안드로이드가 확실히 트는 형식(H.264 Main, yuv420p, B-프레임 없음, 1초 키프레임, 5Mbps)으로
+다시 인코딩한다 (폰 녹화가 HEVC 일 수 있음). GPU 인코더가 안 되면 libx264 로 바꾼다.
+
+### 시험
+
+`bash relay/tests/server-scripts.tests.sh` — 계정이 비면 거부, 0.0.0.0 거부, 비밀번호를 출력하지 않음, 시차 옵션, 호환 인코딩 인자.

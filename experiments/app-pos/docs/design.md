@@ -82,8 +82,12 @@
 | `POST` | `/api/cases/{id}/resolution` | `{"resolution": "paid_confirmed" \| "false_alarm", "note": "..."}` |
 | `GET` | `/api/events/{id}/snapshot.jpg` | 장면 사진 |
 | `GET` | `/api/stats` | 상태·처리별 개수 (오경보율 계산용) |
-| `GET` | `/api/config` | 앱 설정 (라이브 RTSP 주소 목록) |
-| `GET` | `/healthz` | 상태 확인 |
+| `GET` | `/api/config` | 앱 설정 (라이브·AI 화면 RTSP 주소, 송출 중 여부, 녹화 기능 켜짐) |
+| `GET` | `/healthz` | 상태 확인 + 디스크 여유 (`degraded` = 여유 부족) |
+| `GET` | `/api/recordings` | 녹화 구간 목록. `camera_id`, `start`·`end`(ISO8601+오프셋, 기본 최근 24시간) — §10 |
+| `GET` | `/api/recordings/{camera_id}/video` | 지난 영상 MP4. `start`, `duration`(1~120초) — §10 |
+| `GET` | `/api/cases/{id}/clips` | 사건 클립 정보 (기준 시각, 구간, 카메라별 녹화 여부) — §10 |
+| `GET` | `/api/cases/{id}/clips/{camera_id}.mp4` | 사건 클립 MP4 — §10 |
 | `WS` | `/ws` | 서버 → 앱 실시간 메시지 |
 
 ### 경보 입력 (`POST /api/events`)
@@ -148,6 +152,34 @@
 
 ## 9. 나중에 할 것
 
-- 경보 장면 짧은 클립 (MediaMTX 녹화 조각에서 자르기)
 - 서버 AWS 배포 (Docker)
 - FCM 푸시 (앱이 꺼져 있어도 알림)
+
+## 10. 녹화 · 사건 클립 · 지난 영상 (2026-11-24)
+
+렌탈 서버 구성(`relay/README.md` '렌탈 서버')에서 MediaMTX 가 촬영 폰 영상(`cam1`, `cam2`)을 녹화하고,
+경보 서버가 MediaMTX 재생 API(127.0.0.1 에서만 열림)를 대신 불러 앱에 MP4 로 준다. 앱은 API 키 하나로만 인증한다.
+
+| 항목 | 결정 |
+|---|---|
+| 켜기 | 환경변수 `HAWKEYE_PLAYBACK_URL` (예: `http://127.0.0.1:9996`). 없으면 녹화 API 는 `503 recordings_unavailable`, `/api/config` 의 `recordings: false` |
+| 클립 기준 시각 | 사건의 마지막 경보(CLEAR 제외)의 `event.timestamp` 가 **오프셋 있는 절대 시각**이면 그것(실시간 입력은 프레임 받은 시각) → `anchor: "event"`. 상대 시각(녹화 파일·시뮬레이터)이면 서버가 받은 시각 → `anchor: "received"`. 경보 전송이 늦어도 클립은 원래 장면을 가리킨다 |
+| 클립 구간 | 기준 시각 −20초 ~ +10초, 설정의 모든 카메라 (사건 카메라는 `is_case_camera: true`) |
+| 아직 녹화 중 | 구간 끝 + 2초 전이면 `202` + `Retry-After` (0단계 시험: 1초 지난 구간은 온전히 받음) |
+| 녹화 없음 | `404 no_recording`. 일부만 있으면 있는 만큼 (`partial: true`, `covered_sec`) |
+| 클립 상태 | 목록의 카메라별 `status`: `cached`(이미 만든 클립 — 원본 녹화를 지웠거나 MediaMTX 가 꺼져도 재생), `recorded`, `no_recording`, `unavailable`(MediaMTX 에 닿지 않음 — 목록 전체를 실패시키지 않음). MP4·목록 모두 캐시를 먼저 본다 |
+| 실제 시작 시각 | MediaMTX `/get` 은 요청 시작 시각이 녹화 안에 있어야 한다 (앞에 이전 녹화가 있으면 404). 그래서 구간 안에서 녹화가 처음 시작되는 시각부터 요청하고, 응답 헤더 `X-Video-Start`·목록의 `video_start` 로 알려 준다 |
+| 캐시 | 사건 클립 `HAWKEYE_CLIPS` (20GB · 7일), 지난 영상 조각 `HAWKEYE_CLIPS/chunks` (5GB · 1시간). 같은 파일을 한 번만 받고 임시 파일에 쓴 뒤 이름을 바꾼다. 앱이 앞뒤로 넘길 때 `Range` 요청(206)이 되도록 응답 후 바로 지우지 않는다 |
+| 송출 중 여부 | `/api/config` 카메라별 `live: {streaming, since}` — 마지막 녹화 구간 끝이 5초 안이면 송출 중, 이어진 녹화 파일을 거슬러 시작 시각을 구한다 (폰을 켜 둔 채 잊음 알아채기) |
+| 디스크 | `/healthz` 가 `HAWKEYE_RECORDINGS` 폴더의 여유가 `HAWKEYE_MIN_FREE_GB`(기본 100) 미만이면 `degraded`. 녹화는 자동 삭제하지 않는다 |
+| AI 화면 | `/api/config` 카메라 항목의 `ai_url` (`HAWKEYE_AI_STREAMS`) — 파이프라인이 그린 영상 `cam1_ai`. 송출은 `hawkeye_client.FrameStreamer` (카메라별 최신 장면 1칸 → 고정 10장/초로 ffmpeg, nvenc 안 되면 libx264, 새 장면 10초 없으면 멈춤). 녹화하지 않는다 |
+
+`/api/cases/{id}/clips` 응답:
+
+```json
+{"case_id": 1, "anchor": "event", "anchor_time": "2026-11-24T00:19:26.033627Z",
+ "start": "...", "end": "...", "delay_sec": 0.42,
+ "clips": [{"camera_id": "cam1", "url": "/api/cases/1/clips/cam1.mp4", "is_case_camera": true,
+            "status": "recorded", "retry_after": 0, "covered_sec": 24.9, "partial": true, "has_recording": true,
+            "video_start": "2026-11-24T00:19:11.138344Z"}]}
+```
