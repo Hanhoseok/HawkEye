@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 앱 안에서 쓰는 로고 타일 (상단 로고, 시작 안내) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <path android:fillColor="#FF0FA596" android:pathData="M16,0h32a16,16 0,0 1,16,16v32a16,16 0,0 1,-16,16H16A16,16 0,0 1,0,48V16A16,16 0,0 1,16,0z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M12,22.5a4.5,4.5 0,0 1,4.5,-4.5H37c2,0 3.8,0.8 5.2,2.2L51.5,29c1.2,1.2 1.4,3 0.5,4.4c-1.8,2.8 -4.8,4.6 -8.2,4.6h-1.3l-5,8H16.5a4.5,4.5 0,0 1,-4.5,-4.5z"/>
+    <path android:fillColor="#FFF5B83D" android:pathData="M44,25.4l7.5,3.6c1.2,1.2 1.4,3 0.5,4.4c-1.8,2.8 -4.8,4.6 -8.2,4.6z"/>
+    <path android:fillColor="#FF0FA596" android:pathData="M31.9,29a3.6,3.6 0,1 0,7.2,0a3.6,3.6 0,1 0,-7.2,0z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M34.5,29.1a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0z"/>
+    <path android:strokeColor="#FF0FA596" android:strokeWidth="2.4" android:strokeLineCap="round" android:pathData="M29.5,24L40,26.4"/>
+</vector>

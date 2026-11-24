@@ -1,0 +1,9 @@
+{"case_id": 1, "anchor": "event", "anchor_time": "2026-11-24T00:19:26.033627Z",
+ "start": "2026-11-24T00:19:06.033627Z", "end": "2026-11-24T00:19:36.033627Z", "delay_sec": 0.42,
+ "clips": [
+  {"camera_id": "cam1", "url": "/api/cases/1/clips/cam1.mp4", "is_case_camera": true, "status": "recorded",
+   "retry_after": 0, "covered_sec": 24.9, "partial": true, "has_recording": true,
+   "video_start": "2026-11-24T00:19:11.138344Z"},
+  {"camera_id": "cam2", "url": "/api/cases/1/clips/cam2.mp4", "is_case_camera": false, "status": "unavailable",
+   "retry_after": null, "covered_sec": null, "partial": null, "has_recording": null, "video_start": null}
+ ]}

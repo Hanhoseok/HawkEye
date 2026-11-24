@@ -82,8 +82,12 @@
 | `POST` | `/api/cases/{id}/resolution` | `{"resolution": "paid_confirmed" \| "false_alarm", "note": "..."}` |
 | `GET` | `/api/events/{id}/snapshot.jpg` | 장면 사진 |
 | `GET` | `/api/stats` | 상태·처리별 개수 (오경보율 계산용) |
-| `GET` | `/api/config` | 앱 설정 (라이브 RTSP 주소 목록) |
-| `GET` | `/healthz` | 상태 확인 |
+| `GET` | `/api/config` | 앱 설정 (라이브·AI 화면 RTSP 주소, 송출 중 여부, 녹화 기능 켜짐) |
+| `GET` | `/healthz` | 상태 확인 + 디스크 여유 (`degraded` = 여유 부족) |
+| `GET` | `/api/recordings` | 녹화 구간 목록. `camera_id`, `start`·`end`(ISO8601+오프셋, 기본 최근 24시간) — §10 |
+| `GET` | `/api/recordings/{camera_id}/video` | 지난 영상 MP4. `start`, `duration`(1~120초) — §10 |
+| `GET` | `/api/cases/{id}/clips` | 사건 클립 정보 (기준 시각, 구간, 카메라별 녹화 여부) — §10 |
+| `GET` | `/api/cases/{id}/clips/{camera_id}.mp4` | 사건 클립 MP4 — §10 |
 | `WS` | `/ws` | 서버 → 앱 실시간 메시지 |
 
 ### 경보 입력 (`POST /api/events`)
@@ -148,6 +152,65 @@
 
 ## 9. 나중에 할 것
 
-- 경보 장면 짧은 클립 (MediaMTX 녹화 조각에서 자르기)
 - 서버 AWS 배포 (Docker)
 - FCM 푸시 (앱이 꺼져 있어도 알림)
+
+## 10. 녹화 · 사건 클립 · 지난 영상 (2026-11-24)
+
+렌탈 서버 구성(`relay/README.md` '렌탈 서버')에서 MediaMTX 가 촬영 폰 영상(`cam1`, `cam2`)을 녹화하고,
+경보 서버가 MediaMTX 재생 API(127.0.0.1 에서만 열림)를 대신 불러 앱에 MP4 로 준다. 앱은 API 키 하나로만 인증한다.
+
+| 항목 | 결정 |
+|---|---|
+| 켜기 | 환경변수 `HAWKEYE_PLAYBACK_URL` (예: `http://127.0.0.1:9996`). 없으면 녹화 API 는 `503 recordings_unavailable`, `/api/config` 의 `recordings: false` |
+| 클립 기준 시각 | 사건의 마지막 경보(CLEAR 제외)의 `event.timestamp` 가 **오프셋 있는 절대 시각**이면 그것(실시간 입력은 프레임 받은 시각) → `anchor: "event"`. 상대 시각(녹화 파일·시뮬레이터)이면 서버가 받은 시각 → `anchor: "received"`. 경보 전송이 늦어도 클립은 원래 장면을 가리킨다 |
+| 클립 구간 | 기준 시각 −20초 ~ +10초, 설정의 모든 카메라 (사건 카메라는 `is_case_camera: true`) |
+| 아직 녹화 중 | 구간 끝 + 2초 전이면 `202` + `Retry-After` (0단계 시험: 1초 지난 구간은 온전히 받음) |
+| 녹화 없음 | `404 no_recording`. 일부만 있으면 있는 만큼 (`partial: true`, `covered_sec`) |
+| 클립 상태 | 목록의 카메라별 `status`: `cached`(이미 만든 클립 — 원본 녹화를 지웠거나 MediaMTX 가 꺼져도 재생), `recorded`, `no_recording`, `unavailable`(MediaMTX 에 닿지 않음 — 목록 전체를 실패시키지 않음). MP4·목록 모두 캐시를 먼저 본다 |
+| 실제 시작 시각 | MediaMTX `/get` 은 요청 시작 시각이 녹화 안에 있어야 한다 (앞에 이전 녹화가 있으면 404). 그래서 구간 안에서 녹화가 처음 시작되는 시각부터 요청하고, 응답 헤더 `X-Video-Start`·목록의 `video_start` 로 알려 준다 |
+| 캐시 | 사건 클립 `HAWKEYE_CLIPS` (20GB · 7일), 지난 영상 조각 `HAWKEYE_CLIPS/chunks` (5GB · 1시간). 같은 파일을 한 번만 받고 임시 파일에 쓴 뒤 이름을 바꾼다. 앱이 앞뒤로 넘길 때 `Range` 요청(206)이 되도록 응답 후 바로 지우지 않는다 |
+| 송출 중 여부 | `/api/config` 카메라별 `live: {streaming, since}` — 마지막 녹화 구간 끝이 5초 안이면 송출 중, 이어진 녹화 파일을 거슬러 시작 시각을 구한다 (폰을 켜 둔 채 잊음 알아채기) |
+| 디스크 | `/healthz` 가 `HAWKEYE_RECORDINGS` 폴더의 여유가 `HAWKEYE_MIN_FREE_GB`(기본 100) 미만이면 `degraded`. 녹화는 자동 삭제하지 않는다 |
+| AI 화면 | `/api/config` 카메라 항목의 `ai_url` (`HAWKEYE_AI_STREAMS`) — 파이프라인이 그린 영상 `cam1_ai`. 송출은 `hawkeye_client.FrameStreamer` (카메라별 최신 장면 1칸 → 고정 10장/초로 ffmpeg, nvenc 안 되면 libx264, 새 장면 10초 없으면 멈춤). 녹화하지 않는다 |
+
+`/api/cases/{id}/clips` 응답:
+
+```json
+{"case_id": 1, "anchor": "event", "anchor_time": "2026-11-24T00:19:26.033627Z",
+ "start": "...", "end": "...", "delay_sec": 0.42,
+ "clips": [{"camera_id": "cam1", "url": "/api/cases/1/clips/cam1.mp4", "is_case_camera": true,
+            "status": "recorded", "retry_after": 0, "covered_sec": 24.9, "partial": true, "has_recording": true,
+            "video_start": "2026-11-24T00:19:11.138344Z"}]}
+```
+
+## 11. 보관함 — 촬영 영상 폴더 (2026-11-24)
+
+라이브가 안 될 때를 대비해 미리 찍은 촬영 영상(1~4차)을 서버에 두고 앱 '지난 영상 > 보관함'에서 본다. 녹화(§10)와 별개.
+
+| 항목 | 결정 |
+|---|---|
+| 켜기 | `HAWKEYE_LIBRARY` (기본 `data/library`, 렌탈 `run-alert.sh` 는 `$HAWKEYE_DATA/library`). 안에 `library.db` · `files/<uuid>.mp4` · `thumbs/<장면 id>.jpg`. 꺼져 있으면 `503 library_unavailable` |
+| 구조 | 폴더(한 단계) → 장면 → 카메라 영상(cam1 전체 · cam2 선반). 파일은 넣은 뒤 옮기지 않고 폴더·이름·소속은 DB 만 바꾼다 |
+| 이름 | 앞뒤 공백 빼고 1~40자, 줄바꿈 없음 (`422 invalid_name`). 폴더 이름은 대소문자 무시하고 겹치지 않음 (`409 duplicate_name`). 장면 이름은 겹쳐도 됨 — 가져온 회차(`origin`)를 함께 보여 준다 |
+| 정렬 | 폴더 · 장면 모두 자연 정렬 (C2 < C10) |
+| 옮기기 · 지우기 | 한 트랜잭션. 없는 장면·폴더가 하나라도 있으면 `404` + `missing` 이고 아무것도 바꾸지 않음. 장면을 지우면 영상·썸네일 파일도 지움 (되돌릴 수 없음 — 앱이 확인을 받는다). 장면이 있는 폴더는 `?with_scenes=true` 일 때만 지움 (`409 not_empty` + `scene_count`) |
+| 카메라 시차 | 영상마다 `offset_ms` — 공통 시각 = 재생 위치 + offset_ms (전체 카메라 0). 가져올 때 `--sync experiments/tracking/labels/<촬영>/sync.csv`. 앱은 카메라를 바꿀 때 `위치 + 이전 offset − 새 offset` 으로 이어 보고, 범위를 벗어나면 처음·끝에서 시작하며 알린다 |
+| 썸네일 | cam1 의 1초 장면 320px. 장면 `media_at`(영상을 넣거나 바꾼 시각)이 바뀌면 앱이 새로 받는다 |
+| 가져오기 | `python -m hawkeye_server.library import --folder "2차 촬영" --camera cam1=<angle1 폴더> --camera cam2=<angle0 폴더> --sync <sync.csv>`. 파일 이름으로 장면을 짝짓는다 (`20261028_C1` = `C01`). H.264 · yuv420p · 폭 1280 · 30fps 이하면 다시 인코딩 없이 담고, 아니면 720p H.264 Main (nvenc → libx264). 소리는 뺀다. 다시 실행해도 겹치지 않고(있는 영상은 건너뜀) 시차만 갱신. `prepare` 는 DB 없이 변환만, `gc` 는 DB 에 없는 오래된 파일 정리 |
+| 동시 실행 | 가져오기 · gc 는 `.maintenance.lock`(flock)으로 하나씩만. gc 는 `.part.` 임시 파일과 10분 안에 바뀐 파일을 남긴다 |
+| 정리 | `deploy/cleanup.sh` 가 보관함 폴더도 지운다 (사람 얼굴이 찍힌 영상) |
+| AI 탐지 화면 | 원본 영상마다 AI 화면 영상 하나 (`ai_videos`, 같은 시간축 — 길이가 1초 넘게 다르면 거부). PC 에서 `tools/ai_render.py` 가 저장된 추적 기록(2차 `dual_eval_pose3` · 3차 `dual_eval_shoot3_prod` · 4차 `dual_eval_shoot4`)으로 사람 상자 · '손님 N' 을 그리고(합침 · 번호 맞바뀜 되돌림 · 두 카메라 짝을 추적 도구 보기와 같은 규칙으로 반영, 판정 결과는 그리지 않음), `import --ai` 로 붙인다. 원본을 바꾸거나 지우면 AI 영상도 지운다. 1차는 기록이 없어 없음 |
+| AI 판정 | 영상 위에 그리지 않고 재생 화면 아래 시간표로 (시각 · 단계 · 손님 · 이유 · 가져감/결제/미결제, 누르면 3초 전부터). 원천은 추적 도구가 지금 설정으로 다시 낸 판정 (`experiments/tracking/workbench/data.py --shoot N` → `tools/export_verdicts.py` → `import --verdicts`). 장면 응답의 `verdicts`(ms = 전체 카메라 시각) · `verdict_source`. 장면을 지우면 함께 지움 |
+
+| 메서드 | 경로 | 내용 |
+|---|---|---|
+| GET | `/api/library` | `{folders:[{id,name,scene_count,total_sec}]}` |
+| POST | `/api/library/folders` | `{name}` → 201 폴더 |
+| GET · PATCH · DELETE | `/api/library/folders/{id}` | 폴더 안(`{folder, scenes:[{id,folder_id,name,origin,duration,media_at,videos:[{id,camera_id,duration,width,height,offset_ms}],has_thumb}]}`) · 이름 바꾸기 · 지우기(`?with_scenes=true`) |
+| PATCH | `/api/library/scenes/{id}` | `{name}` |
+| POST | `/api/library/scenes/move` | `{scene_ids, folder_id}` → `{moved}` |
+| POST | `/api/library/scenes/delete` | `{scene_ids}` → `{deleted}` (1~500개) |
+| GET | `/api/library/videos/{id}.mp4` | 영상 (Range → 206) |
+| GET | `/api/library/videos/{id}/ai.mp4` | 그 영상의 AI 화면 (Range). 장면 응답의 영상마다 `has_ai` |
+| GET | `/api/library/scenes/{id}/thumb.jpg` | 썸네일 |
