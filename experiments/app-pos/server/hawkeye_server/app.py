@@ -8,16 +8,24 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
+from .recordings import (CAMERA_ID, ClipResult, FileCache, Playback, Recordings, RecordingsUnavailable,
+                         clip_window, covered_seconds, first_recorded, parse_abs_time, rfc3339)
 from .store import Store
+
+GB = 1_000_000_000
 
 Level = Literal["WARNING", "HIGH_RISK", "REVIEW", "CLEAR"]
 
@@ -29,8 +37,22 @@ class Settings:
     api_key: str | None = None
     """설정하면 모든 요청에 X-API-Key 헤더(WebSocket 은 ?key=)가 필요하다."""
     streams: list[dict[str, str]] = field(default_factory=list)
-    """카메라별 라이브 주소. url = RTSP(앱), web_url = WebRTC(PC 대시보드).
-    [{"camera_id": "cam1", "url": "rtsp://...", "web_url": "http://..."}]"""
+    """카메라별 라이브 주소. url = RTSP(앱), ai_url = AI 화면 RTSP(앱), web_url = WebRTC(PC 대시보드).
+    [{"camera_id": "cam1", "url": "rtsp://...", "ai_url": "rtsp://...", "web_url": "http://..."}]"""
+    playback_url: str | None = None
+    """MediaMTX 재생 API (예: http://127.0.0.1:9996). 없으면 녹화 기능을 끈다."""
+    clips_dir: Path = Path("data/clips")
+    disk_path: Path | None = None
+    """여유 공간을 볼 폴더 (녹화 폴더). 없으면 DB 폴더."""
+    min_free_gb: float = 100.0
+    clip_before_sec: float = 20.0
+    clip_after_sec: float = 10.0
+    flush_delay_sec: float = 2.0
+    clip_cache_gb: float = 20.0
+    clip_cache_days: float = 7.0
+    chunk_cache_gb: float = 5.0
+    chunk_cache_hours: float = 1.0
+    max_chunk_sec: float = 120.0
 
 
 class Item(BaseModel):
@@ -86,10 +108,56 @@ class Hub:
                 self.clients.discard(ws)
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(settings: Settings, *, playback_transport: httpx.BaseTransport | None = None,
+               now: Callable[[], datetime] | None = None,
+               disk_free: Callable[[Path], int] | None = None) -> FastAPI:
+    """playback_transport · now · disk_free 는 시험에서 가짜를 넣기 위한 것."""
     store = Store(settings.db_path, settings.snapshot_dir)
     hub = Hub()
     app = FastAPI(title="HawkEye 경보 서버")
+    free_bytes = disk_free or (lambda p: shutil.disk_usage(p).free)
+    disk_path = settings.disk_path or settings.db_path.parent
+
+    recordings: Recordings | None = None
+    if settings.playback_url:
+        recordings = Recordings(
+            Playback(settings.playback_url, transport=playback_transport),
+            FileCache(settings.clips_dir, int(settings.clip_cache_gb * GB), settings.clip_cache_days * 86400),
+            FileCache(settings.clips_dir / "chunks", int(settings.chunk_cache_gb * GB),
+                      settings.chunk_cache_hours * 3600),
+            settings.flush_delay_sec, now)
+
+    def need_recordings() -> Recordings:
+        if recordings is None:
+            raise HTTPException(status_code=503, detail="recordings_unavailable: 녹화 재생이 꺼져 있습니다 (HAWKEYE_PLAYBACK_URL)")
+        return recordings
+
+    def cameras() -> list[str]:
+        return [s["camera_id"] for s in settings.streams if CAMERA_ID.match(s["camera_id"])]
+
+    def check_camera(camera_id: str) -> str:
+        if not CAMERA_ID.match(camera_id) or (cameras() and camera_id not in cameras()):
+            raise HTTPException(status_code=404, detail=f"모르는 카메라입니다: {camera_id}")
+        return camera_id
+
+    def video_response(result: ClipResult) -> Any:
+        if result.status == "not_ready":
+            return JSONResponse({"detail": "not_ready: 아직 녹화 중인 구간입니다", "retry_after": result.retry_after},
+                                status_code=202, headers={"Retry-After": str(result.retry_after)})
+        if result.status == "no_recording":
+            raise HTTPException(status_code=404, detail="no_recording: 이 구간에 녹화가 없습니다")
+        return FileResponse(result.path, media_type="video/mp4", headers={
+            "X-Covered-Seconds": f"{result.covered:.3f}", "X-Wanted-Seconds": f"{result.wanted:.3f}",
+            "X-Video-Start": rfc3339(result.start)})   # 앱이 영상 위치 ↔ 실제 시각을 맞출 때
+
+    def case_window(case_id: int):
+        c = store.get_case(case_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail="사건이 없습니다")
+        events = c["events"]
+        alerts = [e for e in events if e["level"] != "CLEAR"]
+        e = (alerts or events)[-1]                # 마지막 경보 (경보가 없던 통과 사건은 마지막 기록)
+        return c, clip_window(e["timestamp"], e["received_at"], settings.clip_before_sec, settings.clip_after_sec)
 
     def key_ok(given: str | None) -> bool:
         return settings.api_key is None or (given is not None and hmac.compare_digest(given, settings.api_key))
@@ -109,8 +177,15 @@ def create_app(settings: Settings) -> FastAPI:
         return FileResponse(dashboard / "index.html", media_type="text/html")
 
     @app.get("/healthz")
-    def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    def healthz() -> dict[str, Any]:
+        try:
+            free_gb = round(free_bytes(disk_path) / GB, 1)
+        except OSError:
+            return {"status": "ok", "disk_free_gb": None}
+        if free_gb < settings.min_free_gb:
+            return {"status": "degraded", "disk_free_gb": free_gb,
+                    "detail": f"디스크 여유 {free_gb}GB — {settings.min_free_gb:g}GB 미만. 녹화 폴더를 정리하세요"}
+        return {"status": "ok", "disk_free_gb": free_gb}
 
     @app.post("/api/events", status_code=201, dependencies=auth)
     async def post_event(b: EventBody) -> dict[str, Any]:
@@ -156,7 +231,90 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/config", dependencies=auth)
     def config() -> dict[str, Any]:
-        return {"streams": settings.streams}
+        streams = [dict(s) for s in settings.streams]
+        if recordings is not None:
+            for s in streams:            # 송출 중인가 · 언제부터 (켜 둔 채 잊은 폰 알아채기). 실패해도 설정은 준다
+                if CAMERA_ID.match(s["camera_id"]):
+                    try:
+                        s["live"] = recordings.live_status(s["camera_id"])
+                    except RecordingsUnavailable:
+                        s["live"] = None
+        return {"streams": streams, "recordings": recordings is not None}
+
+    # --- 녹화 (docs/design.md §10) ---
+
+    @app.get("/api/recordings", dependencies=auth)
+    def list_recordings(camera_id: str, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+        rec = need_recordings()
+        check_camera(camera_id)
+        bad = HTTPException(status_code=422, detail="start·end 는 오프셋이 있는 ISO8601 이고 start < end")
+        end_dt = parse_abs_time(end) if end else rec.now()
+        if end_dt is None:
+            raise bad
+        start_dt = parse_abs_time(start) if start else end_dt - timedelta(hours=24)
+        if start_dt is None or start_dt >= end_dt:
+            raise bad
+        try:
+            spans = rec.playback.list(camera_id, start_dt, end_dt)
+        except RecordingsUnavailable as e:
+            raise HTTPException(status_code=503, detail=f"recordings_unavailable: {e}")
+        return {"camera_id": camera_id,
+                "spans": [{"start": rfc3339(s.start), "duration": s.duration} for s in spans]}
+
+    @app.get("/api/recordings/{camera_id}/video", dependencies=auth)
+    def recording_video(camera_id: str, start: str, duration: float = Query(default=60.0)) -> Any:
+        rec = need_recordings()
+        check_camera(camera_id)
+        start_dt = parse_abs_time(start)
+        if start_dt is None or not (1.0 <= duration <= settings.max_chunk_sec):
+            raise HTTPException(status_code=422,
+                                detail=f"start 는 오프셋이 있는 ISO8601, duration 은 1~{settings.max_chunk_sec:g}초")
+        try:
+            return video_response(rec.chunk(camera_id, start_dt, duration))
+        except RecordingsUnavailable as e:
+            raise HTTPException(status_code=503, detail=f"recordings_unavailable: {e}")
+
+    @app.get("/api/cases/{case_id}/clips", dependencies=auth)
+    def case_clips(case_id: int) -> dict[str, Any]:
+        rec = need_recordings()
+        c, w = case_window(case_id)
+        cams = cameras() or [c["camera_id"]]
+        wanted = (w.end - w.start).total_seconds()
+        clips = []
+        for cam in cams:
+            item: dict[str, Any] = {"camera_id": cam, "url": f"/api/cases/{case_id}/clips/{cam}.mp4",
+                                    "is_case_camera": cam == c["camera_id"]}
+            # status: cached(이미 만든 클립 — 원본·MediaMTX 없이도 재생) / recorded(녹화 있음) /
+            #         no_recording / unavailable(MediaMTX 에 닿지 않음, 다른 카메라는 그대로 알려 줌)
+            cached = rec.cached_clip(case_id, cam, w)
+            if cached is not None:
+                covered, first, status, wait = cached.covered, cached.start, "cached", 0
+            else:
+                try:
+                    spans = rec.playback.list(cam, w.start - timedelta(seconds=1), w.end + timedelta(seconds=1))
+                except RecordingsUnavailable:
+                    clips.append({**item, "status": "unavailable", "retry_after": None, "covered_sec": None,
+                                  "partial": None, "has_recording": None, "video_start": None})
+                    continue
+                covered = covered_seconds(spans, w.start, w.end)
+                first = first_recorded(spans, w.start, w.end)
+                status = "recorded" if covered > 0 else "no_recording"
+                wait = rec.retry_after(w.end)
+            clips.append({**item, "status": status, "retry_after": wait, "covered_sec": covered,
+                          "partial": 0 < covered < wanted - 0.5, "has_recording": covered > 0,
+                          "video_start": rfc3339(first) if first else None})
+        return {"case_id": case_id, "anchor": w.anchor, "anchor_time": rfc3339(w.anchor_time),
+                "start": rfc3339(w.start), "end": rfc3339(w.end), "delay_sec": w.delay_sec, "clips": clips}
+
+    @app.get("/api/cases/{case_id}/clips/{camera_id}.mp4", dependencies=auth)
+    def case_clip(case_id: int, camera_id: str) -> Any:
+        rec = need_recordings()
+        _, w = case_window(case_id)
+        check_camera(camera_id)
+        try:
+            return video_response(rec.clip(case_id, camera_id, w))
+        except RecordingsUnavailable as e:
+            raise HTTPException(status_code=503, detail=f"recordings_unavailable: {e}")
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket, key: str | None = None) -> None:

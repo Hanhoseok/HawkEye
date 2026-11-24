@@ -1,0 +1,85 @@
+# HawkEye 렌탈 서버용 MediaMTX 설정 (Linux, MediaMTX v1.21.4 에서 확인)
+#
+# 촬영 폰 2대(Larix, SRT) ─▶ MediaMTX ─┬─▶ tracking 파이프라인 (RTSP)
+#                                      ├─▶ 관리자 앱 라이브 (RTSP, Tailscale)
+#                                      └─▶ 녹화 ─▶ 재생 API ─▶ 경보 서버가 대신 받아 앱에 줌
+#
+# 이 파일은 run-server.sh 로 실행한다. 계정·주소는 여기 쓰지 않고 run-server.sh 가 환경변수로 덮어쓴다.
+#   MTX_AUTHINTERNALUSERS_<번호>_USER / _PASS / _IPS, MTX_RTSPADDRESS, MTX_SRTADDRESS, MTX_PATHDEFAULTS_RECORDPATH
+# (YAML 안의 $변수 치환은 MediaMTX 가 지원하지 않는다.)
+#
+# 이 서버는 공인 IP 가 네트워크 카드에 바로 붙어 있다. 0.0.0.0 으로 열면 인터넷에 그대로 노출되므로
+# RTSP·SRT 는 Tailscale IP 에만, 재생 API 는 127.0.0.1 에만 연다.
+
+logLevel: info
+logDestinations: [stdout]
+
+# 인증. 번호 순서는 run-server.sh 와 맞춘다 — 바꾸면 run-server.sh 도 바꾼다.
+authMethod: internal
+authInternalUsers:
+  # 0: 촬영 폰 송출 (cam1, cam2 ...). 계정은 .env 의 HAWKEYE_PUBLISH_USER/PASS
+  - user: placeholder-publish
+    pass: placeholder-publish
+    ips: []
+    permissions:
+      - action: publish
+        path: ~^cam[0-9]+$
+  # 1: 관리자 앱 라이브 보기. 계정은 .env 의 HAWKEYE_READ_USER/PASS
+  - user: placeholder-read
+    pass: placeholder-read
+    ips: []
+    permissions:
+      - action: read
+  # 2: 서버 안에서는 계정 없이 읽기·재생 (tracking, 경보 서버). ips 는 run-server.sh 가 서버 자신의 Tailscale IP 를 더한다.
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: read
+      - action: playback
+  # 3: 서버 안에서는 계정 없이 AI 화면 송출 (cam1_ai ...)만. 원본 경로(cam1)에는 못 보낸다.
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: publish
+        path: ~^cam[0-9]+_ai$
+
+api: false
+metrics: false
+pprof: false
+
+rtsp: true
+rtspTransports: [tcp]
+rtspAddress: 127.0.0.1:8554      # run-server.sh 가 <Tailscale IP>:8554 로 바꾼다
+srt: true
+srtAddress: 127.0.0.1:8890       # run-server.sh 가 <Tailscale IP>:8890 으로 바꾼다
+
+# 경보 서버만 쓴다 (서버 안).
+playback: true
+playbackAddress: 127.0.0.1:9996
+
+# 쓰지 않는 것 (기본값이 켜져 있어 명시적으로 끈다)
+rtmp: false
+hls: false
+webrtc: false
+moq: false
+
+pathDefaults:
+  record: false
+  recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S-%f   # run-server.sh 가 HAWKEYE_RECORDINGS 로 바꾼다
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 10m
+  # 자동 삭제하지 않는다 (촬영할 때만 녹화, 렌탈 종료 때 deploy/cleanup.sh 로 지움)
+  recordDeleteAfter: 0s
+
+paths:
+  # 촬영 폰 원본 — 녹화한다
+  cam1:
+    record: true
+  cam2:
+    record: true
+  # 파이프라인이 그린 AI 화면 — 녹화하지 않는다
+  cam1_ai:
+  cam2_ai:

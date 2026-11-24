@@ -29,3 +29,21 @@ def test_settings_from_env_reads_values():
     })
     assert (s.db_path, s.snapshot_dir, s.api_key) == (Path("x/a.db"), Path("x/snap"), "k")
     assert s.streams == [{"camera_id": "cam1", "url": "rtsp://h/cam1"}]
+
+
+def test_settings_from_env_reads_recordings_and_ai_streams():
+    s = settings_from_env({
+        "HAWKEYE_STREAMS": "cam1=rtsp://h/cam1,cam2=rtsp://h/cam2",
+        "HAWKEYE_AI_STREAMS": "cam1=rtsp://h/cam1_ai",
+        "HAWKEYE_PLAYBACK_URL": "http://127.0.0.1:9996",
+        "HAWKEYE_CLIPS": "x/clips", "HAWKEYE_RECORDINGS": "x/rec", "HAWKEYE_MIN_FREE_GB": "50",
+    })
+    assert s.streams == [{"camera_id": "cam1", "url": "rtsp://h/cam1", "ai_url": "rtsp://h/cam1_ai"},
+                         {"camera_id": "cam2", "url": "rtsp://h/cam2"}]
+    assert (s.playback_url, s.clips_dir, s.disk_path, s.min_free_gb) == (
+        "http://127.0.0.1:9996", Path("x/clips"), Path("x/rec"), 50.0)
+
+
+def test_recordings_off_by_default():
+    s = settings_from_env({})
+    assert (s.playback_url, s.disk_path) == (None, None)
