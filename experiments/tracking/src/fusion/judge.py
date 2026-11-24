@@ -653,6 +653,8 @@ class DualJudge:
                               "why": "" if at_shelf else "선반 앞에 있지 않았음", "until_ms": None})
             if at_shelf:
                 book.add_held(HeldItem(pid, name, axis.to_frame(seen_ms - near), frame.index, seen_ms), frame.pts_ms)
+            elif self.config.hold_per_run:
+                self.holders.drop(pid, name)   # 선반에서 시작한 든 구간이 아니다 — 버린다. 끊겼다 다시 들면 또 따진다
 
     def _settle_held(self) -> None:
         """방금 넘긴 선반 방문이 덮는 '든 것'을 지운다 — 그 방문의 개수 · 주인이 대신한다 (방문을 장부에 넣기 바로 전에 부른다)."""

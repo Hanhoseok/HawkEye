@@ -243,6 +243,7 @@ def use_product_records(cfg: AppConfig) -> None:
     """3차 기본: 상품 모델 기록으로 판정한다 (후속 56). 까닭은 dual_config 의 3차 갈래 설명."""
     cfg.shelves.model_path = PRODUCT_MODEL
     cfg.fusion.overview_count = cfg.fusion.overview_owner = True
+    cfg.fusion.hold_per_run = True   # 든 구간마다 따진다 — 선반 밖에서 시작한 든 구간은 버린다 (후속 72)
     cfg.fusion.overview_instant = True   # 손에 든 것을 보면 바로 센다 (후속 59) — 방문이 끝나면 그 개수 · 주인으로 바뀐다
     cfg.fusion.holder_over_owner = True   # 주인을 정한 방문도 다른 손님이 먼저 든 상품은 그 손님에게 나눈다 (후속 71, 4차 C12)
     cfg.fusion.handover = True   # 손님끼리 건넨 것을 장부에 넣는다 (후속 70) — 든 손님이 경보, 건넨 손님은 확인 필요

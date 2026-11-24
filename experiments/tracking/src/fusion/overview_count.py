@@ -287,6 +287,12 @@ class HolderTracker:
         self._recent: dict[tuple[int, str], deque] = {}
         self._fresh: list[tuple[int, str, float, float]] = []
         self._told: set[tuple[int, str]] = set()
+        self._run: dict[tuple[int, str], float] = {}
+        """(신원, 종류) → 지금 든 구간이 시작한 때. 든 구간 = 그 손에서 그 종류를 본 장면이 HOLD_WITHIN_MS 넘게 안 끊긴 것."""
+        self._told_run: dict[tuple[int, str], float] = {}
+        """fresh 로 알린 (신원, 종류) → 그때의 든 구간이 시작한 때."""
+        self._dropped: dict[tuple[int, str], float] = {}
+        """판정이 '안 셈'으로 버린 (신원, 종류) → 그 든 구간이 시작한 때 (drop). 그 구간은 다시 안 알리고, 끊겼다 다시 들면 알린다."""
 
     def update(self, ms: float, items: list, people: list, region) -> None:
         """전체 카메라 한 장면. people = [(신원, 사람 상자, 관절), …]. region = 선반 자리 (아직 없으면 아무것도 안 적는다)."""
@@ -304,6 +310,8 @@ class HolderTracker:
             if pid is not None:
                 self.samples.append((ms, pid, it[0]))
                 recent = self._recent.setdefault((pid, it[0]), deque(maxlen=self.min_frames))
+                if not recent or ms - recent[-1] > HOLD_WITHIN_MS:
+                    self._run[(pid, it[0])] = ms   # 새 든 구간
                 recent.append(ms)
                 if len(recent) == self.min_frames and ms - recent[0] <= HOLD_WITHIN_MS:
                     self._fresh.append((pid, it[0], recent[0], ms))
@@ -319,6 +327,13 @@ class HolderTracker:
             recent.setdefault((pid, name), deque(maxlen=self.min_frames)).append(ms)
         self._recent = recent
         self._fresh = [(flip.get(pid, pid) if first >= since_ms else pid, name, first, ms) for pid, name, first, ms in self._fresh]
+        run: dict[tuple[int, str], float] = {}
+        last: dict[tuple[int, str], float] = {}
+        for ms, pid, name in sorted(self.samples):
+            if (pid, name) not in last or ms - last[(pid, name)] > HOLD_WITHIN_MS:
+                run[(pid, name)] = ms
+            last[(pid, name)] = ms
+        self._run = run
 
     def mark_told(self, pid: int, name: str) -> None:
         """그 사람의 그 종류는 이미 '방금 든 것'으로 알렸다 — 다시 알리지 않는다 (번호를 바꿔 읽어 주인이 옮겨진 것)."""
@@ -333,11 +348,25 @@ class HolderTracker:
         out = []
         for pid, name, first, ms in self._fresh:
             key = (self.resolve(pid), name)
-            if key not in self._told:
-                self._told.add(key)
-                out.append((key[0], name, first, ms))
+            run = self._run.get((pid, name), first)
+            if key in self._told or self._dropped.get(key) == run:
+                continue   # 이미 알렸다 / '안 셈'으로 버린 바로 그 든 구간이다
+            self._told.add(key)
+            self._told_run[key] = run
+            out.append((key[0], name, first, ms))
         self._fresh = []
         return out
+
+    def drop(self, pid: int, name: str) -> None:
+        """방금 알린 '든 것'을 판정이 안 셌다 (선반에서 시작한 든 구간이 아니다) — 흔적 없이 버린다 (fusion.hold_per_run).
+
+        물건의 시작은 언제나 선반이다. 선반 밖에서 시작한 든 구간은 그 선반에서 꺼낸 것이 아니다 — 들고 들어온 것이거나 잘못 읽힌 것이다
+        (4차: 42편 가운데 16편에서 들어오는 길 1.5 ~ 2.9초에 손에 상품이 있다고 읽혔다). 그 구간은 다시 안 알리지만, 끊겼다 다시 들면
+        새 든 구간으로 또 알린다. 버리지 않으면 '같은 사람 · 같은 종류는 한 번'이 그 구간에 쓰여, 뒤에 선반에서 진짜 든 것을 안 센다 (4차 C13)."""
+        key = (self.resolve(pid), name)
+        if key in self._told_run:
+            self._dropped[key] = self._told_run[key]
+            self._told.discard(key)
 
     def holds(self, gap_ms: float = HOLD_WITHIN_MS) -> list[tuple[float, float, int, str]]:
         """확정된 '들고 있음' 구간들 — (시작 ms, 끝 ms, 신원, 종류), 시작 순. 확실한 장면만 쓴다 (헷갈린 장면은 뺀다).

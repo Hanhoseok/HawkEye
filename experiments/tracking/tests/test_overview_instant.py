@@ -55,6 +55,30 @@ def test_fresh_ignores_a_stray_frame_long_before():
     assert 7500 + 4 * STEP - 7500 <= HOLD_WITHIN_MS
 
 
+def test_dropped_hold_is_reported_again_only_when_it_is_picked_up_anew():
+    # 4차 C13: 들어오는 길의 잘못 읽힌 든 것을 버린 뒤, 선반에서 진짜 든 것은 새 든 구간으로 다시 알린다 (후속 72)
+    tr = HolderTracker(min_frames=5)
+    hold(tr, 1.0, 1.5, ITEM, [A])
+    assert len(tr.fresh()) == 1
+    tr.drop(1, "cantata")                                                   # 판정이 안 셌다 — 선반에서 시작한 든 구간이 아니다
+    hold(tr, 1.5, 2.5, ITEM, [A])
+    assert tr.fresh() == []                                                 # 같은 든 구간이 이어지는 동안은 다시 안 알린다
+    start = 2500 + HOLD_WITHIN_MS + 500
+    hold(tr, start / 1000, start / 1000 + 0.5, ITEM, [A])                   # HOLD_WITHIN_MS 넘게 끊겼다 다시 들었다
+    again = tr.fresh()
+    assert [(p, n) for p, n, _, _ in again] == [(1, "cantata")] and again[0][2] >= start
+    hold(tr, start / 1000 + 0.5, start / 1000 + 1.5, ITEM, [A])
+    assert tr.fresh() == []                                                 # 이번에는 안 버렸다 — 전처럼 한 번만
+
+
+def test_hold_that_was_not_dropped_is_never_reported_twice():
+    tr = HolderTracker(min_frames=5)
+    hold(tr, 1.0, 1.5, ITEM, [A])
+    assert len(tr.fresh()) == 1
+    hold(tr, 6.0, 6.5, ITEM, [A])                                           # 끊겼다 다시 들어도 — 이미 센 사람 · 종류
+    assert tr.fresh() == []
+
+
 def test_fresh_treats_merged_identities_as_one_person():
     tr = HolderTracker(min_frames=5)
     tr.resolve = lambda pid: 1 if pid == 7 else pid                        # 7번은 나중에 1번으로 합쳐졌다
@@ -164,6 +188,22 @@ def test_judge_counts_a_held_item_only_for_someone_who_was_at_the_shelf():
     rows = {h["pid"]: h for h in judge.held}
     assert rows[1]["counted"] and rows[1]["seen_ms"] == 5000.0 and rows[1]["until_ms"] is None
     assert not rows[2]["counted"] and rows[2]["why"] == "선반 앞에 있지 않았음"
+
+
+def test_judge_counts_a_hold_that_starts_at_the_shelf_after_one_that_did_not():
+    # 4차 C13: 1.8초(들어오는 길)에 잘못 읽힌 칸타타는 안 세고, 5.5초에 선반 앞에서 든 칸타타는 센다
+    for per_run, taken in ((True, 1), (False, 0)):
+        judge, risk = make_judge(overview_instant=True, hold_per_run=per_run)
+        for i in range(5):
+            judge.holders.update(1800 + i * STEP, ITEM, [A], REGION)
+        judge._count_held(frame_at(1800 + 4 * STEP))                        # 선반 앞에 있은 적이 없다
+        judge.fuser.note_band(5200.0, 1)
+        for i in range(5):
+            judge.holders.update(5500 + i * STEP, ITEM, [A], REGION)
+        judge._count_held(frame_at(5500 + 4 * STEP))
+        got = risk.book.customers[1].taken if 1 in risk.book.customers else 0
+        assert got == taken, (per_run, got)
+        assert [h["counted"] for h in judge.held] == ([False, True] if per_run else [False])
 
 
 def test_judge_swaps_the_held_item_for_the_visit_that_covers_it():
