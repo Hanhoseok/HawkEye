@@ -1,0 +1,16 @@
+{
+ "folders": [
+  {
+   "id": 1,
+   "name": "2차 촬영",
+   "scene_count": 3,
+   "total_sec": 72.6
+  },
+  {
+   "id": 2,
+   "name": "시연용",
+   "scene_count": 0,
+   "total_sec": 0.0
+  }
+ ]
+}

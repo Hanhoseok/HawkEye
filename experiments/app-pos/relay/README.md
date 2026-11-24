@@ -116,6 +116,22 @@ relay/replay-server.sh cam1.mp4 cam2.mp4 --dry-run          # 명령만 보기
 파일을 그대로 복사하지 않고 안드로이드가 확실히 트는 형식(H.264 Main, yuv420p, B-프레임 없음, 1초 키프레임, 5Mbps)으로
 다시 인코딩한다 (폰 녹화가 HEVC 일 수 있음). GPU 인코더가 안 되면 libx264 로 바꾼다.
 
+### 보관함 — 미리 찍은 촬영 영상을 앱에서 폴더로 보기
+
+라이브가 안 될 때를 대비한다 (`docs/design.md` §11). 영상은 서버에만 두고 커밋하지 않는다. PC 에서 먼저 줄여(720p H.264) 올리면 업로드가 빠르다.
+
+```bash
+cd ~/hawkeye/app-pos/server
+HAWKEYE_LIBRARY=~/hawkeye/server-data/library .venv/bin/python -m hawkeye_server.library import   --folder "2차 촬영" --camera "cam1=<올린 폴더>/1(angle1)" --camera "cam2=<올린 폴더>/1(angle0)"   --sync <tracking>/labels/store01_dual/sync.csv      # 3차: store01_shoot3, 4차: store01_shoot4
+```
+
+카메라가 1대인 1차(`source/0`)는 `--camera cam1=...` 하나만. `--dry-run` 으로 장면 짝을 먼저 볼 수 있다.
+
+AI 탐지 화면은 PC 에서 추적 기록으로 그린 뒤(`tools/ai_render.py --records <tracking>/outputs/dual_eval_pose3 --video cam1=… --video cam2=… --sync … --out <폴더>`,
+opencv-python-headless · numpy · pillow 필요) 올려서 같은 명령에 `--ai` 를 붙여 넣는다 (장면을 새로 만들지 않고 이미 넣은 영상에 붙임).
+AI 판정은 추적 도구 판정(`experiments/tracking` 에서 `python workbench/data.py --shoot N`)을 `tools/export_verdicts.py <판정.json> --tracking experiments/tracking --shoot N` 으로 꺼내 (추적 도구의 최신 확인을 거쳐 — 최신이 아닌 짝이 있으면 멈춤)
+`import --folder "4차 촬영" --verdicts <판정.json>` 으로 붙인다 (`--camera` 없이).
+
 ### 시험
 
 `bash relay/tests/server-scripts.tests.sh` — 계정이 비면 거부, 0.0.0.0 거부, 비밀번호를 출력하지 않음, 시차 옵션, 호환 인코딩 인자.

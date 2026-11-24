@@ -78,7 +78,8 @@ private val hmFmt = DateTimeFormatter.ofPattern("HH:mm")
  * onBack = null 이면 아래 탭 화면.
  */
 @Composable
-fun RecordingsScreen(cameraId: String, startIso: String?, onBack: (() -> Unit)?, onOpenCase: (Int) -> Unit) {
+fun RecordingsScreen(cameraId: String, startIso: String?, onBack: (() -> Unit)?, onOpenCase: (Int) -> Unit,
+                     tabs: (@Composable () -> Unit)? = null) {
     val repo = AppGraph.alerts
     val api = remember { repo.api() }
     val zone = remember { ZoneId.systemDefault() }
@@ -146,6 +147,7 @@ fun RecordingsScreen(cameraId: String, startIso: String?, onBack: (() -> Unit)?,
             AppBar("지난 영상", onBack) { IconButton(onClick = { reload++ }) { Icon(Icons.Rounded.Refresh, "새로고침", tint = c.sub) } }
         } else {
             ScreenTitle("지난 영상") { IconButton(onClick = { reload++ }) { Icon(Icons.Rounded.Refresh, "새로고침", tint = c.sub) } }
+            tabs?.invoke()
         }
 
         Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -170,7 +172,7 @@ fun RecordingsScreen(cameraId: String, startIso: String?, onBack: (() -> Unit)?,
                     HawkButton("1분 전", onClick = { chunkStart = RecordingNav.shift(playing, -60L); videoStart = null; position = 0 },
                         kind = ButtonKind.WHITE, icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft, modifier = Modifier.weight(1f))
                     HawkButton("1분 뒤", onClick = { chunkStart = RecordingNav.shift(playing, 60L); videoStart = null; position = 0 },
-                        kind = ButtonKind.WHITE, icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight, modifier = Modifier.weight(1f))
+                        kind = ButtonKind.WHITE, icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight, modifier = Modifier.weight(1f), iconEnd = true)
                 }
                 // 이 구간 막대 (재생 위치 · 경보)
                 val at = DayBar.parse(wall) ?: DayBar.parse(playing)!!

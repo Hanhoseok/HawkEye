@@ -2,6 +2,8 @@ package com.hawkeye.admin.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -108,6 +110,59 @@ class ApiClient(
         }.getOrElse { VideoState.Unavailable(it.message ?: "연결하지 못했습니다") }
     }
 
+    // --- 보관함 (서버 docs/design.md §11) ---
+
+    suspend fun libraryFolders(): List<LibraryFolder> = Protocol.parseLibrary(get(url("/api/library")))
+
+    suspend fun libraryFolder(folderId: Int): FolderDetail =
+        Protocol.parseFolderDetail(get(url("/api/library/folders/$folderId")))
+
+    suspend fun createFolder(name: String): LibraryFolder =
+        Protocol.parseFolder(call(request(url("/api/library/folders")).post(nameBody(name)).build()))
+
+    suspend fun renameFolder(folderId: Int, name: String): LibraryFolder =
+        Protocol.parseFolder(call(request(url("/api/library/folders/$folderId")).patch(nameBody(name)).build()))
+
+    /** 지운 장면 수. 장면이 있는데 withScenes = false 면 409 not_empty. */
+    suspend fun deleteFolder(folderId: Int, withScenes: Boolean): Int {
+        val u = url("/api/library/folders/$folderId") { if (withScenes) addQueryParameter("with_scenes", "true") }
+        return Protocol.parseCount(call(request(u).delete().build()), "deleted_scenes")
+    }
+
+    suspend fun renameScene(sceneId: Int, name: String): LibraryScene =
+        Protocol.parseScene(call(request(url("/api/library/scenes/$sceneId")).patch(nameBody(name)).build()))
+
+    suspend fun moveScenes(sceneIds: Collection<Int>, folderId: Int): Int {
+        val body = buildJsonObject {
+            put("scene_ids", JsonArray(sceneIds.map { JsonPrimitive(it) }))
+            put("folder_id", folderId)
+        }.toString()
+        return Protocol.parseCount(call(request(url("/api/library/scenes/move")).post(body.toRequestBody(JSON)).build()), "moved")
+    }
+
+    suspend fun deleteScenes(sceneIds: Collection<Int>): Int {
+        val body = buildJsonObject { put("scene_ids", JsonArray(sceneIds.map { JsonPrimitive(it) })) }.toString()
+        return Protocol.parseCount(call(request(url("/api/library/scenes/delete")).post(body.toRequestBody(JSON)).build()), "deleted")
+    }
+
+    fun libraryVideoUrl(videoId: Int): String = url("/api/library/videos/$videoId.mp4").toString()
+
+    /** 그 영상의 AI 화면 (원본과 시간축이 같다). */
+    fun libraryAiVideoUrl(videoId: Int): String = url("/api/library/videos/$videoId/ai.mp4").toString()
+
+    /** 장면 썸네일(JPEG). 없으면 null. */
+    suspend fun sceneThumb(sceneId: Int): ByteArray? = withContext(Dispatchers.IO) {
+        http.newCall(request(url("/api/library/scenes/$sceneId/thumb.jpg")).build()).execute().use { r ->
+            when {
+                r.code == 404 -> null
+                !r.isSuccessful -> throw ApiException(r.code, "썸네일을 불러오지 못했습니다 (HTTP ${r.code})")
+                else -> r.body!!.bytes()
+            }
+        }
+    }
+
+    private fun nameBody(name: String) = buildJsonObject { put("name", name) }.toString().toRequestBody(JSON)
+
     fun webSocketUrl(): String {
         val ws = base.replaceFirst("http", "ws") + "/ws"
         return if (settings.apiKey.isNullOrBlank()) ws else "$ws?key=${settings.apiKey}"
@@ -127,7 +182,8 @@ class ApiClient(
         http.newCall(req).execute().use { r ->
             if (!r.isSuccessful) {
                 val reason = if (r.code == 401) "API 키가 맞지 않습니다" else "서버 오류"
-                throw ApiException(r.code, "$reason (HTTP ${r.code})")
+                val code = runCatching { r.body?.string() }.getOrNull()?.let(Protocol::parseErrorReason)
+                throw ApiException(r.code, "$reason (HTTP ${r.code})", code)
             }
             r.body!!.string()
         }

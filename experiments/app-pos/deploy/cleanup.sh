@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 렌탈 종료 전 정리: 녹화 영상과 경보 서버 데이터(DB·장면 사진·클립)를 지운다.
+# 렌탈 종료 전 정리: 녹화 영상과 경보 서버 데이터(DB·장면 사진·클립·보관함 영상)를 지운다.
 # 사람 얼굴이 찍힌 영상·사진이라 서버에 남기지 않는다. 남길 것은 먼저 팀 드라이브로 옮긴다.
 #
 #   deploy/cleanup.sh          # 지울 것과 크기를 보여 주고, '삭제' 를 입력해야 지운다
@@ -17,6 +17,7 @@ data="${HAWKEYE_DATA:-$HOME/hawkeye/server-data}"
 db="${HAWKEYE_DB:-$data/hawkeye.db}"
 snaps="${HAWKEYE_SNAPSHOTS:-$data/snapshots}"
 clips="${HAWKEYE_CLIPS:-$data/clips}"
+library="${HAWKEYE_LIBRARY:-$data/library}"
 session="${HAWKEYE_TMUX_SESSION:-hawkeye}"
 
 if tmux has-session -t "$session" 2>/dev/null; then
@@ -30,6 +31,7 @@ targets=("$rec" "$data")
 inside "$db" || targets+=("$db" "$db-journal" "$db-wal" "$db-shm")
 inside "$snaps" || targets+=("$snaps")
 inside "$clips" || targets+=("$clips")
+inside "$library" || targets+=("$library")
 
 echo "[cleanup] 지울 것:"
 for t in "${targets[@]}"; do

@@ -152,4 +152,65 @@ sealed interface ServerMessage {
 
 data class ServerSettings(val baseUrl: String, val apiKey: String?)
 
-class ApiException(val code: Int, message: String) : Exception(message)
+/** reason = 서버 detail 앞의 코드 (예: duplicate_name, not_empty). 앱이 한국어 문구를 고른다. */
+class ApiException(val code: Int, message: String, val reason: String? = null) : Exception(message)
+
+// --- 보관함 (서버 docs/design.md §11) ---
+
+@Serializable
+data class LibraryFolder(
+    val id: Int,
+    val name: String,
+    @SerialName("scene_count") val sceneCount: Int = 0,
+    @SerialName("total_sec") val totalSec: Double = 0.0,
+)
+
+@Serializable
+data class LibraryFolders(val folders: List<LibraryFolder> = emptyList())
+
+/** offsetMs: 카메라 시차. 공통 시각 = 재생 위치 + offsetMs (전체 카메라 0). */
+@Serializable
+data class LibraryVideo(
+    val id: Int,
+    @SerialName("camera_id") val cameraId: String,
+    val duration: Double? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    @SerialName("offset_ms") val offsetMs: Double = 0.0,
+    /** AI 화면(사람 상자·번호를 그린 같은 시간축 영상)이 있는가. */
+    @SerialName("has_ai") val hasAi: Boolean = false,
+)
+
+/** AI 판정 하나 (추적 도구가 지금 설정으로 다시 낸 것). ms = 전체 카메라(cam1) 재생 시각. */
+@Serializable
+data class LibraryVerdict(
+    val ms: Double,
+    val person: Int,
+    /** CLEAR / WARNING / REVIEW / HIGH_RISK */
+    val level: String,
+    val zone: String = "",
+    val reason: String = "",
+    val taken: Int = 0,
+    val paid: Int = 0,
+    val unpaid: Int = 0,
+)
+
+/** origin = 가져올 때의 회차 폴더 이름 (다른 폴더로 옮겨도 남는다). mediaAt = 영상을 넣거나 바꾼 시각 (썸네일 캐시 키). */
+@Serializable
+data class LibraryScene(
+    val id: Int,
+    @SerialName("folder_id") val folderId: Int = 0,
+    val name: String,
+    val origin: String = "",
+    val duration: Double? = null,
+    @SerialName("media_at") val mediaAt: String? = null,
+    val videos: List<LibraryVideo> = emptyList(),
+    @SerialName("has_thumb") val hasThumb: Boolean = false,
+    /** AI 판정 (시각 순). 없으면 빈 목록. */
+    val verdicts: List<LibraryVerdict> = emptyList(),
+    /** 판정을 어디서 가져왔나 (예: '추적 도구가 지금 설정으로 다시 낸 판정 · 2026-11-24 17:32'). */
+    @SerialName("verdict_source") val verdictSource: String? = null,
+)
+
+@Serializable
+data class FolderDetail(val folder: LibraryFolder, val scenes: List<LibraryScene> = emptyList())

@@ -35,6 +35,7 @@ export HAWKEYE_SNAPSHOTS="${HAWKEYE_SNAPSHOTS:-$data/snapshots}"
 export HAWKEYE_CLIPS="${HAWKEYE_CLIPS:-$data/clips}"
 export HAWKEYE_PLAYBACK_URL="${HAWKEYE_PLAYBACK_URL:-http://127.0.0.1:9996}"
 export HAWKEYE_RECORDINGS="${HAWKEYE_RECORDINGS:-$HOME/hawkeye/recordings}"
+export HAWKEYE_LIBRARY="${HAWKEYE_LIBRARY:-$data/library}"
 
 py="${HAWKEYE_PYTHON:-$app_pos/server/.venv/bin/python}"
 [ -x "$py" ] || die "경보 서버 가상환경이 없습니다: $py (relay/README.md '렌탈 서버' 참고)"
@@ -44,6 +45,7 @@ echo "[run-alert] 데이터    : $data"
 echo "[run-alert] 라이브    : $(echo "$HAWKEYE_STREAMS" | sed -E 's#//[^@/]+@#//<보기 계정>@#g')"
 echo "[run-alert] AI 화면   : $(echo "$HAWKEYE_AI_STREAMS" | sed -E 's#//[^@/]+@#//<보기 계정>@#g')"
 echo "[run-alert] 재생 API  : $HAWKEYE_PLAYBACK_URL"
+echo "[run-alert] 보관함    : $HAWKEYE_LIBRARY  (넣기: python -m hawkeye_server.library import --help)"
 [ "$check_only" = 1 ] && exit 0
 
 mkdir -p "$data"

@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
+from .library import Library, LibraryError
 from .recordings import (CAMERA_ID, ClipResult, FileCache, Playback, Recordings, RecordingsUnavailable,
                          clip_window, covered_seconds, first_recorded, parse_abs_time, rfc3339)
 from .store import Store
@@ -53,6 +54,8 @@ class Settings:
     chunk_cache_gb: float = 5.0
     chunk_cache_hours: float = 1.0
     max_chunk_sec: float = 120.0
+    library_dir: Path | None = None
+    """보관함(촬영 영상 폴더) 위치. 없으면 보관함 기능을 끈다 (docs/design.md §11)."""
 
 
 class Item(BaseModel):
@@ -94,6 +97,19 @@ class ResolutionIn(BaseModel):
     note: str | None = None
 
 
+class NameIn(BaseModel):
+    name: str
+
+
+class MoveIn(BaseModel):
+    scene_ids: list[int]
+    folder_id: int
+
+
+class SceneIdsIn(BaseModel):
+    scene_ids: list[int]
+
+
 class Hub:
     """연결된 앱들에 메시지를 뿌린다. 끊긴 연결은 조용히 뺀다."""
 
@@ -126,6 +142,13 @@ def create_app(settings: Settings, *, playback_transport: httpx.BaseTransport | 
             FileCache(settings.clips_dir / "chunks", int(settings.chunk_cache_gb * GB),
                       settings.chunk_cache_hours * 3600),
             settings.flush_delay_sec, now)
+
+    library = Library(settings.library_dir) if settings.library_dir else None
+
+    def need_library() -> Library:
+        if library is None:
+            raise HTTPException(status_code=503, detail="library_unavailable: 보관함이 꺼져 있습니다 (HAWKEYE_LIBRARY)")
+        return library
 
     def need_recordings() -> Recordings:
         if recordings is None:
@@ -315,6 +338,65 @@ def create_app(settings: Settings, *, playback_transport: httpx.BaseTransport | 
             return video_response(rec.clip(case_id, camera_id, w))
         except RecordingsUnavailable as e:
             raise HTTPException(status_code=503, detail=f"recordings_unavailable: {e}")
+
+    # --- 보관함 (docs/design.md §11) ---
+
+    @app.exception_handler(LibraryError)
+    async def library_error(_request: Any, e: LibraryError) -> JSONResponse:
+        return JSONResponse({"detail": f"{e.code}: {e.message}", **e.extra}, status_code=e.status)
+
+    @app.get("/api/library", dependencies=auth)
+    def library_folders() -> dict[str, Any]:
+        return {"folders": need_library().folders()}
+
+    @app.post("/api/library/folders", status_code=201, dependencies=auth)
+    def library_create_folder(b: NameIn) -> dict[str, Any]:
+        return need_library().create_folder(b.name)
+
+    @app.get("/api/library/folders/{folder_id}", dependencies=auth)
+    def library_folder(folder_id: int) -> dict[str, Any]:
+        return need_library().folder(folder_id)
+
+    @app.patch("/api/library/folders/{folder_id}", dependencies=auth)
+    def library_rename_folder(folder_id: int, b: NameIn) -> dict[str, Any]:
+        return need_library().rename_folder(folder_id, b.name)
+
+    @app.delete("/api/library/folders/{folder_id}", dependencies=auth)
+    def library_delete_folder(folder_id: int, with_scenes: bool = False) -> dict[str, int]:
+        return need_library().delete_folder(folder_id, with_scenes)
+
+    @app.patch("/api/library/scenes/{scene_id}", dependencies=auth)
+    def library_rename_scene(scene_id: int, b: NameIn) -> dict[str, Any]:
+        return need_library().rename_scene(scene_id, b.name)
+
+    @app.post("/api/library/scenes/move", dependencies=auth)
+    def library_move(b: MoveIn) -> dict[str, int]:
+        return need_library().move_scenes(b.scene_ids, b.folder_id)
+
+    @app.post("/api/library/scenes/delete", dependencies=auth)
+    def library_delete_scenes(b: SceneIdsIn) -> dict[str, int]:
+        return need_library().delete_scenes(b.scene_ids)
+
+    @app.get("/api/library/videos/{video_id}.mp4", dependencies=auth)
+    def library_video(video_id: int) -> FileResponse:
+        path = need_library().video_file(video_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="not_found: 영상 파일이 없습니다")
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/api/library/videos/{video_id}/ai.mp4", dependencies=auth)
+    def library_ai_video(video_id: int) -> FileResponse:
+        path = need_library().ai_file(video_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="not_found: AI 화면 영상이 없습니다")
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/api/library/scenes/{scene_id}/thumb.jpg", dependencies=auth)
+    def library_thumb(scene_id: int) -> FileResponse:
+        path = need_library().thumb_file(scene_id)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="not_found: 썸네일이 없습니다")
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket, key: str | None = None) -> None:

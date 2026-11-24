@@ -104,6 +104,70 @@ class ApiClientTest {
         assertEquals("/healthz", server.takeRequest().requestUrl!!.encodedPath)
     }
 
+    // --- 보관함 ---
+
+    @Test fun libraryListAndFolderParse() = runTest {
+        server.enqueue(MockResponse().setBody(Fixtures.read("library.json")))
+        server.enqueue(MockResponse().setBody(Fixtures.read("library_folder.json")))
+        val folders = api.libraryFolders()
+        assertEquals(listOf("2차 촬영", "시연용"), folders.map { it.name })
+        assertEquals(3, folders[0].sceneCount)
+        assertEquals("/api/library", server.takeRequest().requestUrl!!.encodedPath)
+
+        val d = api.libraryFolder(1)
+        assertEquals("/api/library/folders/1", server.takeRequest().requestUrl!!.encodedPath)
+        assertEquals(listOf("C01", "C20", "N08-1"), d.scenes.map { it.name })
+        val c20 = d.scenes[1]
+        assertEquals(-2863.9, c20.videos.first { it.cameraId == "cam2" }.offsetMs, 1e-6)
+        assertTrue(d.scenes[0].hasThumb && d.scenes[0].mediaAt != null)
+        assertEquals(1, d.scenes[2].videos.size)
+    }
+
+    @Test fun libraryWritesUseRightMethodsAndBodies() = runTest {
+        server.enqueue(MockResponse().setResponseCode(201).setBody("""{"id": 5, "name": "시연용", "scene_count": 0, "total_sec": 0.0}"""))
+        assertEquals(5, api.createFolder("시연용").id)
+        server.takeRequest().let { assertEquals("POST", it.method); assertEquals("/api/library/folders", it.path); assertEquals("""{"name":"시연용"}""", it.body.readUtf8()) }
+
+        server.enqueue(MockResponse().setBody("""{"id": 5, "name": "발표", "scene_count": 0, "total_sec": 0.0}"""))
+        api.renameFolder(5, "발표")
+        server.takeRequest().let { assertEquals("PATCH", it.method); assertEquals("/api/library/folders/5", it.path) }
+
+        server.enqueue(MockResponse().setBody("""{"deleted_scenes": 3}"""))
+        assertEquals(3, api.deleteFolder(5, withScenes = true))
+        server.takeRequest().let { assertEquals("DELETE", it.method); assertEquals("/api/library/folders/5?with_scenes=true", it.path) }
+
+        server.enqueue(MockResponse().setBody("""{"moved": 2}"""))
+        assertEquals(2, api.moveScenes(listOf(1, 2), 7))
+        server.takeRequest().let { assertEquals("/api/library/scenes/move", it.path); assertEquals("""{"scene_ids":[1,2],"folder_id":7}""", it.body.readUtf8()) }
+
+        server.enqueue(MockResponse().setBody("""{"deleted": 1}"""))
+        assertEquals(1, api.deleteScenes(listOf(4)))
+        server.takeRequest().let { assertEquals("/api/library/scenes/delete", it.path); assertEquals("""{"scene_ids":[4]}""", it.body.readUtf8()) }
+
+        server.enqueue(MockResponse().setBody("""{"id": 4, "name": "도난", "origin": "2차 촬영", "videos": []}"""))
+        assertEquals("도난", api.renameScene(4, "도난").name)
+        server.takeRequest().let { assertEquals("PATCH", it.method); assertEquals("/api/library/scenes/4", it.path) }
+    }
+
+    @Test fun libraryErrorsCarryServerReason() = runTest {
+        server.enqueue(MockResponse().setResponseCode(409).setBody(Fixtures.read("library_error_duplicate.json")))
+        val e = runCatching { api.createFolder("2차 촬영") }.exceptionOrNull() as ApiException
+        assertEquals(409, e.code)
+        assertEquals("duplicate_name", e.reason)
+        server.enqueue(MockResponse().setResponseCode(500).setBody("oops"))
+        assertNull((runCatching { api.libraryFolders() }.exceptionOrNull() as ApiException).reason)
+    }
+
+    @Test fun libraryVideoUrlAndThumb() = runTest {
+        assertTrue(api.libraryVideoUrl(12).endsWith("/api/library/videos/12.mp4"))
+        assertTrue(api.libraryAiVideoUrl(12).endsWith("/api/library/videos/12/ai.mp4"))
+        server.enqueue(MockResponse().setBody(Buffer().write(byteArrayOf(1, 2))))
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertArrayEquals(byteArrayOf(1, 2), api.sceneThumb(3))
+        assertEquals("/api/library/scenes/3/thumb.jpg", server.takeRequest().requestUrl!!.encodedPath)
+        assertNull(api.sceneThumb(4))
+    }
+
     @Test fun videoStateMapsServerAnswers() = runTest {
         val url = api.absoluteUrl("/api/cases/1/clips/cam1.mp4")
         server.enqueue(MockResponse().setResponseCode(206).setHeader("X-Video-Start", "2026-11-24T00:19:11Z").setBody("x"))

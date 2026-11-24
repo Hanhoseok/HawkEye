@@ -14,6 +14,7 @@
     HAWKEYE_CLIPS       사건 클립·지난 영상 캐시 폴더 (기본 data/clips)
     HAWKEYE_RECORDINGS  디스크 여유를 볼 녹화 폴더 (기본: DB 폴더)
     HAWKEYE_MIN_FREE_GB 이보다 여유가 적으면 /healthz 가 degraded (기본 100)
+    HAWKEYE_LIBRARY     보관함(촬영 영상 폴더) 위치 (기본 data/library). 가져오기: python -m hawkeye_server.library
 """
 
 from __future__ import annotations
@@ -65,6 +66,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         clips_dir=Path(env.get("HAWKEYE_CLIPS", "data/clips")),
         disk_path=Path(env["HAWKEYE_RECORDINGS"]) if env.get("HAWKEYE_RECORDINGS") else None,
         min_free_gb=float(env.get("HAWKEYE_MIN_FREE_GB", "100")),
+        library_dir=Path(env.get("HAWKEYE_LIBRARY") or "data/library"),
     )
 
 

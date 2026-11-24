@@ -114,7 +114,29 @@ fun AppNav(openCase: MutableStateFlow<Int?>, openLive: MutableStateFlow<String?>
                 liveRequest = liveRequest,
                 onOpenCase = { nav.navigate("case/$it") },
                 onLive = { goLive(it) },
+                onOpenFolder = { nav.navigate("library/$it") },
             )
+        }
+        composable("library/{folderId}", arguments = listOf(navArgument("folderId") { type = NavType.IntType })) {
+            val folderId = it.arguments!!.getInt("folderId")
+            Box(Modifier.fillMaxSize().background(Hawk.colors.bg).systemBarsPadding()) {
+                LibraryFolderScreen(folderId = folderId, onBack = { nav.popBackStack() },
+                    onPlay = { scene -> nav.navigate("library/$folderId/$scene") })
+            }
+        }
+        composable(
+            "library/{folderId}/{sceneId}",
+            arguments = listOf(navArgument("folderId") { type = NavType.IntType }, navArgument("sceneId") { type = NavType.IntType }),
+        ) {
+            val folderId = it.arguments!!.getInt("folderId")
+            Box(Modifier.fillMaxSize().background(Hawk.colors.bg).systemBarsPadding()) {
+                LibraryScenePlayerScreen(
+                    folderId = folderId, sceneId = it.arguments!!.getInt("sceneId"), onBack = { nav.popBackStack() },
+                    onOpenScene = { scene ->   // 이전·다음 장면: 뒤로 가면 폴더로 (장면끼리 쌓지 않음)
+                        nav.navigate("library/$folderId/$scene") { popUpTo("library/{folderId}/{sceneId}") { inclusive = true } }
+                    },
+                )
+            }
         }
         composable("case/{id}", arguments = listOf(navArgument("id") { type = NavType.IntType })) {
             CaseDetailScreen(
@@ -143,7 +165,8 @@ fun AppNav(openCase: MutableStateFlow<Int?>, openLive: MutableStateFlow<String?>
 }
 
 @Composable
-private fun MainTabs(tab: Int, onTab: (Int) -> Unit, liveCamera: String, liveRequest: Int, onOpenCase: (Int) -> Unit, onLive: (String) -> Unit) {
+private fun MainTabs(tab: Int, onTab: (Int) -> Unit, liveCamera: String, liveRequest: Int, onOpenCase: (Int) -> Unit, onLive: (String) -> Unit,
+                     onOpenFolder: (Int) -> Unit) {
     val repo = AppGraph.alerts
     val cases by remember { repo.cases(CaseFilter.ALL) }.collectAsState(initial = emptyList())
     val sync by repo.sync.collectAsState()
@@ -158,7 +181,7 @@ private fun MainTabs(tab: Int, onTab: (Int) -> Unit, liveCamera: String, liveReq
             when (tab) {
                 TAB_ALERTS -> CaseListScreen(onOpen = onOpenCase, onLive = { onLive("") })
                 TAB_LIVE -> LiveScreen(cameraId = liveCamera, request = liveRequest, onOpenCase = onOpenCase)
-                TAB_RECORDINGS -> RecordingsScreen(cameraId = "", startIso = null, onBack = null, onOpenCase = onOpenCase)
+                TAB_RECORDINGS -> PastVideosTab(onOpenCase = onOpenCase, onOpenFolder = onOpenFolder)
                 else -> SettingsScreen(onBack = null)
             }
         }

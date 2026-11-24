@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -316,6 +317,7 @@ fun HawkButton(
     icon: ImageVector? = null,
     enabled: Boolean = true,
     height: Dp = 52.dp,
+    iconEnd: Boolean = false,
 ) {
     val c = Hawk.colors
     val (bg, fg) = when (kind) {
@@ -330,11 +332,15 @@ fun HawkButton(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (icon != null) {
+        if (icon != null && !iconEnd) {
             Icon(icon, null, tint = fg, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(6.dp))
         }
         Text(text, style = HawkType.button, color = fg, maxLines = 1)
+        if (icon != null && iconEnd) {
+            Spacer(Modifier.width(6.dp))
+            Icon(icon, null, tint = fg, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
@@ -407,6 +413,22 @@ fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Bool
                 uncheckedThumbColor = Color.White, uncheckedTrackColor = c.fill2, uncheckedBorderColor = c.fill2,
             ),
         )
+    }
+}
+
+/** 제목 아래 가벼운 글자 탭 (지난 영상: 녹화 | 보관함). 고른 탭만 진한 글자 + 밑줄. */
+@Composable
+fun TextTabs(options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+    val c = Hawk.colors
+    Row(modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        options.forEachIndexed { i, label ->
+            val on = i == selected
+            Column(Modifier.width(IntrinsicSize.Max).clickable { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(label, style = if (on) HawkType.listTitle else HawkType.body.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+                    color = if (on) c.text else c.faint, modifier = Modifier.padding(vertical = 4.dp))
+                Box(Modifier.fillMaxWidth().height(2.dp).clip(RoundedCornerShape(1.dp)).background(if (on) c.text else Color.Transparent))
+            }
+        }
     }
 }
 

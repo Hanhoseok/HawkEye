@@ -183,3 +183,34 @@
             "status": "recorded", "retry_after": 0, "covered_sec": 24.9, "partial": true, "has_recording": true,
             "video_start": "2026-11-24T00:19:11.138344Z"}]}
 ```
+
+## 11. 보관함 — 촬영 영상 폴더 (2026-11-24)
+
+라이브가 안 될 때를 대비해 미리 찍은 촬영 영상(1~4차)을 서버에 두고 앱 '지난 영상 > 보관함'에서 본다. 녹화(§10)와 별개.
+
+| 항목 | 결정 |
+|---|---|
+| 켜기 | `HAWKEYE_LIBRARY` (기본 `data/library`, 렌탈 `run-alert.sh` 는 `$HAWKEYE_DATA/library`). 안에 `library.db` · `files/<uuid>.mp4` · `thumbs/<장면 id>.jpg`. 꺼져 있으면 `503 library_unavailable` |
+| 구조 | 폴더(한 단계) → 장면 → 카메라 영상(cam1 전체 · cam2 선반). 파일은 넣은 뒤 옮기지 않고 폴더·이름·소속은 DB 만 바꾼다 |
+| 이름 | 앞뒤 공백 빼고 1~40자, 줄바꿈 없음 (`422 invalid_name`). 폴더 이름은 대소문자 무시하고 겹치지 않음 (`409 duplicate_name`). 장면 이름은 겹쳐도 됨 — 가져온 회차(`origin`)를 함께 보여 준다 |
+| 정렬 | 폴더 · 장면 모두 자연 정렬 (C2 < C10) |
+| 옮기기 · 지우기 | 한 트랜잭션. 없는 장면·폴더가 하나라도 있으면 `404` + `missing` 이고 아무것도 바꾸지 않음. 장면을 지우면 영상·썸네일 파일도 지움 (되돌릴 수 없음 — 앱이 확인을 받는다). 장면이 있는 폴더는 `?with_scenes=true` 일 때만 지움 (`409 not_empty` + `scene_count`) |
+| 카메라 시차 | 영상마다 `offset_ms` — 공통 시각 = 재생 위치 + offset_ms (전체 카메라 0). 가져올 때 `--sync experiments/tracking/labels/<촬영>/sync.csv`. 앱은 카메라를 바꿀 때 `위치 + 이전 offset − 새 offset` 으로 이어 보고, 범위를 벗어나면 처음·끝에서 시작하며 알린다 |
+| 썸네일 | cam1 의 1초 장면 320px. 장면 `media_at`(영상을 넣거나 바꾼 시각)이 바뀌면 앱이 새로 받는다 |
+| 가져오기 | `python -m hawkeye_server.library import --folder "2차 촬영" --camera cam1=<angle1 폴더> --camera cam2=<angle0 폴더> --sync <sync.csv>`. 파일 이름으로 장면을 짝짓는다 (`20261028_C1` = `C01`). H.264 · yuv420p · 폭 1280 · 30fps 이하면 다시 인코딩 없이 담고, 아니면 720p H.264 Main (nvenc → libx264). 소리는 뺀다. 다시 실행해도 겹치지 않고(있는 영상은 건너뜀) 시차만 갱신. `prepare` 는 DB 없이 변환만, `gc` 는 DB 에 없는 오래된 파일 정리 |
+| 동시 실행 | 가져오기 · gc 는 `.maintenance.lock`(flock)으로 하나씩만. gc 는 `.part.` 임시 파일과 10분 안에 바뀐 파일을 남긴다 |
+| 정리 | `deploy/cleanup.sh` 가 보관함 폴더도 지운다 (사람 얼굴이 찍힌 영상) |
+| AI 탐지 화면 | 원본 영상마다 AI 화면 영상 하나 (`ai_videos`, 같은 시간축 — 길이가 1초 넘게 다르면 거부). PC 에서 `tools/ai_render.py` 가 저장된 추적 기록(2차 `dual_eval_pose3` · 3차 `dual_eval_shoot3_prod` · 4차 `dual_eval_shoot4`)으로 사람 상자 · '손님 N' 을 그리고(합침 · 번호 맞바뀜 되돌림 · 두 카메라 짝을 추적 도구 보기와 같은 규칙으로 반영, 판정 결과는 그리지 않음), `import --ai` 로 붙인다. 원본을 바꾸거나 지우면 AI 영상도 지운다. 1차는 기록이 없어 없음 |
+| AI 판정 | 영상 위에 그리지 않고 재생 화면 아래 시간표로 (시각 · 단계 · 손님 · 이유 · 가져감/결제/미결제, 누르면 3초 전부터). 원천은 추적 도구가 지금 설정으로 다시 낸 판정 (`experiments/tracking/workbench/data.py --shoot N` → `tools/export_verdicts.py` → `import --verdicts`). 장면 응답의 `verdicts`(ms = 전체 카메라 시각) · `verdict_source`. 장면을 지우면 함께 지움 |
+
+| 메서드 | 경로 | 내용 |
+|---|---|---|
+| GET | `/api/library` | `{folders:[{id,name,scene_count,total_sec}]}` |
+| POST | `/api/library/folders` | `{name}` → 201 폴더 |
+| GET · PATCH · DELETE | `/api/library/folders/{id}` | 폴더 안(`{folder, scenes:[{id,folder_id,name,origin,duration,media_at,videos:[{id,camera_id,duration,width,height,offset_ms}],has_thumb}]}`) · 이름 바꾸기 · 지우기(`?with_scenes=true`) |
+| PATCH | `/api/library/scenes/{id}` | `{name}` |
+| POST | `/api/library/scenes/move` | `{scene_ids, folder_id}` → `{moved}` |
+| POST | `/api/library/scenes/delete` | `{scene_ids}` → `{deleted}` (1~500개) |
+| GET | `/api/library/videos/{id}.mp4` | 영상 (Range → 206) |
+| GET | `/api/library/videos/{id}/ai.mp4` | 그 영상의 AI 화면 (Range). 장면 응답의 영상마다 `has_ai` |
+| GET | `/api/library/scenes/{id}/thumb.jpg` | 썸네일 |
