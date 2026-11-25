@@ -47,9 +47,9 @@ python -m hawkeye_server --host 0.0.0.0 --port 8000
 
 `server/data/`(DB·장면 사진)는 사람이 찍힌 사진이 있어 커밋되지 않는다.
 
-## 경보 전송 클라이언트 · 시뮬레이터
+## 경보 전송 클라이언트 · AI 화면 송출 · 시뮬레이터
 
-`client/hawkeye_client` — 어떤 탐지 방식이든 경보 서버로 경보를 보낼 수 있는 작은 모듈 (표준 라이브러리만 사용).
+`client/hawkeye_client` — 어떤 탐지 방식이든 경보 서버로 경보를 보내고, 그린 화면을 관리자 앱 AI 화면으로 송출할 수 있는 작은 모듈 (표준 라이브러리만 사용).
 팀 방식이 정해지면 `final/` 에서 아래처럼 붙인다.
 
 ```python
@@ -60,6 +60,21 @@ alerts.publish(build_event(person_id=3, level="HIGH_RISK", taken=2, paid=1,
                            items=[{"name": "과자", "taken": 1, "paid": 0}]), jpeg=jpeg_bytes)
 alerts.close()   # 끝날 때 남은 경보를 모두 보낸다
 ```
+
+AI 화면(앱 라이브의 'AI 탐지 화면 보기')은 파이프라인이 그린 이미지를 넘기기만 하면 된다. `push` 는 바로 돌아오고, 밀리면 최신 장면만 남긴다.
+
+```python
+from hawkeye_client import FrameStreamer
+
+ai = FrameStreamer()             # 서버 안에서: rtsp://<Tailscale IP>:8554/<카메라>_ai 로 계정 없이 송출 (HAWKEYE_AI_RTSP 로 바꿈)
+ai.push("cam1", annotated_bgr)   # numpy BGR (높이, 폭, 3) uint8 — 처리한 장면마다
+ai.close()
+```
+
+- 송출은 초당 10장 고정(새 장면이 없으면 직전 장면 반복), 폭 1280 이하로 줄임, H.264 Main · yuv420p · B-프레임 없음 · 1초 키프레임.
+- 인코더는 처음에 `h264_nvenc` 를 시험해 보고 안 되면 `libx264` (`HAWKEYE_AI_ENCODER=libx264` 로 고정).
+- 새 장면이 10초 없으면 송출을 멈춘다 (앱은 "AI 화면을 받을 수 없음"). ffmpeg 가 죽으면 1초부터 최대 30초 간격으로 다시 띄운다.
+- 파이프라인 없이 확인: `python -m hawkeye_client.stream_demo [--camera cam1 --camera cam2] [--seconds 60]` — 시계·움직이는 상자를 그려 보낸다. 화면 아래 시계로 AI 화면 지연을 잴 수 있다.
 
 파이프라인 없이 앱을 시험·시연할 때는 시뮬레이터를 쓴다.
 
@@ -74,6 +89,8 @@ python -m pytest -q    # 테스트 (서버 venv 로 실행: fastapi 가 필요)
 
 `relay/README.md` — 카메라(또는 녹화 영상) → `rtsp://<PC>:9554/cam1` 로 파이프라인·앱에 나눠 준다.
 
+렌탈 GPU 서버(촬영 폰 SRT 송출 · 녹화 · 재생 · Tailscale)는 `relay/README.md` 의 '렌탈 서버 (Linux)' 절과 `deploy/start.sh`.
+
 ## 관리자 앱 (안드로이드)
 
 ```bash
@@ -86,6 +103,13 @@ adb install -r admin/build/outputs/apk/debug/admin-debug.apk
 
 - 앱 설정 화면에서 경보 서버 주소를 넣는다. 에뮬레이터는 `http://10.0.2.2:8000`, 실제 폰은 노트북 IP (같은 와이파이).
 - 라이브 화면 주소는 서버의 `HAWKEYE_STREAMS` 에서 받는다.
+- 렌탈 서버에 붙일 때: 폰에 Tailscale 을 켜고 서버 주소 `http://<서버 Tailscale IP>:8000`, API 키는 서버 `deploy/.env` 의 `HAWKEYE_API_KEY`.
+- 화면 (서버가 녹화를 지원할 때 — `docs/design.md` §10):
+  - 경보 목록 위: 카메라 송출 중 표시(2시간 넘으면 주황 — 켜 둔 채 잊음), 서버 디스크 부족 경고
+  - 라이브: 카메라 전환(cam1 전체 · cam2 선반), **AI 탐지 화면** 체크박스(사람 상자·번호, 선택 기억), 끊기면 자동 재접속. 주소(보기 계정 포함)는 화면에 표시하지 않는다
+  - 사건 상세 '관련 영상': 경보 전 20초 ~ 후 10초 카메라별 클립 (녹화 중이면 기다렸다 재생), '경보 1분 전부터 지난 영상 보기'
+  - 지난 영상: 날짜 · 시각을 골라 1분씩 재생, 앞뒤 1분 이동, 보고 있는 장면의 실제 시각 표시
+  - 지난 영상 > 보관함: 미리 찍은 촬영 영상을 회차 폴더 → 장면으로 보고, 전체 · 선반 카메라를 같은 순간으로 바꿔 봄. 길게 눌러 여러 장면을 다른 폴더로 옮기거나 지우고, 폴더를 만들고 이름을 바꾼다. 'AI 탐지 화면' 을 켜면 저장된 추적 기록으로 그린 사람 상자 · 번호 영상으로 바꿔 봄. 아래 'AI 판정' 시간표(언제 · 어떤 판정 · 누구)를 누르면 그 순간 3초 전부터 (`docs/design.md` §11)
 - 개발 PC 확인 환경: JDK 21, Android SDK 34, AGP 8.5.2, Kotlin 2.0.20
 
 ## PC 웹 대시보드

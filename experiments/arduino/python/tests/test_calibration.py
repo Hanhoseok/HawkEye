@@ -141,8 +141,8 @@ class Rename(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             after = next(l for l in tomllib.loads(text)["lanes"] if l["lane_id"] == 1)
             self.assertEqual(after["product_name"], "하이트 제로")
-            for k in ("count_distance_mm", "count_tolerance_mm", "empty_distance_mm", "thickness_mm"):
-                self.assertEqual(after[k], before[k])
+            for k in ("count_distance_mm", "count_tolerance_mm", "empty_distance_mm", "thickness_mm", "block_mm"):
+                self.assertEqual(after.get(k), before.get(k))   # 보정 전 레인엔 거리표가 없을 수 있다
             self.assertEqual(text.count("#"), before_text.count("#"))      # 보정 설명 주석 유지
         finally:
             shutil.rmtree(tmp)

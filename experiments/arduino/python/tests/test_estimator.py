@@ -304,3 +304,44 @@ class FixedBlock(unittest.TestCase):
         f.hold(410, 3000)
         f.hold(430, 3000)                       # 다 뺌
         self.assertEqual([(e.event, e.current_count) for e in f.take()], [("REMOVE", 1), ("REMOVE", 0)])
+
+
+class ChangeStartTime(unittest.TestCase):
+    """ADD/REMOVE 에 '변화 시작 시각'(유지 구간을 처음 벗어난 샘플)이 붙는다."""
+
+    def test_remove_reports_first_departed_sample(self):
+        est, f = started(3)
+        f.take()
+        t_leave = f.t                          # 이 샘플부터 2개 위치
+        f.hold(R[2], 3000)
+        ev = f.take()[0]
+        self.assertEqual(ev.event, "REMOVE")
+        self.assertEqual(ev.detail["change_start_uptime_ms"], t_leave)
+        self.assertEqual(ev.detail["confirm_delay_ms"], ev.meta["uptime_ms"] - t_leave)
+        self.assertGreaterEqual(ev.detail["confirm_delay_ms"], 1200)     # 확정은 안정 시간 뒤
+
+    def test_spike_before_change_does_not_move_start(self):
+        est, f = started(3)
+        f.take()
+        f.values([R[3] - 40])                  # 순간 튐 1번
+        f.hold(R[3], 1000, noise=0)            # 원래 자리로 복귀 → 이탈 취소
+        t_leave = f.t
+        f.spring(R[3], R[2], 3000)             # 스프링 반동하며 2개 위치로
+        ev = f.take()[0]
+        self.assertEqual(ev.event, "REMOVE")
+        self.assertEqual(ev.detail["change_start_uptime_ms"], t_leave)
+
+    def test_hold_then_release_keeps_start_of_motion(self):
+        # 손으로 밀판을 잡고 1초 머문 뒤 놓아도, 시작 시각은 처음 움직인 샘플
+        est, f = started(3)
+        f.take()
+        t_leave = f.t
+        f.hold(R[3] + 30, 1000, noise=0)
+        f.hold(R[1], 3000)
+        ev = f.take()[0]
+        self.assertEqual((ev.event, ev.quantity), ("REMOVE", 2))
+        self.assertEqual(ev.detail["change_start_uptime_ms"], t_leave)
+
+    def test_init_and_resync_have_no_start(self):
+        est, f = started(3)
+        self.assertNotIn("change_start_uptime_ms", f.take()[0].detail)

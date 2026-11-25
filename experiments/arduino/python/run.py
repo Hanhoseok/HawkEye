@@ -34,6 +34,8 @@ def main() -> int:
     ap.add_argument("--mock", action="store_true", help="하드웨어 없이 모의 장치 데이터 사용")
     ap.add_argument("--enable-all", action="store_true", help="설정 파일의 5개 레인을 모두 활성화 (모의 시연용)")
     ap.add_argument("--seed", type=int, default=None, help="모의 장치 난수 시드")
+    ap.add_argument("--relay", metavar="HOST:PORT", help="서버로 실시간 중계 (config.toml [relay] target 보다 우선)")
+    ap.add_argument("--no-relay", action="store_true", help="config.toml 에 중계 대상이 있어도 끔")
     args = ap.parse_args()
 
     if args.list_ports:
@@ -57,7 +59,19 @@ def main() -> int:
 
     jsonl = JsonlSink(cfg.resolve(cfg.event_log), cfg.resolve(cfg.status_log) if cfg.status_log else None)
     console = ConsoleSink(show_status=True)
-    monitor = Monitor(cfg, [console, jsonl])
+    sinks = [console, jsonl]
+    relay = None
+    target = "" if args.no_relay else (args.relay or cfg.relay_target)
+    if target:
+        from shelf_monitor.relay import RelaySender
+        try:
+            relay = RelaySender(target)
+        except ValueError as e:
+            print(f"[설정 오류] --relay: {e}", file=sys.stderr)
+            return 2
+        sinks.append(relay)
+        print(f"서버 중계: {relay.target_text} (UDP, Tailscale 경로일 때만 전송)")
+    monitor = Monitor(cfg, sinks)
 
     q: queue.Queue = queue.Queue()
     stop = threading.Event()
@@ -81,6 +95,8 @@ def main() -> int:
                 except queue.Empty:
                     break
                 if kind == "LINE":
+                    if relay is not None:
+                        relay.send_raw(payload, wall)
                     monitor.handle_line(payload, mono, wall)
                 elif kind == "UP":
                     monitor.handle_link_up(payload, mono, wall)
@@ -116,6 +132,9 @@ def main() -> int:
     finally:
         stop.set()
         jsonl.close()
+        if relay is not None:
+            print(f"서버 중계 종료: 보냄 {relay.sent} · 실패 {relay.failed}")
+            relay.close()
     return 0
 
 

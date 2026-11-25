@@ -161,7 +161,8 @@ def test_stats_count_states_and_resolutions(client):
 
 def test_config_returns_stream_urls(make_client):
     c = make_client(streams=[{"camera_id": "cam1", "url": "rtsp://10.0.0.2:8554/cam1"}])
-    assert c.get("/api/config").json() == {"streams": [{"camera_id": "cam1", "url": "rtsp://10.0.0.2:8554/cam1"}]}
+    assert c.get("/api/config").json() == {"streams": [{"camera_id": "cam1", "url": "rtsp://10.0.0.2:8554/cam1"}],
+                                           "recordings": False}   # 재생 API 주소가 없으면 녹화 기능 꺼짐
 
 
 def test_api_key_is_required_when_configured(make_client):

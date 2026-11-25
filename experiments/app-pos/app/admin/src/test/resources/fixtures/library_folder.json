@@ -1,0 +1,83 @@
+{
+ "folder": {
+  "id": 1,
+  "name": "2차 촬영",
+  "scene_count": 3,
+  "total_sec": 72.6
+ },
+ "scenes": [
+  {
+   "id": 1,
+   "folder_id": 1,
+   "name": "C01",
+   "origin": "2차 촬영",
+   "duration": 26.1,
+   "media_at": "2026-11-24T07:28:01.674799+00:00",
+   "videos": [
+    {
+     "id": 1,
+     "camera_id": "cam1",
+     "duration": 26.07,
+     "width": 1280,
+     "height": 720,
+     "offset_ms": 0.0
+    },
+    {
+     "id": 2,
+     "camera_id": "cam2",
+     "duration": 26.1,
+     "width": 1280,
+     "height": 720,
+     "offset_ms": 1.5
+    }
+   ],
+   "has_thumb": true
+  },
+  {
+   "id": 2,
+   "folder_id": 1,
+   "name": "C20",
+   "origin": "2차 촬영",
+   "duration": 27.0,
+   "media_at": "2026-11-24T07:28:01.820587+00:00",
+   "videos": [
+    {
+     "id": 3,
+     "camera_id": "cam1",
+     "duration": 24.0,
+     "width": 1280,
+     "height": 720,
+     "offset_ms": 0.0
+    },
+    {
+     "id": 4,
+     "camera_id": "cam2",
+     "duration": 27.0,
+     "width": 1280,
+     "height": 720,
+     "offset_ms": -2863.9
+    }
+   ],
+   "has_thumb": false
+  },
+  {
+   "id": 3,
+   "folder_id": 1,
+   "name": "N08-1",
+   "origin": "2차 촬영",
+   "duration": 19.5,
+   "media_at": "2026-11-24T07:28:01.846200+00:00",
+   "videos": [
+    {
+     "id": 5,
+     "camera_id": "cam1",
+     "duration": 19.5,
+     "width": 1280,
+     "height": 720,
+     "offset_ms": 0.0
+    }
+   ],
+   "has_thumb": false
+  }
+ ]
+}

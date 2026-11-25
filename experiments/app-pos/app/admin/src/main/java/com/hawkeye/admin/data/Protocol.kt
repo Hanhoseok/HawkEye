@@ -41,4 +41,33 @@ object Protocol {
     }
 
     fun parseConfig(text: String): AppConfig = json.decodeFromString(AppConfig.serializer(), text)
+
+    fun parseHealth(text: String): Health = json.decodeFromString(Health.serializer(), text)
+
+    fun parseCaseClips(text: String): CaseClips = json.decodeFromString(CaseClips.serializer(), text)
+
+    fun parseRecordings(text: String): RecordingList = json.decodeFromString(RecordingList.serializer(), text)
+
+    fun parseLibrary(text: String): List<LibraryFolder> = json.decodeFromString(LibraryFolders.serializer(), text).folders
+
+    fun parseFolder(text: String): LibraryFolder = json.decodeFromString(LibraryFolder.serializer(), text)
+
+    fun parseFolderDetail(text: String): FolderDetail = json.decodeFromString(FolderDetail.serializer(), text)
+
+    fun parseScene(text: String): LibraryScene = json.decodeFromString(LibraryScene.serializer(), text)
+
+    /** {"key": 3} 같은 응답의 정수 하나. */
+    fun parseCount(text: String, key: String): Int =
+        json.parseToJsonElement(text).jsonObject[key]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
+
+    /** 오류 응답 detail 의 앞 코드 ("duplicate_name: 같은 이름…" → duplicate_name). 없으면 null. */
+    fun parseErrorReason(text: String): String? = runCatching {
+        val detail = json.parseToJsonElement(text).jsonObject["detail"]?.jsonPrimitive?.contentOrNull ?: return null
+        Regex("^([a-z_]+):").find(detail)?.groupValues?.get(1)
+    }.getOrNull()
+
+    /** 202 응답 본문의 retry_after (헤더가 없을 때 대신). */
+    fun parseRetryAfter(text: String): Int? = runCatching {
+        json.parseToJsonElement(text).jsonObject["retry_after"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+    }.getOrNull()
 }
