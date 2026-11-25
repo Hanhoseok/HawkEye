@@ -126,6 +126,8 @@ class HeldItem:
     """든 것으로 확정한 장면 — 이때부터 개수에 들어간다."""
     seen_ms: float
     """손에서 처음 본 시각. 선반 방문의 시간과 견주는 데 쓴다."""
+    item: int | None = None
+    """물건 번호 (fusion.item_tracks — 물건 단위로 센 것). 없으면 '사람 · 종류마다 1개'로 센 것이다."""
 
     def covers(self, take: TakeCandidate) -> bool:
         return take.start_frame <= self.end_frame and take.end_frame >= self.start_frame
@@ -638,12 +640,34 @@ class CustomerBook:
         cb.held = [h for h in cb.held if h.seen_ms < since_ms] + [replace(h, person_id=cb.person_id) for h in from_a]
         for c in (ca, cb):
             # 한 손님의 '든 것'은 종류마다 하나다 (HolderTracker.fresh) — 옮겨 받아 같은 종류가 둘이 되면 먼저 본 것만 남긴다
+            # 물건 단위로 센 것(item 이 있는 것)은 물건마다 따로다 — 같은 종류 둘도 그대로 둔다
             first: dict[str, HeldItem] = {}
             for h in sorted(c.held, key=lambda h: h.seen_ms):
-                first.setdefault(h.name, h)
-            c.held = [h for h in c.held if first[h.name] is h]
+                if h.item is None:
+                    first.setdefault(h.name, h)
+            c.held = [h for h in c.held if h.item is not None or first[h.name] is h]
         self.rebalance()
         return len(from_a) + len(from_b)
+
+    def rename_held(self, item: int, name: str) -> bool:
+        """물건 단위로 센 '든 것'의 종류를 고친다 — 그 물건이 다른 종류로 더 많이 읽혔다 (fusion.item_tracks). 개수는 그대로다."""
+        for c in self.customers.values():
+            for k, h in enumerate(c.held):
+                if h.item == item:
+                    c.held[k] = replace(h, name=name)
+                    self.rebalance()
+                    return True
+        return False
+
+    def remove_held(self, item: int) -> bool:
+        """물건 단위로 센 '든 것'을 지운다 — 그 물건을 선반에 도로 놓았다 (fusion.item_tracks)."""
+        for c in self.customers.values():
+            keep = [h for h in c.held if h.item != item]
+            if len(keep) != len(c.held):
+                c.held = keep
+                self.rebalance()
+                return True
+        return False
 
     def drop_held(self, start_ms: float, until_ms: float) -> list[HeldItem]:
         """[start_ms, until_ms] 에 손에서 처음 본 '든 것'을 모든 손님에게서 지운다 — 그 시간을 덮는 선반 방문이 대신한다."""

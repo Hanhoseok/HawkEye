@@ -374,7 +374,8 @@ def pair_data(key: str, run_dir: str, opts: dict, pair: str, base, table, band, 
               for t in log.takes["angle0"]]
     # 전체 카메라가 손에 든 상품을 본 기록 (fusion.overview_instant): 확정한 때부터, 그 시간을 덮는 선반 방문이 끝날 때까지 먼저 센 것
     held = [{"pid": h["pid"], "name": h["name"], "seen": round(h["seen_ms"]), "ms": round(h["ms"]), "counted": h["counted"],
-             "why": h["why"], "until": None if h["until_ms"] is None else round(h["until_ms"])} for h in result.get("held", [])]
+             "why": h["why"], "until": None if h["until_ms"] is None else round(h["until_ms"]),
+             "end": h.get("end", "")} for h in result.get("held", [])]
     visits = [{"pid": v["person_id"], "start": round(v["start_ms"] + offset), "end": round(v["end_ms"] + offset),
                "removed": v["removed"], "added": v["added"], "detail": v.get("detail", ""),
                "slot_change": v.get("slot_change")} for v in log.visits]

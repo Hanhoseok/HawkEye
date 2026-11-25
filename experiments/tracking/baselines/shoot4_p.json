@@ -164,9 +164,9 @@
   "pair": "C19",
   "verdicts": [
    "CLEAR",
-   "HIGH_RISK"
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false
@@ -288,10 +288,10 @@
  {
   "pair": "N09",
   "verdicts": [
-   "REVIEW",
-   "HIGH_RISK"
+   "CLEAR",
+   "CLEAR"
   ],
-  "correct": false,
+  "correct": true,
   "people": 2,
   "people_ok": true,
   "no_verdict": false

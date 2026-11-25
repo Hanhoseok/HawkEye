@@ -32,6 +32,7 @@ from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
 from .confusion import ConfusionWatch
+from .item_tracks import ItemTracker
 from .overview_count import HOLD_WITHIN_MS, HolderTracker, OverviewCounter
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
 
@@ -74,6 +75,9 @@ class DualJudge:
         self.holders = (HolderTracker(min_frames=config.overview_owner_frames, score=config.overview_count_score)
                         if config.overview_owner and self.counter is not None else None)
         """전체 카메라에서 상품을 든 사람 (fusion.overview_owner). 주인을 못 정한 방문의 주인을 여기서 묻는다."""
+        self.items = (ItemTracker(min_frames=config.overview_owner_frames, score=config.overview_count_score)
+                      if config.item_tracks and config.overview_instant and self.holders is not None else None)
+        """전체 카메라의 상품 상자를 물건 단위로 따라간 것 (fusion.item_tracks). 손에 든 것을 바로 셀 때 이것으로 센다."""
         self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors, self.counter,
                                      self.holders)
         self.visit_delay_ms = self.VISIT_DELAY_MS
@@ -86,6 +90,10 @@ class DualJudge:
             self.holders.resolve = risk.book.resolve   # 든 뒤에 합쳐진 신원은 한 사람으로
         if self.holders is not None and config.swap_since_confusion:
             self.holders.confused = lambda pid, ms: bool(self.watch["overview"].touching(pid, ms, ms))
+        if self.items is not None:
+            self.items.confused = self.holders.confused
+            if getattr(risk, "book", None) is not None:
+                self.items.resolve = risk.book.resolve
         self.handover_on = bool(config.handover and self.holders is not None and getattr(risk, "book", None) is not None)
         if self.handover_on:
             risk.before_judge = self._hand_overs   # 이번 장면의 방문 · 결제를 장부에 넣은 뒤, 판정하기 전에
@@ -110,6 +118,8 @@ class DualJudge:
             self.counter.reset()
         if self.holders is not None:
             self.holders.reset()
+        if self.items is not None:
+            self.items.reset()
         self.risk.reset()
         if self.reach is not None:
             self.reach.reset()
@@ -323,6 +333,8 @@ class DualJudge:
         if self.holders is None:
             return 0
         self.holders.swap(a, b, since_ms)
+        if self.items is not None:
+            self.items.swap(a, b, since_ms)
         flip = {a: b, b: a}
         moved = 0
         for row in self.held:
@@ -333,6 +345,8 @@ class DualJudge:
         seen: set[tuple[int, str]] = set()
         for row in sorted(self.held, key=lambda r: r["seen_ms"]):
             key = (row["pid"], row["name"])
+            if row.get("item") is not None:
+                continue   # 물건 단위로 센 것은 물건마다 따로다 — 같은 종류 둘도 그대로 둔다
             if row["counted"] and row["until_ms"] is None and key in seen:
                 row["counted"], row["why"] = False, "번호를 바꿔 읽어 옮겨 옴 — 이미 센 종류"
             elif row["counted"] and row["until_ms"] is None:
@@ -491,6 +505,8 @@ class DualJudge:
                 hands = [(flip.get(pid, pid), bbox, kp) for pid, bbox, kp in hands]
         if self.holders is not None and products is not None:
             self.holders.update(frame.pts_ms, products, hands, self.counter.region)
+            if self.items is not None:
+                self.items.update(frame.pts_ms, products, hands, self.counter.region)
             if self.config.overview_instant:
                 self._count_held(frame)
         self.linker.update(frame.pts_ms)
@@ -647,6 +663,9 @@ class DualJudge:
             return
         near = self.config.overview_instant_near_seconds * 1000.0
         axis = self.fuser.overview_axis
+        if self.items is not None:
+            self._count_items(frame, book, axis.to_frame, near)
+            return
         for pid, name, seen_ms, ms in self.holders.fresh():
             at_shelf = pid in {book.resolve(p) for p in self.fuser.present(seen_ms - near, ms)}
             self.held.append({"pid": pid, "name": name, "seen_ms": seen_ms, "ms": ms, "counted": at_shelf,
@@ -655,6 +674,30 @@ class DualJudge:
                 book.add_held(HeldItem(pid, name, axis.to_frame(seen_ms - near), frame.index, seen_ms), frame.pts_ms)
             elif self.config.hold_per_run:
                 self.holders.drop(pid, name)   # 선반에서 시작한 든 구간이 아니다 — 버린다. 끊겼다 다시 들면 또 따진다
+
+    def _count_items(self, frame: Frame, book, to_frame, near: float) -> None:
+        """물건 단위로 센다 (fusion.item_tracks): 선반에서 나와 손에 들린 물건은 +1, 선반에 도로 놓은 물건은 −1.
+        선반 밖에서 처음 나타난 상자는 '안 셈'으로만 적는다. 종류가 바뀌어 읽히면 종류만 고친다 (개수는 그대로)."""
+        rows = {row["item"]: row for row in self.held if row.get("item") is not None}
+        for e in self.items.fresh():
+            row = rows.get(e.item)
+            if e.kind == "pick":
+                row = {"pid": e.pid, "name": e.name, "seen_ms": e.seen_ms, "ms": e.ms, "counted": True, "why": "",
+                       "until_ms": None, "item": e.item}
+                self.held.append(row)
+                rows[e.item] = row
+                book.add_held(HeldItem(e.pid, e.name, to_frame(e.seen_ms - near), frame.index, e.seen_ms, e.item), frame.pts_ms)
+            elif e.kind == "reject":
+                self.held.append({"pid": e.pid, "name": e.name, "seen_ms": e.seen_ms, "ms": e.ms, "counted": False,
+                                  "why": e.why, "until_ms": None})
+            elif row is None or row["until_ms"] is not None:
+                continue   # 이미 선반 방문의 개수로 바뀐 물건이다
+            elif e.kind == "kind":
+                if book.rename_held(e.item, e.name):
+                    row["name"] = e.name
+            elif e.kind == "back":
+                if book.remove_held(e.item):
+                    row["until_ms"], row["end"] = e.ms, "놓음"
 
     def _settle_held(self) -> None:
         """방금 넘긴 선반 방문이 덮는 '든 것'을 지운다 — 그 방문의 개수 · 주인이 대신한다 (방문을 장부에 넣기 바로 전에 부른다)."""

@@ -34,7 +34,7 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card, sensor_log  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 19
+VERSION = 20
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -54,7 +54,9 @@ VERSION = 19
     그 순간에 되돌린다. 보기 데이터에 asks(물은 것)가 생기고 swaps 에 how("ask" · "pair")가 붙는다.
 19: 손님끼리 건넨 것을 장부에 넣는다 (fusion.handover, 후속 70) — 물건은 든 손님의 것, 건넨 손님은 확인 필요. 4차 T09 · N09 ·
     C12 ~ C15, 3차 C01 · C05 · N09 · T09 의 손님별 개수 · 판정이 달라진다. 보기 데이터에 handovers · hand_checks 가 생긴다.
-    handovers 의 direct = 건넨 것이 아니라 든 손님이 직접 집은 것 (집은 사람을 바로잡음 — 4차 C12 등)."""
+    handovers 의 direct = 건넨 것이 아니라 든 손님이 직접 집은 것 (집은 사람을 바로잡음 — 4차 C12 등).
+20: 손에 든 것을 물건 단위로 센다 (fusion.item_tracks, 후속 73) — 선반에서 나온 상자만 +1, 선반에 도로 놓으면 −1.
+    held 줄이 사람 · 종류마다가 아니라 물건마다 생기고, 도로 놓아 끝난 줄에 end = "놓음" 이 붙는다."""
 RUN_KEY = "current"
 
 
