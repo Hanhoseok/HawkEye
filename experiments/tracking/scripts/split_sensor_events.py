@@ -20,10 +20,13 @@
 입력: 영상 폴더 안의 mp4 와 events_*.txt (shelf_monitor 이벤트 추출본)
 결과: labels/store01_shoot3/sensor/<영상>.csv, labels/store01_shoot3/sensor_index.csv
 
-    time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec
-    7.99,15:08:19,L2,동과루,REMOVE,3,2,-1,276,1,7.99,8.00
+    time_sec,wall_time,lane,product,event,before,after,delta,distance_mm,in_video,raw_sec,angle1_sec,start_sec
+    7.99,15:08:19,L2,동과루,REMOVE,3,2,-1,276,1,7.99,8.00,
 
 time_sec·raw_sec 는 축 영상 시각, angle1_sec 는 보정 전 angle1 시각(추적용).
+start_sec 은 변화가 **시작된** 축 영상 시각 (센서 1.3 이상이 change_start_time 을 줄 때만, 아니면 빈칸).
+time_sec(확정)은 개수가 1.2초 이상 안정된 뒤라 꺼낸 순간보다 1.5~3초 늦다 — 판정은 start_sec 이 있으면 그것으로 맞춘다.
+--events 에 shelf_monitor 의 events.jsonl 이나 서버 중계본 events.jsonl 을 직접 줘도 된다 (밀리초까지 읽는다).
 
 영상별 보정: labels/store01_shoot3/sensor_offsets.csv (label_takes.py --fit-offsets 가 정답으로 계산) 에서
 applied=1 인 영상은 time_sec = raw_sec - shift_sec. raw_sec 는 보정 전 시각 — 보정을 다시 계산할 때 쓴다.
@@ -54,7 +57,9 @@ MARGIN_AFTER = 8.0   # 영상 끝 뒤 여유 — label_takes 의 허용 지연�
 SHIFT_ROOM = 1.2     # 영상별 보정 최대값(label_takes FIT_MAX_SHIFT) — 여유 구간을 이만큼 넓혀 보정해도 사건이 빠지지 않게
 OFFSETS = OUT / "sensor_offsets.csv"
 SENSOR_FIELDS = ["time_sec", "wall_time", "lane", "product", "event", "before", "after", "delta", "distance_mm",
-                 "in_video", "raw_sec", "angle1_sec"]
+                 "in_video", "raw_sec", "angle1_sec", "start_sec"]
+START = re.compile(r"시작 (\d{2}):(\d{2}):(\d{2})\.(\d{3})")
+"""events_*.txt 내용 칸의 변화 시작 시각 (shelf_monitor 1.3 이상, tools/export_events.py) — '… / 시작 21:52:53.673'."""
 KST = dt.timezone(dt.timedelta(hours=9))
 MP4_EPOCH = dt.datetime(1904, 1, 1, tzinfo=dt.timezone.utc)
 
@@ -72,6 +77,8 @@ class SensorLine:
     after: int
     distance_mm: str
     product: str
+    start: dt.time | None = None
+    """변화가 시작된 시각 (밀리초까지). 센서가 줬을 때만 — 없으면 wall(확정 시각)만 쓴다."""
 
 
 @dataclass
@@ -94,8 +101,37 @@ def parse_events(text: str) -> list[SensorLine]:
             continue
         h, mi, s = map(int, m["time"].split(":"))
         parts = [p.strip() for p in m["text"].split("/")]
+        st = START.search(m["text"])
+        start = dt.time(int(st[1]), int(st[2]), int(st[3]), int(st[4]) * 1000) if st else None
         rows.append(SensorLine(dt.time(h, mi, s), f"L{m['lane']}", m["event"], int(m["before"]),
-                               int(m["after"]), m["dist"], parts[1] if len(parts) > 1 else ""))
+                               int(m["after"]), m["dist"], parts[1] if len(parts) > 1 else "", start))
+    return rows
+
+
+def parse_events_jsonl(text: str) -> list[SensorLine]:
+    """shelf_monitor 의 logs/events.jsonl, 또는 서버 중계 수신기(relay_server.py)의 events.jsonl 을 직접 읽는다.
+    확정 시각(pc_time)이 밀리초까지 있고, 1.3 이상이면 변화 시작 시각(change_start_time)도 있다.
+    ADD · REMOVE · RESYNC 만 (txt 추출본과 같다). 중계본은 한 줄이 {"recv", …, "data": 이벤트} 라 data 를 꺼낸다."""
+    import json
+
+    rows = []
+    for raw in text.splitlines():
+        try:
+            r = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(r.get("data"), dict):
+            r = r["data"]
+        if r.get("message_type") != "EVENT" or r.get("event") not in ("ADD", "REMOVE", "RESYNC"):
+            continue
+        if r.get("previous_count") is None or r.get("current_count") is None or not r.get("pc_time"):
+            continue
+        wall = dt.datetime.fromisoformat(r["pc_time"]).astimezone(KST).time()
+        start = (dt.datetime.fromisoformat(r["change_start_time"]).astimezone(KST).time()
+                 if r.get("change_start_time") else None)
+        dist = r.get("distance_mm")
+        rows.append(SensorLine(wall, f"L{r['lane_id']}", r["event"], int(r["previous_count"]), int(r["current_count"]),
+                               "-" if dist is None else f"{float(dist):.0f}", r.get("product_name") or "", start))
     return rows
 
 
@@ -152,10 +188,15 @@ def assign(events: list[SensorLine], video: VideoClock, day: dt.date, clock_offs
         raw = a1 - axis_offset
         if -MARGIN_BEFORE - SHIFT_ROOM <= raw <= length + MARGIN_AFTER + SHIFT_ROOM:
             t = raw - shift
+            start_sec = ""
+            if e.start is not None:      # 시작 시각도 같은 시계 · 시차 · 영상별 보정으로 옮긴다
+                s_wall = dt.datetime.combine(day, e.start, KST)
+                start_sec = f"{(s_wall - start).total_seconds() - axis_offset - shift:.3f}"
             out.append({"time_sec": f"{t:.2f}", "wall_time": e.wall.strftime("%H:%M:%S"), "lane": e.lane,
                         "product": e.product, "event": e.event, "before": e.before, "after": e.after,
                         "delta": e.after - e.before, "distance_mm": e.distance_mm,
-                        "in_video": int(0.0 <= t <= length), "raw_sec": f"{raw:.2f}", "angle1_sec": f"{a1:.2f}"})
+                        "in_video": int(0.0 <= t <= length), "raw_sec": f"{raw:.2f}", "angle1_sec": f"{a1:.2f}",
+                        "start_sec": start_sec})
     return out
 
 
@@ -197,7 +238,11 @@ def main() -> int:
     if events_path is None:
         print("events_*.txt 없음")
         return 1
-    events = parse_events(events_path.read_text(encoding="utf-8-sig"))
+    text = events_path.read_text(encoding="utf-8-sig")
+    events = parse_events_jsonl(text) if events_path.suffix == ".jsonl" else parse_events(text)
+    with_start = sum(e.start is not None for e in events)
+    if with_start:
+        print(f"  변화 시작 시각이 있는 이벤트 {with_start}건 → start_sec 열 (판정은 이 시각으로 맞춘다)")
     print(f"센서 이벤트 {len(events)}건 ({events_path.name})")
 
     videos = [p for p in sorted(args.folder.glob("*.mp4")) if p.stem != "area_setting"]

@@ -129,3 +129,61 @@ def test_watcher_reports_open_visits():
     watcher = ShelfWatcher.__new__(ShelfWatcher)
     watcher.monitors = [({}, Monitor("shelf", 1200.0)), ({}, Monitor("side", None))]
     assert watcher.open_visits() == [(1200.0, "shelf")]
+
+
+# ---------------------------------------------------------------- 변화 시작 시각 (센서 1.3 이상의 change_start_time)
+def started(start_ms, confirm_ms, lane, n):
+    return SensorEvent(confirm_ms, lane, float(n), 1.0, unit="count", start_ms=start_ms)
+
+
+def test_start_time_joins_the_visit_it_happened_in_without_lag():
+    # N11 과 같은 상황을 시작 시각으로: 칸타타는 6.5초에 움직이기 시작해 9.07초에 확정 — 늦음 설정 없이도 방문 1 에 묶인다
+    f = fuser([started(6500.0, 9070.0, "L1", -1), started(10000.0, 11070.0, "L2", -1)])
+    first = f.detail_visit(visit(["cantata"]), 3100.0, 7300.0)
+    second = f.detail_visit(visit(["donggwaru"]), 8300.0, 11900.0)
+    assert (first.removed, second.removed) == (1, 1)
+    assert first.source == second.source == "sensor+vision"
+
+
+def test_start_time_record_is_not_pulled_back_by_the_lag_rule():
+    # 방문 A(3~6초)에서 카메라가 칸타타를 봤지만, 센서 기록은 8.5초에 시작한 다른 꺼냄 — 늦음 규칙(3초)으로 A 에 끌려가면 안 된다
+    f = fuser([started(8500.0, 9500.0, "L1", -1)], sensor_lag_seconds=3.0)
+    a = f.detail_visit(visit(["cantata"]), 3000.0, 6000.0)
+    b = f.detail_visit(visit(["cantata"]), 8000.0, 11000.0)
+    assert (a.source, b.source) == ("vision", "sensor+vision")
+    # 시작 시각이 없는 옛 기록이면 예전처럼 A 가 가져간다
+    f = fuser([count(9500.0, "L1", -1)], sensor_lag_seconds=3.0)
+    assert f.detail_visit(visit(["cantata"]), 3000.0, 6000.0).source == "sensor+vision"
+
+
+def test_sensor_only_owner_is_who_was_there_when_it_started():
+    # 6.4초에 시작, 9초에 확정. 6.5초엔 7번, 8.8초엔 8번이 선반 앞 — 시작 시각으로 보면 7번 한 명
+    f = fuser([started(6400.0, 9000.0, "L2", -1)], sensor_lag_seconds=3.0)
+    f.note_band(6500.0, 7)
+    f.note_band(8800.0, 8)
+    out = f.sensor_only(20000.0)
+    assert len(out) == 1 and out[0].person_id == 7
+    # 확정 시각만 있으면 앞 3초 안에 두 명이 있어 주인을 못 정한다 (예전 동작)
+    f = fuser([count(9000.0, "L2", -1)], sensor_lag_seconds=3.0)
+    f.note_band(6500.0, 7)
+    f.note_band(8800.0, 8)
+    assert f.sensor_only(20000.0)[0].person_id == -1
+
+
+def test_sensor_waits_on_arrival_time_not_start_time():
+    # 시작 6초 · 확정 9초 — 확정 기록이 도착하기 전(now 9.5초)에는 센서만의 방문으로 내보내지 않는다 (3 × 허용 시간 = 3초)
+    f = fuser([started(6000.0, 9000.0, "L1", -1)])
+    assert f.sensor_only(9500.0) == []
+    assert len(f.sensor_only(12500.0)) == 1
+
+
+def test_load_sensor_events_reads_optional_start_sec(tmp_path):
+    from src.fusion.shelf_events import load_sensor_events
+
+    p = tmp_path / "s.csv"
+    p.write_text("time_sec,slot,delta_g,confidence,start_sec\n9.07,L1,-1,1,6.5\n11.0,L2,-1,1,\n", encoding="utf-8")
+    a, b = load_sensor_events(p)
+    assert (a.time_ms, a.start_ms, a.at_ms) == (9070.0, 6500.0, 6500.0)
+    assert (b.start_ms, b.at_ms) == (None, 11000.0)
+    p.write_text("time_sec,slot,delta_g,confidence\n3.0,L1,-1,1\n", encoding="utf-8")   # 옛 형식 그대로
+    assert load_sensor_events(p)[0].start_ms is None

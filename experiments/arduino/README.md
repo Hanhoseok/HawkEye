@@ -217,6 +217,42 @@ Python 은 보드별로 재부팅, 메시지 누락, 수신 지연, 데이터 �
 - 보드 4대를 PC USB 에 한꺼번에 꽂으면 전원이 부족할 수 있다. 일반 USB 충전기나 전원 공급형 USB 허브를 쓴다.
 - `config.toml` 에서 해당 레인의 `enabled = true` 와 상품, 보정값을 맞춘다. 2~4번 레인은 현재 예시값이다.
 
+## 4-3. 서버로 실시간 중계 (Tailscale)
+
+ESP32 는 Tailscale 을 돌릴 수 없으므로 노트북 모니터가 받은 것을 그대로 서버에 넘긴다.
+
+```
+보드 5대 ──(핫스팟 2.4GHz, UDP 브로드캐스트 4210)──▶ 노트북 run.py --wifi
+                                                       │ 확정·화면·logs/ 는 지금과 같음
+                                                       └─(Tailscale, UDP 4220)──▶ 서버 tools/relay_server.py
+```
+
+보내는 것 (데이터그램 1개 = JSON 1개, 모두 1280 바이트 미만):
+- **raw**: 보드 원본 측정 한 줄 (약 300 B, 초당 약 55개). `pc_recv` = 노트북이 그 줄을 받은 시각
+- **event**: 노트북이 확정한 ADD/REMOVE/RESYNC 등 (유실 대비 2번 보냄, 서버가 중복 제거)
+
+이벤트의 시각 필드:
+- `change_start_time`: **변화가 시작된 시각** (ADD/REMOVE 만). 원본 측정이 이전 수량의 유지 구간을 처음 벗어난 샘플의 시각이다. 물건을 집은 순간과의 차이는 측정 주기(약 0.1초) 수준이다. 사람 매칭에는 이 값을 쓴다.
+- `pc_time`: 수량이 **확정된 시각**. 안정 판정(1.2초 이상) 때문에 보통 시작보다 1.5~3초 늦다. 차이는 `confirm_delay_ms`.
+- 두 시각 모두 노트북 시계 기준이다. 카메라 영상과 맞추려면 노트북과 서버의 시계를 NTP 로 맞춰 둔다.
+- **status**: 레인별 현재 상태 (`status_interval_s` 마다)
+- **log**: 보드 LOG
+
+준비:
+1. 노트북에 Tailscale 을 설치하고 **서버(da-perfect57)와 같은 tailnet** 에 로그인한다. `tailscale ping da-perfect57` 이 응답하면 된다.
+2. 서버에 `python/tools/relay_server.py` 한 파일만 복사한다 (표준 라이브러리만 사용).
+3. 서버에서 실행: `python3 relay_server.py --bind 100.118.214.101 --out ~/shelf_relay`
+   - ufw 를 쓰면: `sudo ufw allow in on tailscale0 to any port 4220 proto udp`
+4. 노트북은 평소처럼 `python run.py --wifi`. 중계 대상은 `config.toml` `[relay] target` (끄려면 `--no-relay`, 다른 곳은 `--relay 호스트:포트`).
+
+서버 저장: `~/shelf_relay/<날짜>/raw.jsonl · events.jsonl · status.jsonl · logs.jsonl`, 레인별 최신 값은 `latest.json`.
+서버에서도 같은 추정기를 돌리려면 `--feed-local 4210` 을 주고 서버에서 `python3 run.py --wifi --no-gui`.
+
+안전 장치:
+- Tailscale 주소(100.64.0.0/10)는 통신사 내부망과 같은 대역이라, **노트북에서 Tailscale 이 꺼져 있으면 보내지 않는다** (경로 확인 후 경고만 출력).
+- 서버는 Tailscale 출발지(100.64.0.0/10)에서 온 것만 받는다 (`--allow-any` 로 해제).
+- UDP 라서 서버나 Tailscale 이 끊겨도 노트북 모니터는 멈추지 않는다. 서버는 10초마다 수신 수, 지연, 유실 % 를 출력한다.
+
 ## 5. 설정 수정 위치 (`python/config.toml`)
 
 | 항목 | 위치 | 설명 |

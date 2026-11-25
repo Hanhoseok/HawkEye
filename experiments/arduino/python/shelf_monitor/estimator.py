@@ -93,7 +93,31 @@ class LaneEstimator:
         self.display_mm: Optional[float] = None   # 화면 표시용 마지막 필터값 (구간이 끊겨도 유지, 판단에는 안 씀)
         self.state = INITIALIZING
         self.out_of_range_reported = False
+        self._clear_departure()
         self._reset_segment()
+
+    # 변화 시작 시각: 원본 측정이 확정 수량의 유지 구간(tolerance + hysteresis)을 처음 벗어난 샘플.
+    # 확정은 stable_time_ms 뒤에 나오므로, 실제로 물건을 빼거나 넣은 순간은 이 값이 더 정확하다.
+    DEPART_RETURN_SAMPLES = 3       # 유지 구간으로 연속 n번 돌아오면 이탈 취소 (순간 튐·반동 무시)
+
+    def _clear_departure(self) -> None:
+        self._depart_t: Optional[int] = None
+        self._depart_uptime: Optional[int] = None
+        self._depart_back = 0
+
+    def _track_departure(self, s: Sample, d: float) -> None:
+        if self.confirmed is None or self.restock:
+            return
+        c = self.cfg
+        if abs(d - self.refs[self.confirmed]) > c.tolerance_for(self.confirmed) + c.hysteresis_mm:
+            self._depart_back = 0
+            if self._depart_t is None:
+                self._depart_t = s.t_ms
+                self._depart_uptime = s.meta.get("uptime_ms")
+        elif self._depart_t is not None:
+            self._depart_back += 1
+            if self._depart_back >= self.DEPART_RETURN_SAMPLES:
+                self._clear_departure()
 
     # ------------------------------------------------------------------ 내부
     def _reset_segment(self) -> None:
@@ -212,6 +236,7 @@ class LaneEstimator:
         self.last_valid_pc = s.pc_mono
         self.last_valid_uptime = s.meta.get("uptime_ms")
         self.last_raw = d
+        self._track_departure(s, d)
 
         self._med.append(d)
         if len(self._med) < min(3, c.median_window):
@@ -264,6 +289,9 @@ class LaneEstimator:
             return []
         prev = self.confirmed
         self.confirmed_distance = m
+        depart_t, depart_uptime = self._depart_t, self._depart_uptime
+        if n != prev:
+            self._clear_departure()     # 새 수량 확정 (같은 수량이면 이탈 추적은 그대로 — 복귀 3회 규칙이 처리)
         if prev is None:
             self.confirmed = n
             self.pending_resync = False
@@ -282,8 +310,11 @@ class LaneEstimator:
         if n == prev:
             return []
         name = "ADD" if n > prev else "REMOVE"
+        detail = {}
+        if depart_t is not None:
+            detail = {"change_start_uptime_ms": depart_uptime, "confirm_delay_ms": s.t_ms - depart_t}
         return [self._event(name, s, previous_count=prev, current_count=n, quantity=abs(n - prev),
-                            distance_mm=m, status=STABLE)]
+                            distance_mm=m, status=STABLE, detail=detail)]
 
     # ------------------------------------------------------------------ 외부 제어
     def on_discontinuity(self) -> None:
@@ -294,6 +325,7 @@ class LaneEstimator:
         """USB 끊김 / ESP32 재부팅 / 데이터 없음: 필터·시간 기준을 버리고 RESYNC 대기."""
         self._reset_segment()
         self._mark_unobserved(reason)
+        self._clear_departure()
         self.consecutive_invalid = 0
         self.first_invalid_t = None
         self.last_valid_t = None          # 다른 부팅의 장치 시각과 비교하지 않는다
@@ -305,6 +337,7 @@ class LaneEstimator:
             self.restock_previous = self.confirmed
             self.restock_observed = None
             self._reset_segment()
+            self._clear_departure()
             return [self._event("RESTOCK_START", None, previous_count=self.confirmed,
                                 current_count=self.confirmed, status=self.state)]
         if not on and self.restock:

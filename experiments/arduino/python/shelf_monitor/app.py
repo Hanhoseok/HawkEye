@@ -92,7 +92,11 @@ class Monitor:
             "status": ev.status,
         }
         rec.update(ev.detail)
-        rec["pc_time"] = _iso(pc_wall)                    # PC 기록 시각 (실제 날짜·시각)
+        rec["pc_time"] = _iso(pc_wall)                    # PC 기록 시각 = 확정 시각 (실제 날짜·시각)
+        if isinstance(ev.detail.get("confirm_delay_ms"), int):
+            # 변화가 시작된 실제 시각: 확정 샘플의 PC 수신 시각에서 보드 시계 차이만큼 거슬러 올라간다.
+            # 정확도는 측정 주기(약 100ms) + Wi-Fi 전달 지연(수 ms) 수준.
+            rec["change_start_time"] = _iso(pc_wall - ev.detail["confirm_delay_ms"] / 1000)
         return rec
 
     def _publish_lane(self, events: list[LaneEvent], pc_wall: float) -> None:
