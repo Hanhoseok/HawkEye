@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from src.core.config import FusionConfig  # noqa: E402
-from src.fusion.item_tracks import LINK_GAP_MS, ItemTracker, shelf_distance  # noqa: E402
+from src.fusion.item_tracks import LINK_GAP_MS, ItemTracker, nested, shelf_distance  # noqa: E402
 from src.risk.customers import HeldItem  # noqa: E402
 from test_overview_count import STEP  # noqa: E402
 from test_overview_instant import book, frame_at, make_judge  # noqa: E402
@@ -174,10 +174,39 @@ def test_item_of_another_kind_is_not_merged_into_the_hidden_one():
 
 
 def test_second_box_next_to_the_held_item_is_the_same_item():
-    # 4차 N02: 캔 하나에 상자가 둘 붙어 6장면 보였다
+    # 선반 밖(away)에서 든 물건 옆에 상자가 하나 더 보였다 — 선반에서 나온 것이 아니니 새 물건이 아니고, '안 셈' 줄도 안 늘린다
     run = Run().pick()
     run.see([box("cantata", (1150, 650)), box("cantata", (1150, 590))], times=8)
     assert run.kinds() == ["pick"] and len(run.tracker.carried(1)) == 1
+
+
+def held_beside_the_shelf() -> Run:
+    """칸타타를 집어 선반 바로 옆(1350, 650)에 들고 있다."""
+    run = Run().see([box("cantata", SHELF)], times=6)
+    return run.see([box("cantata", (1350, 650))], times=6)
+
+
+def test_nested_is_the_share_of_the_smaller_box_inside_the_other():
+    a = box("cantata", (1350, 650))
+    assert nested(a, ["cantata", 1240, 600, 1380, 700, 0.6]) == 1.0      # 큰 상자가 다 품는다
+    assert nested(a, box("cantata", (1350, 720))) == 0.0                  # 나란히 있다
+    assert nested(a, box("cantata", (1370, 650))) == 0.5                  # 반이 겹친다
+
+
+def test_wide_box_around_the_held_item_is_the_same_item():
+    # 4차 N02: 캔 하나에 캔만 두른 상자와 손 · 팔까지 두른 큰 상자가 나왔다 — 큰 상자가 든 물건의 상자를 다 품는다
+    run = held_beside_the_shelf()
+    assert run.kinds() == ["pick"]
+    run.see([box("cantata", (1350, 650)), ["cantata", 1240, 600, 1380, 700, 0.6]], times=8)
+    assert run.kinds() == ["pick"] and len(run.tracker.carried(1)) == 1
+
+
+def test_second_item_held_beside_the_first_is_a_second_pick():
+    # 4차 N05 · T04 · T08 · N08-2: 든 물건 바로 옆에 선반 옆에서 나타난 상자 — 서로 안 품으면 둘째 물건이다 (후속 77)
+    run = held_beside_the_shelf()
+    run.see([box("cantata", (1350, 650)), box("donggwaru", (1350, 720))], times=8)
+    assert run.kinds() == ["pick", "pick"]
+    assert sorted(i.name for i in run.tracker.carried(1)) == ["cantata", "donggwaru"]
 
 
 # ---------------------------------------------------------------------- 종류와 개수

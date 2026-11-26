@@ -34,7 +34,7 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card, sensor_log  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 22
+VERSION = 23
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -59,7 +59,8 @@ VERSION = 22
     held 줄이 사람 · 종류마다가 아니라 물건마다 생기고, 도로 놓아 끝난 줄에 end = "놓음" 이 붙는다.
 21: '선반에 있다' = 물건이 놓여 있던 자리와 겹친다 (후속 74) — 선반 자리의 빈 곳에 머문 상자는 선반의 물건이 아니다.
     held 줄에 cam (overview · detail · both — 어느 카메라가 봤나) 이 붙는다. 선반 카메라 물건 세기 (fusion.item_tracks_detail) 는 기본 끔.
-22: 든 물건의 '놓음' = 선반 밖에서 본 뒤에 선반 자리에 5장면 (후속 76) — 집기 전의 장면은 안 친다. held 줄의 놓음 · 다시 셈이 줄어든다."""
+22: 든 물건의 '놓음' = 선반 밖에서 본 뒤에 선반 자리에 5장면 (후속 76) — 집기 전의 장면은 안 친다. held 줄의 놓음 · 다시 셈이 줄어든다.
+23: 든 물건 옆의 상자는 서로 품을 때만 한 물건 (후속 77) — 나란히 든 둘째 물건을 센다. held 줄이 늘어난다."""
 RUN_KEY = "current"
 
 

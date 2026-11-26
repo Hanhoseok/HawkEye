@@ -36,6 +36,10 @@ ON_PLACE = 0.2
 '선반 밖'이 되어 많이 센다 (4차 손님 한 명 21명: 많이 센 사람 0 → 2 → 4명, 3차 19명: 0 → 2 → 6명)."""
 NEAR = 1.5
 """선반 자리에서 상자 대각선의 이 배수 안에서 처음 나타난 상자는 '선반 바로 옆'이다 — 나오는 순간 손에 가려 줄이 끊긴 것으로 본다."""
+NESTED = 0.9
+"""두 상자 가운데 작은 쪽이 큰 쪽 안에 이만큼 들어 있으면 한 물건이다 — 한 물건을 손 · 팔까지 넓게 두른 상자 (4차 N02: 품는 비율 1.0, 넓이 4.5배).
+나란히 든 두 물건은 서로 품지 않는다 (4차 손님 한 명 21편의 진짜 둘째 물건 7번: 0 ~ 0.35, 먼 선반 카메라의 한 번만 0.83).
+맞춰 고른 값이 아니다 — '거의 다 품는다'의 뜻이고 가짜(1.0)와 진짜의 가장 큰 값(0.83) 사이다."""
 
 
 def _diag(box: list) -> float:
@@ -44,6 +48,16 @@ def _diag(box: list) -> float:
 
 def _gap(a: tuple[float, float], b: tuple[float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def nested(a: list, b: list) -> float:
+    """두 상자 가운데 작은 쪽이 큰 쪽 안에 들어 있는 비율 (겹친 넓이 / 작은 쪽 넓이)."""
+    w = min(a[3], b[3]) - max(a[1], b[1])
+    h = min(a[4], b[4]) - max(a[2], b[2])
+    if w <= 0 or h <= 0:
+        return 0.0
+    small = min((a[3] - a[1]) * (a[4] - a[2]), (b[3] - b[1]) * (b[4] - b[2]))
+    return w * h / small if small > 0 else 0.0
 
 
 def shelf_distance(region, point: tuple[float, float]) -> float:
@@ -197,11 +211,16 @@ class ItemTracker:
         """그 손에 든 것으로 본 줄 — 새 물건인가, 들고 있던 물건이 다시 보인 것인가, 상품이 아닌가."""
         mine = [i for i in self.items if self.resolve(i.owner) == pid and i.returned_ms is None]
         if t.origin != "shelf":
-            # 선반에 있는 것을 못 본 상자가 그 손님의 든 물건 바로 옆에 있다 — 그 물건에 상자가 하나 더 붙은 것으로 보고 버린다
-            # (4차 N02: 캔 하나에 상자 둘이 6장면). 종류도 안 섞는다 — 진짜 둘째 물건이면 종류가 다를 수 있다
+            # 선반에 있는 것을 못 본 상자가 그 손님의 든 물건에 하나 더 붙은 상자인가 (4차 N02: 캔 하나에 상자 둘이 6장면) — 그러면 버린다.
+            # 종류는 안 본다 — 한 물건에 두 종류의 상자가 나오기도 한다.
+            # 후속 77 — 선반 바로 옆에서 나타난 상자(near)는 든 물건의 상자와 서로 품을 때만 한 물건이다. 옆에 나란히 있으면 둘째 물건이다
+            #   ('바로 옆이면 한 물건'으로 보던 때는 나란히 든 둘째 물건을 버렸다 — 4차 21편에서 가짜 1번 · 진짜 7번).
+            # 선반 밖에서 나타난 상자(away)는 어차피 새 물건이 못 된다 — 든 물건 바로 옆이면 전처럼 조용히 버린다 ('안 셈' 줄을 안 늘린다)
             for i in mine:
-                if i.track is not t and ms - i.track.last_ms <= 100.0 and \
-                        _gap(center(t.last), center(i.track.last)) <= max(_diag(t.last), _diag(i.track.last)):
+                if i.track is t or ms - i.track.last_ms > 100.0:
+                    continue
+                beside = _gap(center(t.last), center(i.track.last)) <= max(_diag(t.last), _diag(i.track.last))
+                if nested(t.last, i.track.last) >= NESTED or (t.origin == "away" and beside):
                     t.dead = True
                     return
         hidden = [i for i in mine if i.track.last_ms < t.first_ms]   # 이 줄이 나타나기 전에 안 보이게 된 물건
