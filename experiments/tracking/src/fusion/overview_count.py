@@ -73,6 +73,24 @@ def region_of(boxes: list, pad: float = PAD, near: float = NEAR) -> tuple[float,
             max(b[3] for b in boxes) + pad, max(b[4] for b in boxes) + pad)
 
 
+SAME_PLACE = 0.5
+"""이만큼 겹친 상자는 같은 자리다 (선반 위 물건 자리를 모을 때)."""
+
+
+def places_of(boxes: list, near: float = NEAR) -> list:
+    """선반 위 **물건이 놓여 있던 자리들** — 선반 자리(region_of)를 잡은 그 상자들에서 같은 자리(SAME_PLACE 이상 겹침)를 하나로 줄인 것.
+    선반 자리는 이 상자들을 감싼 네모 + 여유라 빈 곳도 들어간다. '선반 위에 있다'는 이 자리들과 겹치는지로 따진다."""
+    if not boxes:
+        return []
+    xs, ys = sorted(center(b)[0] for b in boxes), sorted(center(b)[1] for b in boxes)
+    mx, my = xs[len(xs) // 2], ys[len(ys) // 2]
+    out: list = []
+    for b in sorted((b for b in boxes if abs(center(b)[0] - mx) <= near and abs(center(b)[1] - my) <= near), key=lambda b: -b[5]):
+        if all(iou(b, k) < SAME_PLACE for k in out):
+            out.append(b)
+    return out
+
+
 def inside(items: list, region, score: float = SCORE, limit: float = MERGE) -> list:
     """선반 자리 안의 상품 상자 (가운데 점으로 본다, 점수 score 이상, 겹친 것은 하나로)."""
     if region is None:
@@ -135,6 +153,8 @@ class OverviewCounter:
 
     def reset(self) -> None:
         self.region = self._given
+        self.places: list | None = None
+        """선반 위 물건이 놓여 있던 자리들 (places_of). 선반 자리를 밖에서 정해 줬으면 모른다 (None)."""
         self.fed = False
         """상품 탐지 결과를 한 번이라도 받았나 — 안 받았으면 판정이 기다리지 않는다."""
         self._buffer: list[tuple[float, list, list]] = []
@@ -160,6 +180,7 @@ class OverviewCounter:
         first = self._buffer[0][0]
         boxes = [it for t, its, _ in self._buffer if t - first <= self.start_ms for it in its if it[5] >= SCORE]
         self.region = region_of(boxes)
+        self.places = places_of(boxes) or None
         if self.region is None:
             self._buffer = self._buffer[-1:]   # 아직 상품을 못 봤다 — 볼 때까지 미룬다
             return

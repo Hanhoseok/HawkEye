@@ -370,14 +370,16 @@ def lens_take(data: dict, result: dict, customers: set[int], expected: str) -> d
 
     # 전체 카메라가 손에 든 상품을 본 때 (fusion.overview_instant) — 센 것은 그때부터 그 손님의 물건이고, 선반 방문이 끝나면 방문의 개수로 바뀐다
     held = data.get("held") or []
+    saw = {"overview": " (전체 카메라가 봄)", "detail": " (선반 카메라가 봄)", "both": " (두 카메라가 봄)"}
     rows.append({"label": "손에 든 것을 봄", "group": "전체 카메라", "who": None,
                  "segs": [{"s": h["ms"], "e": h["until"] if h["until"] is not None else h["ms"] + 400,
                            "who": h["pid"] if h["pid"] in customers else None, "tone": "take",
-                           "tip": f"{_who(h['pid'], customers)} 손에 {h['name']} — 바로 1개로 셈"
+                           "tip": f"{_who(h['pid'], customers)} 손에 {h['name']} — 바로 1개로 셈{saw.get(h.get('cam', ''), '')}"
                                   + (" · 선반에 도로 놓음" if h.get("end") == "놓음"
                                      else " · 선반 방문이 끝나 방문의 개수로 바뀜" if h["until"] is not None else " · 덮는 선반 방문 없음 (그대로 남음)")}
                           for h in held if h["counted"]],
-                 "marks": [{"ms": h["ms"], "tone": "quiet", "tip": f"{_who(h['pid'], customers)} 손에 {h['name']} — 안 셈: {h['why']}"}
+                 "marks": [{"ms": h["ms"], "tone": "quiet",
+                            "tip": f"{_who(h['pid'], customers)} 손에 {h['name']} — 안 셈: {h['why']}{saw.get(h.get('cam', ''), '')}"}
                            for h in held if not h["counted"]]})
     for h in held:
         log.append({"ms": h["ms"], "level": "info",

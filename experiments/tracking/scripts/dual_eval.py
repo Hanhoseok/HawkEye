@@ -245,6 +245,8 @@ def use_product_records(cfg: AppConfig) -> None:
     cfg.fusion.overview_count = cfg.fusion.overview_owner = True
     cfg.fusion.hold_per_run = True   # 든 구간마다 따진다 — 선반 밖에서 시작한 든 구간은 버린다 (후속 72)
     cfg.fusion.item_tracks = True   # 손에 든 것을 물건 단위로 센다 — 선반에서 나온 상자만 상품이다 (후속 73). 켜면 위 hold_per_run 대신 이것
+    cfg.fusion.item_tracks_detail = True   # 선반 카메라의 상품 상자도 같은 기준으로 따라가 같은 장부에 넣는다 (후속 74).
+    # 선반 카메라의 모든 장면 상품 기록 (product_overview_items.py --camera angle0) 이 없는 짝은 전체 카메라만으로 센다 (judge 가 알림)
     cfg.fusion.overview_instant = True   # 손에 든 것을 보면 바로 센다 (후속 59) — 방문이 끝나면 그 개수 · 주인으로 바뀐다
     cfg.fusion.holder_over_owner = True   # 주인을 정한 방문도 다른 손님이 먼저 든 상품은 그 손님에게 나눈다 (후속 71, 4차 C12)
     cfg.fusion.handover = True   # 손님끼리 건넨 것을 장부에 넣는다 (후속 70) — 든 손님이 경보, 건넨 손님은 확인 필요
@@ -258,14 +260,17 @@ def missing_model(cfg: AppConfig) -> Path | None:
 
 def copy_overview_products(source: Path, out: Path) -> list[str]:
     """전체 카메라 상품 기록(<짝>/angle1/product_items.*)을 다른 실행 폴더의 같은 짝으로 가져온다. 가져온 파일 이름들.
-    영상과 상품 모델에만 달린 기록이라(신원 · 구역 설정과 무관) 저장분으로 다시 계산할 때 그대로 쓴다."""
+    영상과 상품 모델에만 달린 기록이라(신원 · 구역 설정과 무관) 저장분으로 다시 계산할 때 그대로 쓴다.
+    선반 카메라의 모든 장면 상품 기록(<짝>/angle0/product_items.*, fusion.item_tracks_detail)도 있으면 같이 가져온다."""
     done = []
-    for name in OVERVIEW_PRODUCT_FILES:
-        src = source / "angle1" / name
-        if src.exists():
-            (out / "angle1").mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, out / "angle1" / name)
-            done.append(name)
+    for camera in ("angle1", "angle0"):
+        for name in OVERVIEW_PRODUCT_FILES:
+            src = source / camera / name
+            if src.exists():
+                (out / camera).mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, out / camera / name)
+                if camera == "angle1":
+                    done.append(name)
     return done
 
 
@@ -637,6 +642,14 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
                       detail_height=m0["height"])
     judge.reset()
     products = overview_products(pair) if cfg.fusion.overview_count else None
+    shelf_products = None
+    if cfg.fusion.item_tracks_detail and cfg.fusion.item_tracks:
+        if (OUT / pair / "angle0" / "product_items.jsonl").exists():
+            shelf_products = overview_products(pair, "angle0")
+        else:
+            # 판정 · 최종 개수는 이 기록이 없어도 같다 (3 · 4차에서 잼) — 방문이 끝나기 전의 임시 개수만 전체 카메라 것으로 남는다
+            print(f"  {pair}: 선반 카메라 상품 기록 없음 — 손에 든 것은 전체 카메라만으로 센다 "
+                  "(만들기: scripts/product_overview_items.py --camera angle0)")
     if use_detail:
         from src.shelf.slot_diff import SlotChange
         for r in log.slot_changes:
@@ -667,7 +680,8 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
             # 아직 안 끝난 방문 (실제 실행에서는 선반 지도가 '가려진 중'이라고 알려 준다 — 기록에서는 방문의 시작 ~ 끝 장면 사이)
             still = [(v["start_ms"] + offset_ms, v["shelf"]) for v in log.visits if v["start_frame"] <= idx < v["end_frame"]]
             judge.detail_step(ms, log.ids["angle0"].get(idx, []), take_at["angle0"].get(idx, []), visits,
-                              log.appearance("angle0", offset_ms, ms), log.resolver("angle0", idx), None, still)
+                              log.appearance("angle0", offset_ms, ms), log.resolver("angle0", idx), None, still,
+                              shelf_products.get(idx, []) if shelf_products is not None else None)
         else:
             while pending_merges and pending_merges[0].get("frame", 0) <= idx:
                 merges_seen.append(pending_merges.pop(0))
@@ -699,10 +713,14 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     }
 
 
-def overview_products(pair: str) -> dict[int, list]:
+def overview_products(pair: str, camera: str = "angle1") -> dict[int, list]:
     """전체 카메라 장면 번호 → 그 장면의 상품 상자 (scripts/product_overview_items.py 가 만든 angle1/product_items.jsonl).
-    fusion.overview_count 를 켰을 때만 읽는다. 없으면 그 짝은 실패로 적힌다 — 조용히 선반 지도 개수로 돌아가지 않게."""
-    path = OUT / pair / "angle1" / "product_items.jsonl"
+    fusion.overview_count 를 켰을 때만 읽는다. 없으면 그 짝은 실패로 적힌다 — 조용히 선반 지도 개수로 돌아가지 않게.
+    camera="angle0" 이면 선반 카메라의 모든 장면 기록 (같은 스크립트의 --camera angle0, fusion.item_tracks_detail 이 읽는다)."""
+    path = OUT / pair / camera / "product_items.jsonl"
+    if camera == "angle0" and not path.exists():
+        raise FileNotFoundError(f"{pair}: angle0/product_items.jsonl 없음 — 선반 카메라의 모든 장면 상품 기록은 "
+                                "scripts/product_overview_items.py --camera angle0 으로 만든다")
     if not path.exists():
         raise FileNotFoundError(f"{pair}: angle1/product_items.jsonl 없음 — fusion.overview_count (3차 기본) 는 "
                                 "scripts/product_overview_items.py 로 전체 카메라 상품을 찾아 둔 기록에서만. "

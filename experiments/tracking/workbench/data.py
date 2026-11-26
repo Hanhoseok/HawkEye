@@ -34,7 +34,7 @@ from workbench import labels as label_store  # noqa: E402
 from workbench.analyze import analyze, card, sensor_log  # noqa: E402
 
 OUT = ROOT / "outputs" / "workbench"
-VERSION = 20
+VERSION = 21
 """보기 데이터의 모양이나 **판정 코드의 결과**가 바뀌면 올린다 — 예전에 만들어 둔 것을 전부 다시 만들게 된다.
 8: 3차에서 매장 안 바닥을 밟은 신원만 두 화면 짝 후보 (fusion.link_customers_only, 후속 43) — 짝이 달라진다.
 9: 직전 짝 가산점은 바로 앞 조각의 짝에게만 (fusion.keep_bonus_recent_only, 후속 44).
@@ -56,7 +56,9 @@ VERSION = 20
     C12 ~ C15, 3차 C01 · C05 · N09 · T09 의 손님별 개수 · 판정이 달라진다. 보기 데이터에 handovers · hand_checks 가 생긴다.
     handovers 의 direct = 건넨 것이 아니라 든 손님이 직접 집은 것 (집은 사람을 바로잡음 — 4차 C12 등).
 20: 손에 든 것을 물건 단위로 센다 (fusion.item_tracks, 후속 73) — 선반에서 나온 상자만 +1, 선반에 도로 놓으면 −1.
-    held 줄이 사람 · 종류마다가 아니라 물건마다 생기고, 도로 놓아 끝난 줄에 end = "놓음" 이 붙는다."""
+    held 줄이 사람 · 종류마다가 아니라 물건마다 생기고, 도로 놓아 끝난 줄에 end = "놓음" 이 붙는다.
+21: '선반에 있다' = 물건이 놓여 있던 자리와 겹친다 (후속 74) — 선반 자리의 빈 곳에 머문 상자는 선반의 물건이 아니다.
+    held 줄에 cam (overview · detail · both — 어느 카메라가 봤나) 이 붙는다. 선반 카메라 물건 세기 (fusion.item_tracks_detail) 는 기본 끔."""
 RUN_KEY = "current"
 
 
@@ -272,7 +274,8 @@ class Builder:
         files = [*p.signature_files, p.judge_file, self.events_dir() / f"{pair}.json",
                  self.records_dir() / pair / ".done",
                  self.records_dir() / pair / "meta.json",
-                 self.records_dir() / pair / "angle1" / "product_items.meta.json"]     # 전체 카메라 상품 (있을 때만)
+                 self.records_dir() / pair / "angle1" / "product_items.meta.json",     # 전체 카메라 상품 (있을 때만)
+                 self.records_dir() / pair / "angle0" / "product_items.meta.json"]     # 선반 카메라의 모든 장면 상품 (있을 때만)
         if p.sensor_lanes:
             files.append(p.labels / "sensor" / f"{pair}.csv")                          # 센서 로그 (판정에 넣는 회차만)
         h = hashlib.sha1(f"v{VERSION}{'|'.join(p.overrides)}|{','.join(p.sensor_lanes)}|{int(p.payments)}".encode())

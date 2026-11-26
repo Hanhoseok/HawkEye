@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 from dataclasses import replace
 from typing import Callable
 
@@ -32,7 +32,7 @@ from ..zones.floor import FloorMap, foot_pixel
 from ..zones.zone_map import ZoneMap
 from .cross_view import CrossViewLinker
 from .confusion import ConfusionWatch
-from .item_tracks import ItemTracker
+from .item_tracks import ItemEvent, ItemTracker
 from .overview_count import HOLD_WITHIN_MS, HolderTracker, OverviewCounter
 from .shelf_events import SensorEvent, ShelfEventFuser, TimeAxis
 
@@ -78,6 +78,11 @@ class DualJudge:
         self.items = (ItemTracker(min_frames=config.overview_owner_frames, score=config.overview_count_score)
                       if config.item_tracks and config.overview_instant and self.holders is not None else None)
         """전체 카메라의 상품 상자를 물건 단위로 따라간 것 (fusion.item_tracks). 손에 든 것을 바로 셀 때 이것으로 센다."""
+        self.items_detail = (ItemTracker(min_frames=config.overview_owner_frames, score=config.overview_count_score)
+                             if config.item_tracks_detail and self.items is not None else None)
+        """선반 카메라의 상품 상자를 물건 단위로 따라간 것 (fusion.item_tracks_detail). 신원은 선반 카메라 화면의 것 — 셀 때 손님으로 잇는다."""
+        self.detail_region = OverviewCounter(score=config.overview_count_score) if self.items_detail is not None else None
+        """선반 카메라 화면의 선반 자리 — 전체 카메라와 같은 방법 (처음 1초에 본 상품 상자를 감싼 네모) 으로 잡는다."""
         self.fuser = ShelfEventFuser(config, self.linker, detail_axis, overview_axis, slot_shelf, sensors, self.counter,
                                      self.holders)
         self.visit_delay_ms = self.VISIT_DELAY_MS
@@ -94,6 +99,8 @@ class DualJudge:
             self.items.confused = self.holders.confused
             if getattr(risk, "book", None) is not None:
                 self.items.resolve = risk.book.resolve
+        if self.items_detail is not None and config.swap_since_confusion:
+            self.items_detail.confused = lambda pid, ms: bool(self.watch["detail"].touching(pid, ms, ms))
         self.handover_on = bool(config.handover and self.holders is not None and getattr(risk, "book", None) is not None)
         if self.handover_on:
             risk.before_judge = self._hand_overs   # 이번 장면의 방문 · 결제를 장부에 넣은 뒤, 판정하기 전에
@@ -120,6 +127,15 @@ class DualJudge:
             self.holders.reset()
         if self.items is not None:
             self.items.reset()
+        if self.items_detail is not None:
+            self.items_detail.reset()
+            self.detail_region.reset()
+        self._item_rows: dict[tuple[str, int], dict] = {}
+        """(카메라, 그 카메라의 물건 번호) → 장부의 든 것 한 줄. 두 카메라가 본 같은 물건은 같은 줄을 가리킨다."""
+        self._item_wait: list[ItemEvent] = []
+        """선반 카메라가 본 물건의 일 가운데 아직 손님에게 못 이은 것 (두 화면 짝이 생기기를 기다린다)."""
+        self._covered: list[tuple[float, float, float]] = []
+        """이미 넘긴 선반 방문이 덮는 시간 (시작, 끝, 방문이 끝난 때) — 그 사이에 처음 본 든 것이 뒤늦게 오면 세지 않는다."""
         self.risk.reset()
         if self.reach is not None:
             self.reach.reset()
@@ -127,8 +143,13 @@ class DualJudge:
         self._pending_visits: list[tuple[float, ShelfVisit, float, float]] = []
         self.held: list[dict] = []
         """손에 든 것을 본 기록 (fusion.overview_instant): pid · name · seen_ms(처음 본 때) · ms(확정한 때) · counted(셌나) ·
-        why(안 셌으면 까닭) · until_ms(이것을 대신한 선반 방문이 끝난 때 — 아직 안 바뀌었으면 None)."""
+        why(안 셌으면 까닭) · until_ms(이것을 대신한 선반 방문이 끝난 때 — 아직 안 바뀌었으면 None).
+        물건 단위로 센 줄(fusion.item_tracks)에는 item(장부의 물건 번호) · cam(본 카메라: overview · detail · both) ·
+        holding(지금 그 물건을 든 것으로 보는 카메라들) · left(놓았다고 봤지만 장부에는 남은 카메라 → 그때 ms) ·
+        end("놓음" = 선반에 도로 놓아 끝남)가 더 있다."""
         self._settled: list[tuple[float, float]] = []
+        self._put_back: list[tuple[float, float]] = []
+        """방금 넘긴 방문 가운데 돌려놓음을 확인한 것 (시작 · 끝 ms) — 그 시간에 카메라가 본 '놓음'은 진짜다."""
         self._waiting: list[tuple[float, float, str]] = []
         self._open_visits: list[tuple[float, str]] = []
         """선반 카메라가 알려 준, 아직 안 끝난 방문 (시작 ms — 공통 시각, 선반). fusion.sensor_hold_visits 가 그 사이의 센서 기록을 붙든다."""
@@ -434,8 +455,10 @@ class DualJudge:
         resolve: Callable[[int], int] | None = None,
         slot_changes: list | None = None,
         open_visits: list[tuple[float, str]] | None = None,
+        products: list | None = None,
     ) -> None:
-        """open_visits = 지금 선반이 가려져 아직 안 끝난 방문 (시작 ms — 공통 시각, 선반 이름). None 이면 모름 (안 붙든다)."""
+        """open_visits = 지금 선반이 가려져 아직 안 끝난 방문 (시작 ms — 공통 시각, 선반 이름). None 이면 모름 (안 붙든다).
+        products = 이 장면에서 찾은 상품 상자 [[종류, x1, y1, x2, y2, 점수], …] (fusion.item_tracks_detail 일 때만 쓴다)."""
         self._open_visits = list(open_visits or [])
         for sc in slot_changes or []:
             self.fuser.note_slot_change(sc)
@@ -451,6 +474,14 @@ class DualJudge:
                                 appearance(pid) if appearance else None, floor, ray)
             boxes[pid] = obs.bbox
         self._note_boxes("detail", pts_ms, boxes)
+        if self.items_detail is not None and products is not None:
+            hands = [(resolve(o.person_id) if resolve else o.person_id, o.bbox, getattr(o, "keypoints", None))
+                     for o in identities if o.person_id > 0]
+            self.detail_region.update(pts_ms, products, [bbox for _, bbox, _ in hands])
+            if resolve is not None:
+                self.items_detail.resolve = resolve   # 든 뒤에 합쳐진 화면 신원은 한 사람으로
+            self.items_detail.update(pts_ms, products, hands, self.detail_region.region, self.detail_region.places)
+            self._item_wait += self.items_detail.fresh()
         for t in takes:
             pid = resolve(t.person_id) if resolve and t.person_id > 0 else t.person_id
             self._pending_takes.append((self.fuser.detail_axis.to_ms(t.end_frame), replace(t, person_id=pid)))
@@ -506,7 +537,7 @@ class DualJudge:
         if self.holders is not None and products is not None:
             self.holders.update(frame.pts_ms, products, hands, self.counter.region)
             if self.items is not None:
-                self.items.update(frame.pts_ms, products, hands, self.counter.region)
+                self.items.update(frame.pts_ms, products, hands, self.counter.region, self.counter.places)
             if self.config.overview_instant:
                 self._count_held(frame)
         self.linker.update(frame.pts_ms)
@@ -678,34 +709,124 @@ class DualJudge:
     def _count_items(self, frame: Frame, book, to_frame, near: float) -> None:
         """물건 단위로 센다 (fusion.item_tracks): 선반에서 나와 손에 들린 물건은 +1, 선반에 도로 놓은 물건은 −1.
         선반 밖에서 처음 나타난 상자는 '안 셈'으로만 적는다. 종류가 바뀌어 읽히면 종류만 고친다 (개수는 그대로)."""
-        rows = {row["item"]: row for row in self.held if row.get("item") is not None}
-        for e in self.items.fresh():
-            row = rows.get(e.item)
+        events = [("overview", e) for e in self.items.fresh()]
+        if self.items_detail is not None:
+            # 선반 카메라가 본 것은 그 화면의 사람을 손님에게 이은 뒤에 넣는다. 짝이 아직 없으면 방문을 넘길 때까지만 기다린다
+            wait, self._item_wait = self._item_wait, []
+            held_back: set[int | None] = set()
+            for e in wait:
+                row = self._item_rows.get(("detail", e.item))
+                if e.kind in ("kind", "back"):
+                    # 그 물건의 집음이 아직 기다리는 중이면 같이 기다린다. 집음이 버려졌으면 (줄이 없으면) 같이 버려진다
+                    if e.item in held_back:
+                        self._item_wait.append(e)
+                    elif row is not None:
+                        events.append(("detail", replace(e, pid=row["pid"])))
+                    continue
+                owner = self.linker.owner(e.pid, e.seen_ms, e.ms)
+                if owner is not None:
+                    events.append(("detail", replace(e, pid=book.resolve(owner))))
+                elif frame.pts_ms - e.ms <= self.visit_delay_ms:
+                    self._item_wait.append(e)
+                    held_back.add(e.item)
+                elif e.kind == "pick":
+                    self.held.append({"pid": -1, "name": e.name, "seen_ms": e.seen_ms, "ms": e.ms, "counted": False,
+                                      "why": "선반 카메라의 사람을 손님에게 못 이음", "until_ms": None, "cam": "detail"})
+        for cam, e in sorted(events, key=lambda ce: ce[1].ms):
+            row = self._item_rows.get((cam, e.item))
             if e.kind == "pick":
+                row = self._bind_item(cam, e, book)
+                if row is not None:
+                    continue   # 다른 카메라가 이미 센 그 물건이다 — 개수는 그대로, 종류만 합쳐 다시 본다
                 row = {"pid": e.pid, "name": e.name, "seen_ms": e.seen_ms, "ms": e.ms, "counted": True, "why": "",
-                       "until_ms": None, "item": e.item}
+                       "until_ms": None, "item": sum(1 for r in self.held if r.get("item") is not None), "cam": cam,
+                       "holding": [cam]}
                 self.held.append(row)
-                rows[e.item] = row
-                book.add_held(HeldItem(e.pid, e.name, to_frame(e.seen_ms - near), frame.index, e.seen_ms, e.item), frame.pts_ms)
+                self._item_rows[(cam, e.item)] = row
+                done = next((end for start, until, end in self._covered if start <= e.seen_ms <= until), None)
+                if done is not None:
+                    row["until_ms"] = done   # 그 시간을 덮는 방문을 이미 넘겼다 — 방문의 개수가 이 물건을 이미 세었다
+                else:
+                    book.add_held(HeldItem(e.pid, e.name, to_frame(e.seen_ms - near), frame.index, e.seen_ms, row["item"]),
+                                  frame.pts_ms)
             elif e.kind == "reject":
+                if any(r.get("item") is not None and r["until_ms"] is None and r["counted"] and cam not in r["holding"]
+                       and book.resolve(r["pid"]) == e.pid for r in self.held):
+                    continue   # 다른 카메라가 이미 센 그 손님의 물건이 이 카메라에 보인 것이다 — '안 셈'으로 적지 않는다
                 self.held.append({"pid": e.pid, "name": e.name, "seen_ms": e.seen_ms, "ms": e.ms, "counted": False,
-                                  "why": e.why, "until_ms": None})
-            elif row is None or row["until_ms"] is not None:
+                                  "why": e.why, "until_ms": None, "cam": cam})
+            elif row is None or row.get("end") == "놓음":
+                continue
+            elif e.kind == "back":
+                # 이 카메라는 도로 놓는 것을 봤다. 장부가 그 물건을 아직 갖고 있으면 (다른 카메라가 들고 있다고 보거나,
+                # 선반 방문의 개수로 이미 바뀌었으면) 개수는 그대로 두고 '이 카메라는 놓았다고 봤다'만 적는다 —
+                # 든 채 선반 앞에 머문 것을 한 카메라가 '놓음'으로 볼 수 있다 (4차 N08-1, 3차 T08 선반 카메라).
+                # 그 카메라가 그 손님의 물건을 다시 보면 새 물건이 아니라 이 물건이다 (_bind_item).
+                # 방문의 개수로 바뀐 물건을 정말 놓았으면 그 놓음은 방문 (센서 · 선반 지도) 이 센다
+                row["holding"] = [c for c in row["holding"] if c != cam]
+                if row["until_ms"] is None and not row["holding"]:
+                    if book.remove_held(row["item"]):
+                        row["until_ms"], row["end"] = e.ms, "놓음"
+                else:
+                    row.setdefault("left", {})[cam] = e.ms
+            elif row["until_ms"] is not None:
                 continue   # 이미 선반 방문의 개수로 바뀐 물건이다
             elif e.kind == "kind":
-                if book.rename_held(e.item, e.name):
-                    row["name"] = e.name
-            elif e.kind == "back":
-                if book.remove_held(e.item):
-                    row["until_ms"], row["end"] = e.ms, "놓음"
+                self._rename_item(row, book)
+        for row in self.held:
+            if row.get("cam") == "both" and row["until_ms"] is None:
+                self._rename_item(row, book)   # 두 카메라가 읽은 것을 합치면 어느 한쪽의 종류가 안 바뀌어도 많은 쪽이 바뀔 수 있다
+
+    def _bind_item(self, cam: str, e: ItemEvent, book) -> dict | None:
+        """이 카메라가 방금 본 물건이 장부에 이미 있는 물건인가 — ① 이 카메라가 놓았다고 봤지만 장부에 남은 물건,
+        ② 그 손님의 든 것 가운데 이 카메라가 지금 들고 있다고 보지 않는 가장 이른 줄 (다른 카메라가 센 것).
+        같은 손님의 손을 두 카메라가 보므로 본 순서대로 같은 물건이다 (개수 = 더 많이 든 것으로 보는 카메라의 개수)."""
+        rows = sorted((r for r in self.held if r.get("item") is not None and r["counted"] and r.get("end") != "놓음"
+                       and book.resolve(r["pid"]) == e.pid), key=lambda r: r["seen_ms"])
+        # 이 카메라가 '놓았다'고 봤지만 장부에는 남아 있는 물건이 먼저다 — 놓은 것이 아니라 잠깐 선반에 겹쳐 보인 것이다.
+        # 선반 방문의 개수로 이미 바뀐 물건도 여기 든다 (놓음은 안 빼고 다시 집음만 더하면 1개가 늘어난다 — 3차 T08 · 4차 N08-2)
+        for row in rows:
+            if cam in row.get("left", {}):
+                del row["left"][cam]
+                row["holding"].append(cam)
+                self._item_rows[(cam, e.item)] = row
+                return row
+        for row in rows:
+            if row["until_ms"] is None and cam not in row["holding"]:
+                self._item_rows[(cam, e.item)] = row
+                row["holding"].append(cam)
+                row["cam"] = "both"
+                self._rename_item(row, book)
+                return row
+        return None
+
+    def _rename_item(self, row: dict, book) -> None:
+        """장부 한 줄의 종류 = 그 물건을 본 카메라들이 읽은 것을 합쳐 가장 많은 것."""
+        reads: Counter = Counter()
+        for (cam, n), r in self._item_rows.items():
+            if r is row:
+                reads.update((self.items if cam == "overview" else self.items_detail).items[n].reads)
+        if not reads:
+            return
+        best, n = reads.most_common(1)[0]
+        if best != row["name"] and n > reads[row["name"]] and book.rename_held(row["item"], best):
+            row["name"] = best
 
     def _settle_held(self) -> None:
         """방금 넘긴 선반 방문이 덮는 '든 것'을 지운다 — 그 방문의 개수 · 주인이 대신한다 (방문을 장부에 넣기 바로 전에 부른다)."""
         settled, self._settled = self._settled, []
+        slack = self.config.event_tolerance_seconds * 1000.0   # 방문의 시작(선반 카메라가 본 가림)과 전체 카메라 시각의 어긋남 (3차 C02: 0.3초 앞)
+        self._covered += [(start_ms - slack, end_ms + self.visit_delay_ms, end_ms) for start_ms, end_ms in settled]
+        put_back, self._put_back = self._put_back, []
+        for start_ms, end_ms in put_back:
+            # 방문이 돌려놓음을 확인했다 (센서 · 선반 지도가 뺀다) — 그 시간에 카메라가 본 '놓음'은 진짜이니 다시 보면 새 물건이다
+            for row in self.held:
+                for cam, ms in list(row.get("left", {}).items()):
+                    if start_ms - slack <= ms <= end_ms + self.visit_delay_ms:
+                        del row["left"][cam]
         book = getattr(self.risk, "book", None)
         if book is None or not self.held:
             return
-        slack = self.config.event_tolerance_seconds * 1000.0   # 방문의 시작(선반 카메라가 본 가림)과 전체 카메라 시각의 어긋남 (3차 C02: 0.3초 앞)
         for start_ms, end_ms in settled:
             gone = book.drop_held(start_ms - slack, end_ms + self.visit_delay_ms)
             for h in gone:
@@ -769,6 +890,8 @@ class DualJudge:
             elif end_ms <= visits_until_ms:
                 fused = self.fuser.detail_visit(visit, start_ms, stop_ms)
                 self._settled.append((start_ms, stop_ms))
+                if fused.added > 0:
+                    self._put_back.append((start_ms, stop_ms))
                 visits.append(fused)
                 visits += self.fuser.take_shares()   # 든 사람별로 나눈 방문의 나머지 몫 (fusion.overview_owner)
                 if self.config.unchanged_clears_all and fused.removed == 0 and fused.added == 0                         and fused.slot_change is None:

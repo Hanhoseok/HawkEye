@@ -31,6 +31,9 @@ LINK_STEP_MS = 150.0
 LINK_JUMP = 2.5
 """이을 수 있는 거리 = 상자 대각선 × min(1 + 안 보인 시간 / LINK_STEP_MS, LINK_JUMP).
 한계가 없으면 선반 위 상자가 잠깐 가려진 사이 멀리(계산대)의 상자와 이어져 '선반에서 나온 물건'이 된다 (4차 T06 · C14)."""
+ON_PLACE = 0.2
+"""상자가 선반 위 물건 자리(places)와 이만큼 겹치면 그 자리에 있는 것이다. 0.35 · 0.5 로 올리면 선반 위 상자가 조금 흔들릴 때마다
+'선반 밖'이 되어 많이 센다 (4차 손님 한 명 21명: 많이 센 사람 0 → 2 → 4명, 3차 19명: 0 → 2 → 6명)."""
 NEAR = 1.5
 """선반 자리에서 상자 대각선의 이 배수 안에서 처음 나타난 상자는 '선반 바로 옆'이다 — 나오는 순간 손에 가려 줄이 끊긴 것으로 본다."""
 
@@ -113,15 +116,19 @@ class ItemTracker:
 
     def reset(self) -> None:
         self.live: list[Track] = []
+        self._places: list | None = None
         self.items: list[Item] = []
         self._events: list[ItemEvent] = []
 
     # ------------------------------------------------------------------ 한 장면
 
-    def update(self, ms: float, items: list, people: list, region) -> None:
-        """전체 카메라 한 장면. items = [[종류, x1, y1, x2, y2, 점수], …], people = [(신원, 사람 상자, 관절), …], region = 선반 자리."""
+    def update(self, ms: float, items: list, people: list, region, places: list | None = None) -> None:
+        """카메라 한 장면. items = [[종류, x1, y1, x2, y2, 점수], …], people = [(신원, 사람 상자, 관절), …], region = 선반 자리,
+        places = 선반 위 물건이 놓여 있던 자리들 (overview_count.places_of). 주면 '선반 위에 있다'를 그 자리와 겹치는지로 따진다 —
+        선반 자리(네모 + 여유)의 빈 곳에 떠 있는 손 안의 물건을 선반 위의 물건으로 보지 않는다. 안 주면 선반 자리 안인지로 따진다."""
         if region is None:
             return
+        self._places = places
         boxes: list = []
         for it in sorted((i for i in items if i[5] >= self.score), key=lambda i: -i[5]):
             if all(iou(k, it) < SAME_BOX for k in boxes):
@@ -155,7 +162,9 @@ class ItemTracker:
 
     def _see(self, t: Track, ms: float, it: list, people: list, region) -> None:
         t.last, t.last_ms = it, ms
-        if shelf_distance(region, center(it)) == 0:
+        on_shelf = (shelf_distance(region, center(it)) == 0 if not self._places
+                    else any(iou(it, p) >= ON_PLACE for p in self._places))
+        if on_shelf:
             t.inside.append(ms)
             if len(t.inside) == self.min_frames and ms - t.inside[0] <= HOLD_WITHIN_MS:
                 # 선반 자리에 머문다 = 선반 위의 물건이다. 들려 있던 물건이면 놓은 것이다

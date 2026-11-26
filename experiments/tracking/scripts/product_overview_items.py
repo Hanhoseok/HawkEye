@@ -353,6 +353,8 @@ def main() -> int:
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--conf", type=float, default=0.1, help="이 점수 이상을 기록한다 (화면에는 0.25 이상만 그린다)")
     ap.add_argument("--force", action="store_true", help="이미 만든 짝도 다시 만든다")
+    ap.add_argument("--camera", default=CAMERA, choices=("angle0", "angle1"),
+                    help="상품을 찾을 카메라 (기본 angle1 = 전체 카메라). angle0 = 선반 카메라의 모든 장면 — 선반 지도는 가려진 장면을 건너뛰어 따로 남긴다")
     ap.add_argument("--count", action="store_true", help="찾지 않고, 전체 카메라의 종류별 개수(처음 - 끝)를 정답과 견준다")
     ap.add_argument("--score", type=float, default=SHOW, help="--report · --count 가 세는 점수 기준 (기본 0.25)")
     ap.add_argument("--merge", type=float, default=MERGE, help="--count: 같은 종류의 상자가 이만큼 겹치면 하나로 (기본 0.4, 1 이면 안 합침)")
@@ -407,8 +409,8 @@ def main() -> int:
     want = settings(args.model, args.imgsz, args.conf)
     detector = None
     for pair in dual_eval.pairs(args.only):
-        cache_file = ROOT / "outputs" / args.source / pair / "cache" / f"{CAMERA}.pkl.gz"
-        folder = ROOT / "outputs" / args.out / pair / CAMERA
+        cache_file = ROOT / "outputs" / args.source / pair / "cache" / f"{args.camera}.pkl.gz"
+        folder = ROOT / "outputs" / args.out / pair / args.camera
         if not cache_file.exists() or not folder.parent.exists():
             print(f"{pair}: 저장분이나 기록 폴더 없음 (건너뜀)", flush=True)
             continue
@@ -421,8 +423,8 @@ def main() -> int:
 
             detector = build_item_detector(args.model, args.imgsz, args.conf, base.detector.device, [])
         started = time.time()
-        _video, ref = sync_pair.pair_files(pair, args.shoot)
-        found = detect_all(Path(ref), cache, detector, dual_eval.STRIDE[CAMERA])
+        video, ref = sync_pair.pair_files(pair, args.shoot)
+        found = detect_all(Path(video if args.camera == "angle0" else ref), cache, detector, dual_eval.STRIDE[args.camera])
         rows = [row(frame, found[frame]) for frame in sorted(found)]
         write(folder, rows, want)
         print(f"{pair}: 장면 {len(rows)}장 · 상품 상자 {sum(len(r['items']) for r in rows)}개 · {time.time() - started:.0f}초", flush=True)
