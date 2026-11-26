@@ -67,7 +67,7 @@ class Track:
     held: dict[int, deque] = field(default_factory=dict)
     """신원 → 그 손에서 본 최근 장면들 (물건으로 정해지기 전까지)."""
     inside: deque = field(default_factory=lambda: deque(maxlen=HOLD_FRAMES))
-    """선반 자리 안에서 본 최근 장면들."""
+    """선반 자리 안에서 **잇달아** 본 최근 장면들 (선반 밖에서 한 번 보이면 비운다)."""
     item: "Item | None" = None
     dead: bool = False
     """상품이 아닌 것으로 정했다 (선반에서 안 나왔고, 다시 보인 물건도 아니다)."""
@@ -175,6 +175,9 @@ class ItemTracker:
                 t.held.clear()
                 t.reads.clear()
             return
+        # 선반 밖에서 봤다 — '선반 자리에 머문 장면'은 여기서부터 다시 모은다. 안 비우면 집기 전에 선반에 있던 장면이 남아,
+        # 집은 뒤 한 장면만 진열 자리와 겹쳐도 '놓음'이 된다 (4차 N05: 집음 6.58초 → 놓음 6.64초, 후속 76)
+        t.inside.clear()
         raw = holder_of(it, people, self.reach)
         if raw is None or (self.confused is not None and self.confused(raw, ms)):
             return

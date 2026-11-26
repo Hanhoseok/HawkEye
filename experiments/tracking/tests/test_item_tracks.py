@@ -92,6 +92,24 @@ def test_item_put_back_on_the_shelf_is_returned():
     assert run.kinds() == ["pick", "back", "pick"] and run.events[2].item == 1
 
 
+def test_one_frame_over_the_shelf_after_a_pick_is_not_a_return():
+    # 집기 전에 선반에 있던 장면은 놓음에 안 친다 — 든 물건이 한 장면 선반 자리와 겹친 것은 놓음이 아니다 (4차 N05, 후속 76)
+    run = Run().pick()
+    for x in (1200, 1250, 1300, 1350, 1400, 1350, 1300):     # 1400 = 선반 자리 가장자리 (한 장면)
+        run.see([box("cantata", (x, 650))])
+    assert run.kinds() == ["pick"] and [i.name for i in run.tracker.carried(1)] == ["cantata"]
+
+
+def test_return_needs_the_frames_after_the_item_left_the_shelf():
+    run = Run().pick()
+    for x in (1200, 1250, 1300, 1350):
+        run.see([box("cantata", (x, 650))])
+    run.see([box("cantata", (1400, 650))], times=4)           # 선반 자리에 4장면 — 아직 놓음이 아니다
+    assert run.kinds() == ["pick"]
+    run.see([box("cantata", (1400, 650))])                    # 5장면째
+    assert run.kinds() == ["pick", "back"]
+
+
 def test_two_items_taken_together_are_two_picks():
     run = Run().see([box("donggwaru", (1450, 620)), box("donggwaru", (1450, 720))], times=6)
     for x, _ in OUT:
