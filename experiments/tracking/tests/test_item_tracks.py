@@ -283,6 +283,77 @@ def test_track_does_not_hop_to_a_box_of_another_size():
     assert play(frames, places) == ["pick"]
 
 
+# ---------------------------------------------------------------------- 시작을 아는 추적은 안 끊는다 (후속 81)
+
+UP = [(1620, 600), (1620, 560), (1600, 520), (1560, 520), (1520, 520), (1500, 520), (1500, 520)]   # 자리 A 에서 위로 꺼내 B 위쪽에 든다
+
+
+def scene(frames: list, places: list, people: list | None = None) -> Run:
+    r = Run()
+    for items in frames:
+        r.tracker.update(r.ms, items, [WIDE] if people is None else people, REGION, places)
+        r.events += r.tracker.fresh()
+        r.ms += STEP
+    return r
+
+
+def carrying() -> tuple[list, list, list]:
+    """자리 A 의 칸타타를 집어 자리 B(동과루가 놓여 있다) 위쪽에 들고 있다 → (진열 자리, 진열 상자, 장면들)."""
+    places = [box("cantata", A), box("donggwaru", B)]
+    stock = box("donggwaru", B)
+    return places, stock, [[big("cantata", A), stock]] * 6 + [[big("cantata", at), stock] for at in UP]
+
+
+def test_held_item_hidden_for_long_keeps_its_track():
+    # 4차 N11 전체 카메라 11.88초: 든 물건이 0.6초 넘게 안 보이다 진열 상자 옆에서 다시 보였다. 든 물건의 추적을 끊으면
+    # 살아 있는 진열 상자의 추적이 그 상자를 가져가 '선반에서 나온 새 물건'이 된다 (틀린 집음)
+    places, stock, frames = carrying()
+    frames += [[stock]] * 12                                         # 든 물건이 손에 가려 0.8초 안 보인다
+    frames += [[big("cantata", (1480, 560))]]                       # 진열 상자 바로 위에서 다시 보였다 (진열 상자는 그 뒤에 가렸다)
+    frames += [[big("cantata", (x, y)), stock] for x, y in ((1470, 540), (1460, 520), (1450, 500), (1440, 480), (1430, 460), (1420, 440))]
+    r = scene(frames, places)
+    assert r.kinds() == ["pick"] and len(r.tracker.carried(1)) == 1
+
+
+def test_shelf_item_hidden_behind_the_customer_keeps_its_track():
+    # 4차 N08-2 선반 카메라 6.13초: 진열 상자가 팔에 가려 0.6초 넘게 안 보였다. 그 추적을 끊으면, 든 물건이 안 보이는 사이
+    # 다시 드러난 진열 상자에 든 물건의 추적이 붙어 '놓음'이 된다 (틀린 놓음)
+    places, stock, frames = carrying()
+    frames += [[big("cantata", (1450, 560))]] * 12                   # 든 물건을 B 위쪽에 들고 있다 — 진열 상자는 팔에 가렸다
+    frames += [[stock]] * 6                                         # 든 물건이 손에 가리고, 진열 상자가 다시 드러났다
+    r = scene(frames, places)
+    assert r.kinds() == ["pick"] and len(r.tracker.carried(1)) == 1
+
+
+def test_shelf_item_is_forgotten_when_nothing_hides_it():
+    # 가린 것이 없는데 0.6초 넘게 안 보이면 없는 것이다 — 사람이 그 자리를 덮고 있는 동안만 기억한다
+    places, stock = [box("donggwaru", B)], box("donggwaru", B)
+    gone = scene([[stock]] * 6 + [[]] * 12, places, people=[])
+    assert gone.tracker.live == []
+    kept = scene([[stock]] * 6 + [[]] * 30, places)                 # 손님이 3초 동안 그 앞에 서 있다
+    assert [t.origin for t in kept.tracker.live] == ["shelf"]
+    kept.tracker.update(kept.ms, [], [], REGION, places)            # 손님이 떠났다 — 그때부터 0.6초
+    assert len(kept.tracker.live) == 1
+    kept.tracker.update(kept.ms + LINK_GAP_MS + STEP, [], [], REGION, places)
+    assert kept.tracker.live == []
+
+
+def test_long_hidden_tracks_only_take_a_box_that_fits_their_start():
+    places, stock, frames = carrying()
+    # 든 물건: 오래 안 보인 뒤 선반 위에 나타난 상자는 안 잇는다 (손에 든 상자만) — 이으면 그 자리에 머물러 '놓음'이 된다
+    r = scene(frames + [[stock]] * 12 + [[stock, big("cantata", A)]] * 6, places)
+    assert r.kinds() == ["pick"]
+    # 진열 상자: 오래 가려진 뒤 다른 자리에 나타난 상자는 안 잇는다 (제 자리의 상자만)
+    r = scene([[stock]] * 6 + [[]] * 12 + [[box("donggwaru", (1530, 650))]], [box("donggwaru", B), box("donggwaru", (1530, 650))])
+    assert sorted(t.origin for t in r.tracker.live) == ["near", "shelf"]
+
+
+def test_item_seen_again_on_a_new_track_leaves_the_old_one():
+    run = Run().pick().wait(LINK_GAP_MS + 500)
+    run.see([box("cantata", (1100, 400))], times=8)                 # 멀리서 다시 보였다 — 새 추적이 그 물건을 이어받는다
+    assert len([t for t in run.tracker.live if t.item is not None]) == 1
+
+
 # ---------------------------------------------------------------------- 종류와 개수
 
 def test_kind_read_differently_for_a_moment_changes_nothing():

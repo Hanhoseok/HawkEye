@@ -27,7 +27,16 @@ from .overview_count import HOLD_FRAMES, HOLD_WITHIN_MS, REACH, SCORE, center, h
 SAME_BOX = 0.2
 """종류와 상관없이 이만큼 겹친 상자는 한 물건이다 (한 물건에 두 종류의 상자가 겹쳐 나온다)."""
 LINK_GAP_MS = 600.0
-"""이만큼 안 보인 줄은 끊는다 (그 뒤에 보인 상자는 새 줄)."""
+"""이만큼 안 보인 추적은 끊는다 (그 뒤에 보인 상자는 새 추적) — **시작을 아는 추적 둘은 빼고** (후속 81, 사용자 지적:
+'추적이 시작을 안 따진다 — 놓는다는 것은 들고 있던 물건을 놓는 것인데, 그 물건을 따라가다 선반 위의 다른 물건을 따라가게 된다').
+
+  - 진열 상자 (진열 자리에 멈춰 있던 추적): 그 자리가 **가려져 있는 동안**은 안 끊는다. 가린 것(사람 · 다른 상자)이 없는데
+    이만큼 안 보이면 없는 것이다. 오래 안 보인 뒤에는 **제 자리의 상자**(마지막 상자와 SAME_BOX 이상 겹침)만 잇는다
+  - 든 물건 (집어서 아직 안 놓은 물건의 추적): 안 끊는다. 오래 안 보인 뒤에는 **그 손님 손에 든, 선반 밖의 상자**만 잇는다
+
+전에는 둘 다 이만큼 지나면 끊었다. 든 물건이 손에 가려 0.6초 넘게 안 보이다 진열 상자 옆에서 다시 보이면, 제 추적은 없고
+진열 상자의 추적만 살아 있어 그 추적이 든 물건을 가져갔다 → '선반에서 나온 새 물건' = 틀린 집음 (4차 N11 전체 카메라 11.88초).
+둘은 함께 넣어야 한다 — 하나만 넣으면 남은 쪽이 상자를 가져간다 (진열 상자만: 4차 N05 를 하나 더 셈, 든 물건만: 3차 C04 틀린 놓음 +1)."""
 LINK_STEP_MS = 150.0
 LINK_JUMP = 2.5
 """추적을 상자에 이을 수 있는 한계 = min(1 + 안 보인 시간 / LINK_STEP_MS, LINK_JUMP). 이것과 견주는 값은 '달라진 정도'(changed)다:
@@ -134,6 +143,10 @@ class Track:
     추적이 옆 상자로 한 번 옮겨 붙음 · 겹친 두 상자를 번갈아 읽음)은 움직임으로 안 친다."""
     dead: bool = False
     """상품이 아닌 것으로 정했다 (선반에서 안 나왔고, 다시 보인 물건도 아니다)."""
+    resting: bool = False
+    """진열 자리에 멈춰 머문 뒤로 선반 밖에서 본 적이 없다 = 지금 선반 위의 물건이다."""
+    kept_ms: float = 0.0
+    """안 보이는 동안 그 자리가 가려져 있던 마지막 때."""
 
     def move(self, ms: float, box: list) -> None:
         """새 장면의 상자로 옮긴다."""
@@ -213,11 +226,11 @@ class ItemTracker:
         for it in sorted((i for i in items if i[5] >= self.score), key=lambda i: -i[5]):
             if all(iou(k, it) < SAME_BOX for k in boxes):
                 boxes.append(it)
-        self.live = [t for t in self.live if ms - t.last_ms <= LINK_GAP_MS]
+        self.live = [t for t in self.live if self._alive(t, ms, boxes, people)]
         pairs = []
         for bi, it in enumerate(boxes):
             for ti, t in enumerate(self.live):
-                if changed(t.last, it, center(t.last)) <= min(1.0 + (ms - t.last_ms) / LINK_STEP_MS, LINK_JUMP):
+                if self._may_link(t, it, ms, people, region):
                     pairs.append((changed(t.last, it, t.ahead(ms)), bi, ti))
         used_box: set[int] = set()
         used_track: set[int] = set()
@@ -238,11 +251,49 @@ class ItemTracker:
         for t, it in seen:
             self._see(t, ms, it, people, region)
 
+    def _alive(self, t: Track, ms: float, boxes: list, people: list) -> bool:
+        """이 추적을 더 들고 있나. 시작을 아는 추적(진열 상자 · 든 물건)은 안 보여도 들고 있는다 (LINK_GAP_MS 의 설명)."""
+        if ms - t.last_ms <= LINK_GAP_MS:
+            return True
+        if t.item is not None:
+            return t.item.track is t and t.item.returned_ms is None
+        if not t.resting:
+            return False
+        x, y = center(t.last)
+        if (any(b[0] <= x <= b[2] and b[1] <= y <= b[3] for _, b, _ in people)
+                or any(iou(it, t.last) >= SAME_BOX for it in boxes)):
+            t.kept_ms = ms   # 사람이나 다른 상자가 그 자리를 가리고 있다
+        return ms - max(t.last_ms, t.kept_ms) <= LINK_GAP_MS
+
+    def _may_link(self, t: Track, it: list, ms: float, people: list, region) -> bool:
+        """이 추적을 이 상자에 이을 수 있나. 오래 안 보인 추적은 제 시작에 맞는 상자만 잇는다."""
+        if changed(t.last, it, center(t.last)) > min(1.0 + (ms - t.last_ms) / LINK_STEP_MS, LINK_JUMP):
+            return False
+        if ms - t.last_ms <= LINK_GAP_MS:
+            return True
+        if t.item is not None:
+            return self._spot(it, region) == "off" and self._hand(it, ms, people) == self.resolve(t.item.owner)
+        return iou(it, t.last) >= SAME_BOX
+
+    def _spot(self, it: list, region) -> str:
+        """상자가 있는 곳 — shelf(진열 자리 위) · edge(자리들 안에 든 조각) · off(선반 밖)."""
+        if not self._places:
+            return "shelf" if shelf_distance(region, center(it)) == 0 else "off"
+        if any(iou(it, p) >= ON_PLACE for p in self._places):
+            return "shelf"
+        return "edge" if covered(it, self._places) >= IN_PLACES else "off"
+
+    def _hand(self, it: list, ms: float, people: list) -> int | None:
+        """이 상자를 든 손님 (지금의 신원). 못 정하거나 그 사람을 헷갈리고 있는 장면이면 None."""
+        raw = holder_of(it, people, self.reach)
+        if raw is None or (self.confused is not None and self.confused(raw, ms)):
+            return None
+        return self.resolve(raw)
+
     def _see(self, t: Track, ms: float, it: list, people: list, region) -> None:
         t.move(ms, it)
-        on_shelf = (shelf_distance(region, center(it)) == 0 if not self._places
-                    else any(iou(it, p) >= ON_PLACE for p in self._places))
-        if on_shelf:
+        spot = self._spot(it, region)
+        if spot == "shelf":
             t.inside.append((ms, it))
             if (len(t.inside) == self.min_frames and ms - t.inside[0][0] <= HOLD_WITHIN_MS
                     and all(iou(b, it) >= SAME_BOX for _, b in t.inside)):
@@ -252,21 +303,21 @@ class ItemTracker:
                 if t.item is not None and t.item.returned_ms is None:
                     t.item.returned_ms = ms
                     self._events.append(ItemEvent("back", t.item.owner, t.item.name, t.item.seen_ms, ms, t.item.id))
-                t.item, t.dead, t.origin = None, False, "shelf"
+                t.item, t.dead, t.origin, t.resting = None, False, "shelf", True
                 t.held.clear()
                 t.reads.clear()
             return
-        if self._places and covered(it, self._places) >= IN_PLACES:
+        if spot == "edge":
             # 진열 자리와 겹침은 작은데 상자가 자리들 안에 들어 있다 — 가려진 진열 상자의 드러난 일부일 수 있다.
             # 든 장면으로도, 선반에 머문 장면으로도 안 친다 (3차 N11: 몸 뒤에서 드러난 상자 끝을 새 물건으로 셈, 후속 78)
             return
         # 선반 밖에서 봤다 — '선반 자리에 머문 장면'은 여기서부터 다시 모은다. 안 비우면 집기 전에 선반에 있던 장면이 남아,
         # 집은 뒤 한 장면만 진열 자리와 겹쳐도 '놓음'이 된다 (4차 N05: 집음 6.58초 → 놓음 6.64초, 후속 76)
         t.inside.clear()
-        raw = holder_of(it, people, self.reach)
-        if raw is None or (self.confused is not None and self.confused(raw, ms)):
+        t.resting = False
+        pid = self._hand(it, ms, people)
+        if pid is None:
             return
-        pid = self.resolve(raw)
         if t.item is not None:
             self._read(t.item, it[0], ms)
             return
@@ -308,6 +359,7 @@ class ItemTracker:
                 t.dead = True   # 들고 있던 물건과 종류가 다르다 — 잇지 않는다 (종류를 안 섞는다). 개수는 그대로다
                 return
             item = max(same, key=lambda i: i.track.last_ms)   # 가장 늦게까지 보이던 것이 다시 보였다
+            item.track.item, item.track.dead = None, True   # 한 물건을 두 추적이 갖지 않는다 — 옛 추적은 물건을 내려놓는다
             item.track, t.item = t, item
             for name, n in t.reads.items():
                 item.reads[name] += n
