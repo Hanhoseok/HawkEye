@@ -15,8 +15,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from src.core.config import FusionConfig  # noqa: E402
-from src.fusion.item_tracks import ItemTracker  # noqa: E402
-from src.fusion.overview_count import OverviewCounter, places_of  # noqa: E402
+from src.fusion.item_tracks import ON_PLACE, ItemTracker, covered  # noqa: E402
+from src.fusion.overview_count import OverviewCounter, iou, places_of  # noqa: E402
 from test_item_tracks import OUT, P, REGION, SHELF, Run, box, feed  # noqa: E402
 from test_overview_count import STEP  # noqa: E402
 from test_overview_instant import frame_at, make_judge  # noqa: E402
@@ -89,6 +89,32 @@ def test_item_put_back_on_a_place_is_a_return():
         r.events += r.tracker.fresh()
         r.ms += STEP
     assert r.kinds() == ["pick", "back"]
+
+
+WIDE = (1, [1000, 200, 1700, 900], None)                      # 선반 앞에 서서 선반을 가린 손님 1
+TIP = ["donggwaru", 1440, 620, 1460, 640, 0.8]                # 진열 자리(1430 ~ 1470, 620 ~ 680) 안의 작은 조각
+
+
+def test_covered_is_the_share_of_the_box_inside_the_places():
+    places = [box("applecider", SHELF), box("donggwaru", (SHELF[0] + 40, SHELF[1]))]      # 나란한 두 자리
+    assert covered(TIP, places) == 1.0 and iou(TIP, places[0]) < ON_PLACE     # 다 들어 있어도 겹침은 작다
+    assert covered(["donggwaru", 1460, 620, 1480, 640, 0.8], places) == 1.0  # 두 자리에 걸쳐 있다 — 합친 자리로 따진다
+    assert covered(["donggwaru", 1420, 620, 1440, 640, 0.8], places) == 0.5  # 반은 자리 밖
+    assert covered(box("cantata", (1350, 650)), places) == 0.0 and covered(TIP, []) == 0.0
+
+
+def test_tip_of_a_shelf_item_showing_inside_its_place_is_not_a_pick():
+    # 3차 N11: 손님 몸에 가린 진열 상자의 위쪽 끝만 드러났다 — 자리와의 겹침이 작아 '선반 밖'이 되고, 선반 옆에서 나타난 새 물건으로 세어졌다
+    places = [box("applecider", SHELF)]
+    def run(item: list) -> list[str]:
+        r = Run()
+        for _ in range(8):
+            r.tracker.update(r.ms, [item], [WIDE], REGION, places)
+            r.events += r.tracker.fresh()
+            r.ms += STEP
+        return r.kinds()
+    assert run(TIP) == []                                                   # 자리 안에 든 조각: 든 것으로 안 친다
+    assert run(["donggwaru", 1380, 620, 1400, 640, 0.8]) == ["pick"]        # 같은 크기라도 자리 밖(선반 바로 옆)이면 집은 물건이다
 
 
 # ---------------------------------------------------------------------- 두 카메라를 한 장부로

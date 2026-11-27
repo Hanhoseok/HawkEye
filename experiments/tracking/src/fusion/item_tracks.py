@@ -36,6 +36,11 @@ ON_PLACE = 0.2
 '선반 밖'이 되어 많이 센다 (4차 손님 한 명 21명: 많이 센 사람 0 → 2 → 4명, 3차 19명: 0 → 2 → 6명)."""
 NEAR = 1.5
 """선반 자리에서 상자 대각선의 이 배수 안에서 처음 나타난 상자는 '선반 바로 옆'이다 — 나오는 순간 손에 가려 줄이 끊긴 것으로 본다."""
+IN_PLACES = 0.9
+"""상자의 넓이 가운데 이만큼이 진열 자리들 안에 있으면 '선반 밖에서 본 장면'으로 안 친다 (ON_PLACE 에 못 미쳐도).
+작은 조각은 자리 안에 다 들어 있어도 겹침(IoU)이 작다 — 겹침은 합친 넓이로 나누기 때문이다 (3차 N11: 겹침 0.08 ~ 0.16, 자리 안 0.83 ~ 0.93).
+NESTED 와 같은 뜻의 값이다 ('거의 다 안에 있다'). 0.5 로 낮추면 선반 앞에서 꺼내는 중인 진짜 물건의 장면까지 빠져 늦게 센다
+(3차 손님 한 명 19편: 정답보다 적게 안 시간 37.0 → 39.5초, 많이 안 시간은 29.9 → 29.7초로 거의 같다)."""
 NESTED = 0.9
 """두 상자 가운데 작은 쪽이 큰 쪽 안에 이만큼 들어 있으면 한 물건이다 — 한 물건을 손 · 팔까지 넓게 두른 상자 (4차 N02: 품는 비율 1.0, 넓이 4.5배).
 나란히 든 두 물건은 서로 품지 않는다 (4차 손님 한 명 21편의 진짜 둘째 물건 7번: 0 ~ 0.35, 먼 선반 카메라의 한 번만 0.83).
@@ -58,6 +63,22 @@ def nested(a: list, b: list) -> float:
         return 0.0
     small = min((a[3] - a[1]) * (a[4] - a[2]), (b[3] - b[1]) * (b[4] - b[2]))
     return w * h / small if small > 0 else 0.0
+
+
+def covered(box: list, places: list) -> float:
+    """상자의 넓이 가운데 진열 자리들(합친 것)이 덮은 비율."""
+    cut = [(max(box[1], p[1]), max(box[2], p[2]), min(box[3], p[3]), min(box[4], p[4])) for p in places]
+    cut = [c for c in cut if c[2] > c[0] and c[3] > c[1]]
+    area = (box[3] - box[1]) * (box[4] - box[2])
+    if not cut or area <= 0:
+        return 0.0
+    xs, ys = sorted({v for c in cut for v in (c[0], c[2])}), sorted({v for c in cut for v in (c[1], c[3])})
+    got = 0.0
+    for x1, x2 in zip(xs, xs[1:]):
+        for y1, y2 in zip(ys, ys[1:]):
+            if any(c[0] <= x1 and x2 <= c[2] and c[1] <= y1 and y2 <= c[3] for c in cut):
+                got += (x2 - x1) * (y2 - y1)
+    return got / area
 
 
 def shelf_distance(region, point: tuple[float, float]) -> float:
@@ -188,6 +209,10 @@ class ItemTracker:
                 t.item, t.dead, t.origin = None, False, "shelf"
                 t.held.clear()
                 t.reads.clear()
+            return
+        if self._places and covered(it, self._places) >= IN_PLACES:
+            # 진열 자리와 겹침은 작은데 상자가 자리들 안에 들어 있다 — 가려진 진열 상자의 드러난 일부일 수 있다.
+            # 든 장면으로도, 선반에 머문 장면으로도 안 친다 (3차 N11: 몸 뒤에서 드러난 상자 끝을 새 물건으로 셈, 후속 78)
             return
         # 선반 밖에서 봤다 — '선반 자리에 머문 장면'은 여기서부터 다시 모은다. 안 비우면 집기 전에 선반에 있던 장면이 남아,
         # 집은 뒤 한 장면만 진열 자리와 겹쳐도 '놓음'이 된다 (4차 N05: 집음 6.58초 → 놓음 6.64초, 후속 76)
