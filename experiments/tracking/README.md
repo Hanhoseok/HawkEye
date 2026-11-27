@@ -220,7 +220,7 @@ data/videos/, outputs/     입력 영상·결과물 (git 제외)
 
 | 쓰임 | 파일 | 한 줄 |
 |---|---|---|
-| **카메라 2대 평가** | `dual_eval.py` | 2차 촬영 38쌍 · `--shoot 3` 3차 39쌍 · `--shoot 4` 4차 42쌍: `run`(기록) · `replay`(저장분으로 다시) · `sync`(시차) · `calibrate`(띠 축) · `judge`(판정만 다시). `judge --sensor --sensor-lanes L1,L2 --payments` = 센서 로그 + 결제 기록으로 판정 (최종 흐름) |
+| **카메라 2대 평가** | `dual_eval.py` | 2차 촬영 38쌍 · `--shoot 3` 3차 39쌍 · `--shoot 4` 4차 42쌍: `run`(기록) · `replay`(저장분으로 다시) · `sync`(시차) · `calibrate`(띠 축) · `judge`(판정만 다시). `judge --sensor --sensor-lanes L1,L2 --payments` = 센서 로그 + 결제 기록으로 판정 (최종 흐름 — 센서 로그는 4차에만 있어 `--sensor` 는 `--shoot 4` 에서만) |
 | | `regress.py` | 고친 뒤 점수가 떨어졌는지 — 2 · 3 · 4차를 방식별(영상만 · 센서 · 결제 · 센서 + 결제)로 다시 판정해 기준과 견줌 (`check` · `update`) |
 | | `sync_pair.py` · `calibrate_floor.py` | 두 화면을 보며 시차 확정 · 바닥 보정점으로 바닥 지도 만들기 |
 | | `label_payments.py` | 두 화면을 보며 결제 시각·개수·시차를 적는 도구 (`labels/store01_dual/payments.csv`) |
@@ -393,6 +393,7 @@ Phase 3 의 기록 양식은 `docs/phase3-failure-notes.md` 에 만들어 두었
 | 2026-11-27 | 물건 추적을 이을 때 크기 · 움직임까지 보고, '선반 위'는 자리에 멈춰 있는 것 (`src/fusion/item_tracks.py` `changed` · `Track.ahead`) | 거리만 보고 이어, 든 물건이 진열 상자 앞을 지날 때 두 추적이 서로 바뀌었다 (든 물건은 '놓음', 진열 상자는 '집음'). 틀린 놓음 32 → 17번, 최종 개수 · 판정은 그대로. 4차 N11 한 편은 잠깐 하나 더 센다 | `docs/multiview-progress.md` 후속 80 |
 | 2026-11-27 | 시작을 아는 물건 추적은 안 끊는다 — 진열 상자는 가려진 동안, 든 물건은 놓을 때까지 (`src/fusion/item_tracks.py` `_alive` · `_may_link`) | 0.6초 안 보이면 끊어, 다시 보인 든 물건을 진열 상자의 추적이 가져가 하나 더 집은 것으로 읽었다 (4차 N11). 4차 N11 최대 개수 3 → 2, 틀린 놓음 17 → 16번, 최종 개수 · 판정은 그대로 | `docs/multiview-progress.md` 후속 81 |
 | 2026-11-27 | 놓음 = 진열 자리에 멈췄고 손이 떠났다 (`src/fusion/item_tracks.py` `_touched` · `Track.waiting`) | 자리에 다섯 장면 멈추면 놓음이라, 든 채 진열 상자 앞에 멈춘 것 · 건네는 것을 놓음으로 읽었고 놓은 때도 0.4 ~ 2초 일렀다. 틀린 놓음 16 → 10번, 맞는 놓음 13 → 15번, 최종 개수 · 판정은 그대로 | `docs/multiview-progress.md` 후속 82 · 83 |
+| 2026-11-27 | 3차 점수 · 회귀 검사 · 분석 도구에서 센서 방식을 뺌 — 센서 로그는 4차에만 해당 (`scripts/shoots.py` `Shoot.sensor`, `scripts/regress.py`, `workbench/data.py`) | 3차는 영상만 33 · 결제 37 / 39 로만 잰다 (판정 · 최종 개수는 39편 모두 그대로). `--shoot 3 judge --sensor` 는 돌리지 않고 까닭을 말한다. 4차 · 2차 그대로 | `docs/multiview-progress.md` 후속 84 |
 
 **다음에 확인할 것** (2026-10-14 에 적은 것): 계산하고 나가는 손님을 통과시키는가(직접 촬영 필요), 선반 지도 2단계(상품 탐지 모델), 선반 확인 속도.
 → 2026-11-10: 계산하고 나가는 손님은 1차·2차 촬영 정상 영상으로 확인(정상 11/12). 상품 탐지 모델은 아직 안 함. **지금의 다음 단계는 `docs/results-summary.md` §0-5.**

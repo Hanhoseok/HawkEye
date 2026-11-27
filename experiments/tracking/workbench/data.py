@@ -123,10 +123,10 @@ PROFILES = {
                (ROOT / "config.yaml", *(ROOT / "zones" / "store01_shoot3" / n for n in
                                         ("floor.yaml", "angle0.yaml", "floor_angle0.yaml", "band_map.yaml")),
                 ROOT / "outputs" / "sync_floor" / "register.csv"), False,
-               # 3차도 최종 판정 흐름으로 본다 (사용자 결정 2026-11-23, 후속 64): 센서 기록(L1 · L2) + 결제 라벨. 3차에는 실제 결제 로그가 없어
-               # 사람이 적은 결제 라벨(payments.csv)을 쓴다. 수치 조정의 초안도 같은 입력으로 판정한다 (Builder._build).
-               payment="결제 라벨 (사람이 적음)", sensor_lanes=("L1", "L2"), payments=True,
-               note="센서 기록(L1 · L2)과 사람이 적은 결제 라벨을 넣은 판정입니다. 센서 L3(애플사이다)은 판정에 안 씁니다."),
+               # 3차는 결제 라벨만 넣어 본다 (후속 84, 사용자 2026-11-27 — 센서 로그는 4차에만 해당한다. 후속 64 ~ 83 은 센서 기록(L1 · L2)도 넣었다).
+               # 3차에는 실제 결제 로그가 없어 사람이 적은 결제 라벨(payments.csv)을 쓴다. 수치 조정의 초안도 같은 입력으로 판정한다 (Builder._build).
+               payment="결제 라벨 (사람이 적음)", sensor_lanes=(), payments=True,
+               note="사람이 적은 결제 라벨을 넣은 판정입니다. 센서는 안 넣습니다 — 센서 로그는 4차에만 해당합니다."),
     # 4차(2026-11-19)는 최종 판정 흐름 그대로 본다: 상품 모델 기록 + 센서 로그(L1 · L2) + 결제 로그 (사용자 방향, 2026-11-20).
     # 수치 조정도 켠다 (사용자 결정 2026-11-23, 후속 65) — 초안도 같은 입력(센서 로그 + 결제 로그)으로 판정한다. 적용한 값은 configs/store01_shoot4_judge.yaml.
     4: Profile(4, "4차 촬영", ROOT / "outputs" / "dual_eval_shoot4", ROOT / "labels" / "store01_shoot4",
@@ -146,13 +146,14 @@ MAX_VIEWS = 2
 더 옛 판정은 점수만 본다: `scripts/dual_eval.py judge --out <기록> --set …` (docs/shelf-map.md)."""
 
 SHOOT3_PREV = 31
-"""바로 전 판정: 지금 기록(상품 모델)을 **영상만**으로 판정한 것 — 센서 기록과 결제 라벨을 안 넣고 계산대 체류를 결제로 본다
-(2026-11-23 후속 64 전까지 3차 보기의 기준이었다). 그 전의 '방문이 끝나야 셈'(fusion.overview_instant 끔) 보기는 규칙대로 지웠다.
+"""바로 전 판정: 지금 기록(상품 모델)을 **영상만**으로 판정한 것 — 결제 라벨을 안 넣고 계산대 체류를 결제로 본다
+(2026-11-23 후속 64 전까지 3차 보기의 기준이었다). 후속 84 에서 기준이 「센서 + 결제 라벨」 → 「결제 라벨」로 바뀌었지만 이 보기를 그대로 둔다 —
+규칙대로면 「센서 + 결제 라벨」이 바로 전 판정이 되는데, 센서 로그는 4차에만 해당해 3차에 센서 보기를 남기지 않는다. 그 전의 '방문이 끝나야 셈'(fusion.overview_instant 끔) 보기는 규칙대로 지웠다.
 정답표 · 시차 · 결제 · 구역 · 적용한 값은 3차 것을 그대로 쓴다 — 여기서 정답을 고치면 3차의 정답이 바뀐다."""
 PROFILES[SHOOT3_PREV] = replace(
     PROFILES[3], name="3차 · 바로 전 판정 (영상만)", out=OUT / "shoot3_prev", can_tune=False, thumbs=OUT / "shoot3" / "thumbs",
     payment="계산대 체류 = 결제", sensor_lanes=(), payments=False,
-    note="'3차 촬영'과 같은 기록입니다. 센서 기록과 결제 라벨 없이 영상만으로 낸 판정입니다 "
+    note="'3차 촬영'과 같은 기록입니다. 결제 라벨 없이 영상만으로 낸 판정입니다 "
          "(2026-11-23 후속 64 전의 기준). 수치 조정은 3차 촬영에서 합니다.")
 
 

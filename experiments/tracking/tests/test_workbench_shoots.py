@@ -97,11 +97,12 @@ def other_records(monkeypatch):
 
 
 def test_previous_view_judges_the_same_records_from_video_only():
-    """3차 기준 = 센서 기록(L1 · L2) + 결제 라벨 (후속 64). 바로 전 판정 = 같은 기록을 영상만으로."""
+    """3차 기준 = 결제 라벨 (후속 84 — 센서 로그는 4차에만 해당). 바로 전 판정 = 같은 기록을 영상만으로."""
     three, prev = PROFILES[3], PROFILES[SHOOT3_PREV]
     assert SHOOT3_PREV == 31 and prev.shoot == 3 and Builder(SHOOT3_PREV).shoot == 3 and Builder(SHOOT3_PREV).key == SHOOT3_PREV
     assert prev.records == three.records and prev.out != three.out          # 같은 기록, 만든 것은 따로
-    assert three.sensor_lanes == ("L1", "L2") and three.payments and three.overrides == ()
+    assert three.sensor_lanes == () and three.payments and three.overrides == ()
+    assert PROFILES[4].sensor_lanes == ("L1", "L2") and PROFILES[4].payments
     assert prev.sensor_lanes == () and not prev.payments and prev.overrides == () and prev.payment != three.payment
     for name in ("labels", "zones", "judge_file", "signature_files"):
         assert getattr(prev, name) == getattr(three, name), name            # 정답표 · 구역 · 적용한 값은 3차 것

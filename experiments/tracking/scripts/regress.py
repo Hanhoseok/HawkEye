@@ -6,7 +6,8 @@
     python scripts/regress.py update                      # 지금 결과를 기준으로
 
 - 기준: baselines/shoot<N>_<방식>.json — 짝별 판정·맞음·손님 수 (작은 파일, 커밋함).
-  방식: 3차 · 4차 v(영상만)·s(센서 L1,L2)·p(결제 — 3차 사람이 찍은 라벨, 4차 결제 로그)·ps(센서+결제), 2차 v·p.
+  방식: 4차 v(영상만)·s(센서 L1,L2)·p(결제 로그)·ps(센서+결제), 3차 v·p(결제 — 사람이 찍은 라벨), 2차 v·p.
+  센서 방식은 4차에만 있다 — 센서 로그는 4차에만 해당한다 (사용자 2026-11-27, 후속 84. 3차의 s · ps 기준은 지웠다).
 - 실행 기록: 기본 실행 폴더(4차 outputs/dual_eval_shoot4, 3차 outputs/dual_eval_shoot3_prod — 상품 모델 기록 (후속 56), 2차 outputs/dual_eval_pose3). --replay 는 그 폴더의 저장분(cache)으로
   outputs/regress_tmp_shoot<N> 에 관찰 층을 다시 계산한 뒤 거기서 판정한다 (docs/replay-cache.md).
 - 종료 코드: 0 = 기준과 같거나 좋아짐, 1 = 나빠진 짝 있음(맞던 짝이 틀림·손님 수가 틀려짐), 2 = 검사가 불완전(빠진 짝·실패한 짝).
@@ -30,8 +31,7 @@ BASELINES = ROOT / "baselines"
 MODES = {
     4: {"v": {}, "s": {"sensor": True, "lanes": ("L1", "L2")}, "p": {"payments": True},
         "ps": {"sensor": True, "lanes": ("L1", "L2"), "payments": True}},
-    3: {"v": {}, "s": {"sensor": True, "lanes": ("L1", "L2")}, "p": {"payments": True},
-        "ps": {"sensor": True, "lanes": ("L1", "L2"), "payments": True}},
+    3: {"v": {}, "p": {"payments": True}},
     2: {"v": {}, "p": {"payments": True}},
 }
 MODE_NAMES = {"v": "영상만", "s": "센서 L1·L2", "p": "결제 기록", "ps": "센서+결제"}

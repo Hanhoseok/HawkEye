@@ -68,3 +68,24 @@ def test_settings_that_would_be_silently_ignored_are_refused():
     assert "직접" in regress.check_sets(["tracker.name=bytetrack"], True, False)
     assert "--identity-check" in regress.check_sets(["risk.swap_threshold=0.5"], False, False)
     assert regress.check_sets(["risk.swap_threshold=0.5"], False, True) is None
+
+
+def test_sensor_modes_exist_only_for_the_shoot_with_a_sensor_log(monkeypatch, capsys):
+    """센서 로그는 4차에만 해당한다 (사용자 2026-11-27, 후속 84) — 3차는 영상만 · 결제뿐이고 센서 기준 파일도 없다."""
+    import pytest
+
+    import dual_eval
+    import shoots
+
+    for shoot, modes in regress.MODES.items():
+        has_sensor = shoot >= 3 and shoots.get(shoot).sensor
+        assert any(spec.get("sensor") for spec in modes.values()) == has_sensor, shoot
+        for mode in ("s", "ps"):
+            assert regress.baseline_path(shoot, mode).exists() == (mode in modes), (shoot, mode)
+    assert set(regress.MODES[3]) == {"v", "p"} and set(regress.MODES[4]) == {"v", "s", "p", "ps"}
+    # 3차를 센서로 판정해 달라고 하면 돌리지 않고 까닭을 말한다
+    monkeypatch.setattr("sys.argv", ["dual_eval.py", "judge", "--shoot", "3", "--sensor"])
+    with pytest.raises(SystemExit) as stop:
+        dual_eval.main()
+    assert stop.value.code == 2 and "4차에만" in capsys.readouterr().err
+    dual_eval.set_profile(2)

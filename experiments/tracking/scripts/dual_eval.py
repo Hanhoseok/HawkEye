@@ -79,11 +79,11 @@ _PAIR_ZONES: dict[str, Path] = {}
 PAIR_ERRORS = (KeyError, ValueError, FileNotFoundError)
 """3차에서 한 짝만 실패로 기록하고 넘어갈 오류 (카메라 맞추기 없음·장면 수 불일치·파일 없음). 2차는 그대로 멈춘다."""
 SENSOR_LANES: tuple[str, ...] | None = None
-"""3차 --sensor 에서 쓸 레인 (None = 전부). --sensor-lanes L1,L2"""
+"""4차 --sensor 에서 쓸 레인 (None = 전부). --sensor-lanes L1,L2"""
 SENSOR_LAG_S = 3.0
-"""3차 · 4차 --sensor: 센서 기록이 꺼냄보다 늦게 오는 시간 (fusion.sensor_lag_seconds). 정상(N) 영상에서 쟀다 — 그 종류를 꺼낸 선반 방문이
-끝난 뒤에 온 센서 기록의 가장 큰 늦음이 3차 1.8초(N11) · 4차 2.1초(N04). 센서 시각이 초 단위라 1초를 더해 3초. 0 · 2 · 3 · 4 · 5초에서
-3차 점수는 2초부터 같다 (0초면 N11 이 틀린다)."""
+"""4차 --sensor: 센서 기록이 꺼냄보다 늦게 오는 시간 (fusion.sensor_lag_seconds). 정상(N) 영상에서 쟀다 — 그 종류를 꺼낸 선반 방문이
+끝난 뒤에 온 센서 기록의 가장 큰 늦음이 4차 2.1초(N04). 센서 시각이 초 단위라 1초를 더해 3초.
+(고를 때는 3차 센서 기록도 함께 봤다 — 3차 1.8초(N11). 센서 로그는 4차에만 해당해 3차는 이제 센서로 판정하지 않는다, 후속 84.)"""
 TENTATIVE = 0.0   # 전체 카메라 임시 신원 시간 (identity.tentative_seconds, C-11) — 0 이면 끔
 """전체 카메라 팔 뻗기를 판정에 넣음 (--overview-pose). 관절 모델 자체는 OVERVIEW_DETECTOR 가 정한다."""
 EDGE_SIDES = {"angle1": ["left", "right", "bottom"], "angle0": ["left", "top", "right"]}
@@ -626,8 +626,11 @@ def judge_pair(pair: str, base: AppConfig, offset_ms: float, band_map, use_detai
     cfg.fusion.sensor_kinds = {lane: k for lane, k in cfg.fusion.sensor_kinds.items()
                                if sensor and (SENSOR_LANES is None or lane in SENSOR_LANES)}
     if sensor and SHOOT >= 3:
-        # 3차: 실제 센서 (angle0 시각 → +시차 = 공통 시각). SENSOR_LANES 로 레인 고름
+        # 실제 센서 로그 (angle0 시각 → +시차 = 공통 시각). SENSOR_LANES 로 레인 고름. 센서 로그가 있는 회차만 — 4차 (후속 84)
         import shoot3_eval
+        import shoots
+        if not shoots.get(SHOOT).sensor:
+            raise ValueError(shoots.NO_SENSOR.format(shoot=SHOOT))
         sensors = shoot3_eval.load_sensor(LABELS / "sensor" / f"{pair}.csv", offset_ms, SENSOR_LANES)
     elif sensor:
         path = LABELS / "fake_sensor" / f"{pair}.csv"
@@ -950,7 +953,7 @@ def main() -> int:
                     help="가장자리 규칙을 네 변 모두에 (늘 잘리는 변을 빼기 전, C-18 비교용)")
     ap.add_argument("--tentative", type=float, default=0.0, metavar="초",
                     help="전체 카메라 새 신원을 임시로 두고, 발이 매장 안 바닥에 이만큼 연속으로 있어야 정식으로 (C-11, run 단계)")
-    ap.add_argument("--sensor-lanes", help="3차 --sensor: 쓸 레인 쉼표 (기본 전부, 예: L1,L2)")
+    ap.add_argument("--sensor-lanes", help="4차 --sensor: 쓸 레인 쉼표 (기본 전부, 예: L1,L2)")
     ap.add_argument("--shoot", type=int, choices=sorted(RECORDS), default=2,
                     help="촬영 회차 (기본 2). 3 = 2026-11-11 3차, 4 = 2026-11-19 4차")
     ap.add_argument("--payments", action="store_true",
@@ -958,6 +961,10 @@ def main() -> int:
     args = ap.parse_args()
     global OUT, OVERRIDES, OVERVIEW_POSE, OVERVIEW_DETECTOR, TENTATIVE, ZONES, IDENTITY_CHECK
     set_profile(args.shoot)
+    if args.sensor and args.shoot >= 3:
+        import shoots
+        if not shoots.get(args.shoot).sensor:
+            ap.error(shoots.NO_SENSOR.format(shoot=args.shoot))
     global SENSOR_LANES
     SENSOR_LANES = tuple(x.strip() for x in args.sensor_lanes.split(",")) if args.sensor_lanes else None
     OVERVIEW_POSE = args.overview_pose
