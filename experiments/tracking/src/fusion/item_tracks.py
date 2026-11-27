@@ -3,7 +3,7 @@
 기준은 하나다: **물건의 시작과 끝은 선반이다.**
 
   - 선반 자리에 머물던 상자가 밖으로 나와 손에 들리면 = 집음 (그 손님의 물건 +1)
-  - 든 물건의 상자가 선반 자리로 들어가 머물면              = 놓음 (−1)
+  - 든 물건의 상자가 선반 자리로 들어가 멈춰 머물면         = 놓음 (−1)
   - 선반 밖에서 처음 나타난 상자는 새 물건이 아니다. 그 손님이 들고 있다가 안 보이던 물건이 다시 보인 것이거나
     (개수 그대로), 상품이 아니다 (유리의 스티커 · 손님 소지품 · 헛것 — 안 센다)
 
@@ -18,6 +18,7 @@ HolderTracker('그 손에 그 종류가 보였나', 사람 · 종류 단위)와 
 
 from __future__ import annotations
 
+import math
 from collections import Counter, deque
 from dataclasses import dataclass, field
 
@@ -29,8 +30,18 @@ LINK_GAP_MS = 600.0
 """이만큼 안 보인 줄은 끊는다 (그 뒤에 보인 상자는 새 줄)."""
 LINK_STEP_MS = 150.0
 LINK_JUMP = 2.5
-"""이을 수 있는 거리 = 상자 대각선 × min(1 + 안 보인 시간 / LINK_STEP_MS, LINK_JUMP).
-한계가 없으면 선반 위 상자가 잠깐 가려진 사이 멀리(계산대)의 상자와 이어져 '선반에서 나온 물건'이 된다 (4차 T06 · C14)."""
+"""추적을 상자에 이을 수 있는 한계 = min(1 + 안 보인 시간 / LINK_STEP_MS, LINK_JUMP). 이것과 견주는 값은 '달라진 정도'(changed)다:
+가운데 점이 옮겨 간 거리 ÷ 상자 대각선 + 크기가 바뀐 정도(대각선 비의 로그). 크기가 그대로면 전처럼 '상자 대각선의 몇 배까지'다.
+한계가 없으면 선반 위 상자가 잠깐 가려진 사이 멀리(계산대)의 상자와 이어져 '선반에서 나온 물건'이 된다 (4차 T06 · C14).
+
+후속 80 — 전에는 거리만 봤다 (가장 가까운 상자에 잇는다). 든 물건이 진열 상자 앞을 지나가면 두 추적이 서로 바뀌었다
+(3차 N06 선반 카메라 9.80초: 왼쪽으로 가던 든 물건(대각선 87)의 상자 하나만 보였는데, 9픽셀 떨어진 진열 상자(63)의 추적이
+18픽셀 떨어진 든 물건의 추적보다 가까워 그 상자를 가져갔다 → 든 물건의 추적은 진열 상자에 붙어 '놓음', 진열 상자의 추적은
+손에 들려 '집음'). 그래서 둘을 더 본다:
+  - 크기: 같은 물건은 한 장면 사이에 크기가 갑자기 안 바뀐다. 크기가 달라진 만큼 '달라진 정도'가 커진다
+  - 움직임: 움직이던 추적은 그 방향으로 한 걸음 더 간 자리(ahead)에서 잰다. 순서(어느 추적이 그 상자를 갖나)에만 쓰고,
+    이을 수 있는지는 마지막으로 본 자리에서 잰다 — 예측으로 닿는 거리를 늘리지 않는다
+맞춘 값은 없다 (거리와 크기 변화를 그대로 더한다 — 상자 하나만큼 옮겨 간 것과 크기가 e배 달라진 것을 같게 친다)."""
 ON_PLACE = 0.2
 """상자가 선반 위 물건 자리(places)와 이만큼 겹치면 그 자리에 있는 것이다. 0.35 · 0.5 로 올리면 선반 위 상자가 조금 흔들릴 때마다
 '선반 밖'이 되어 많이 센다 (4차 손님 한 명 21명: 많이 센 사람 0 → 2 → 4명, 3차 19명: 0 → 2 → 6명)."""
@@ -53,6 +64,18 @@ def _diag(box: list) -> float:
 
 def _gap(a: tuple[float, float], b: tuple[float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def _minmod(a: float, b: float) -> float:
+    """두 값이 같은 쪽이면 작은 쪽, 아니면 0."""
+    return 0.0 if a * b <= 0 else (min(a, b) if a > 0 else max(a, b))
+
+
+def changed(last: list, box: list, at: tuple[float, float]) -> float:
+    """추적의 마지막 상자(last)가 이 상자(box)가 되려면 달라져야 하는 정도 — at(추적이 있을 자리)에서 상자 가운데까지의 거리 ÷
+    큰 쪽 대각선 + 크기가 바뀐 정도(대각선 비의 로그)."""
+    a, b = _diag(last), _diag(box)
+    return _gap(center(box), at) / max(a, b) + abs(math.log(b / a))
 
 
 def nested(a: list, b: list) -> float:
@@ -102,10 +125,32 @@ class Track:
     held: dict[int, deque] = field(default_factory=dict)
     """신원 → 그 손에서 본 최근 장면들 (물건으로 정해지기 전까지)."""
     inside: deque = field(default_factory=lambda: deque(maxlen=HOLD_FRAMES))
-    """선반 자리 안에서 **잇달아** 본 최근 장면들 (선반 밖에서 한 번 보이면 비운다)."""
+    """선반 자리 안에서 **잇달아** 본 최근 장면들 (때, 상자). 선반 밖에서 한 번 보이면 비운다."""
     item: "Item | None" = None
+    step: tuple = (0.0, 0.0)
+    """바로 앞 걸음의 빠르기 (픽셀 / ms). 잇달아 본 장면(LINK_STEP_MS 안) 사이에서만 잰다."""
+    vel: tuple = (0.0, 0.0)
+    """믿는 빠르기 = 지난 두 걸음이 같은 쪽일 때 그 가운데 작은 쪽 (minmod), 아니면 0. 한 걸음만 튄 것(가만히 있던 진열 상자의
+    추적이 옆 상자로 한 번 옮겨 붙음 · 겹친 두 상자를 번갈아 읽음)은 움직임으로 안 친다."""
     dead: bool = False
     """상품이 아닌 것으로 정했다 (선반에서 안 나왔고, 다시 보인 물건도 아니다)."""
+
+    def move(self, ms: float, box: list) -> None:
+        """새 장면의 상자로 옮긴다."""
+        dt, before = ms - self.last_ms, self.step
+        if 0 < dt <= LINK_STEP_MS:
+            a, b = center(self.last), center(box)
+            self.step = ((b[0] - a[0]) / dt, (b[1] - a[1]) / dt)
+        else:
+            self.step = (0.0, 0.0)
+        self.vel = (_minmod(before[0], self.step[0]), _minmod(before[1], self.step[1]))
+        self.last, self.last_ms = box, ms
+
+    def ahead(self, ms: float) -> tuple[float, float]:
+        """움직이던 대로 갔다면 ms 에 있을 자리 — 한 걸음(LINK_STEP_MS)까지만 내다본다. 그 뒤는 모른다 (손은 멈추기도 한다)."""
+        x, y = center(self.last)
+        step = min(ms - self.last_ms, LINK_STEP_MS)
+        return x + self.vel[0] * step, y + self.vel[1] * step
 
 
 @dataclass
@@ -172,10 +217,8 @@ class ItemTracker:
         pairs = []
         for bi, it in enumerate(boxes):
             for ti, t in enumerate(self.live):
-                allow = max(_diag(it), _diag(t.last)) * min(1.0 + (ms - t.last_ms) / LINK_STEP_MS, LINK_JUMP)
-                d = _gap(center(it), center(t.last))
-                if d <= allow:
-                    pairs.append((d / allow, bi, ti))
+                if changed(t.last, it, center(t.last)) <= min(1.0 + (ms - t.last_ms) / LINK_STEP_MS, LINK_JUMP):
+                    pairs.append((changed(t.last, it, t.ahead(ms)), bi, ti))
         used_box: set[int] = set()
         used_track: set[int] = set()
         seen: list[tuple[Track, list]] = []
@@ -196,13 +239,16 @@ class ItemTracker:
             self._see(t, ms, it, people, region)
 
     def _see(self, t: Track, ms: float, it: list, people: list, region) -> None:
-        t.last, t.last_ms = it, ms
+        t.move(ms, it)
         on_shelf = (shelf_distance(region, center(it)) == 0 if not self._places
                     else any(iou(it, p) >= ON_PLACE for p in self._places))
         if on_shelf:
-            t.inside.append(ms)
-            if len(t.inside) == self.min_frames and ms - t.inside[0] <= HOLD_WITHIN_MS:
-                # 선반 자리에 머문다 = 선반 위의 물건이다. 들려 있던 물건이면 놓은 것이다
+            t.inside.append((ms, it))
+            if (len(t.inside) == self.min_frames and ms - t.inside[0][0] <= HOLD_WITHIN_MS
+                    and all(iou(b, it) >= SAME_BOX for _, b in t.inside)):
+                # 선반 자리에 **멈춰** 머문다 = 선반 위의 물건이다. 들려 있던 물건이면 놓은 것이다.
+                # 멈춰 있다 = 그 다섯 장면의 상자가 지금 상자와 한 자리다 (SAME_BOX 이상 겹침). 진열 자리와 겹친 채 지나가는 든 물건은
+                # 선반 위의 물건이 아니다 — 선반 카메라에서는 든 물건이 늘 진열 상자 앞에 있어 자리와 겹친다 (후속 80)
                 if t.item is not None and t.item.returned_ms is None:
                     t.item.returned_ms = ms
                     self._events.append(ItemEvent("back", t.item.owner, t.item.name, t.item.seen_ms, ms, t.item.id))

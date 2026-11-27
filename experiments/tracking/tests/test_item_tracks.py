@@ -1,6 +1,6 @@
 """물건 단위 추적 (src/fusion/item_tracks.py, fusion.item_tracks, 후속 73).
 
-기준: 물건의 시작과 끝은 선반이다. 선반 자리에 머물던 상자가 나와 손에 들리면 집음, 들어가 머물면 놓음.
+기준: 물건의 시작과 끝은 선반이다. 선반 자리에 머물던 상자가 나와 손에 들리면 집음, 들어가 멈춰 머물면 놓음.
 선반 밖에서 처음 나타난 상자는 새 물건이 아니다. 종류는 개수에 영향이 없다.
 """
 
@@ -14,7 +14,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from src.core.config import FusionConfig  # noqa: E402
-from src.fusion.item_tracks import LINK_GAP_MS, ItemTracker, nested, shelf_distance  # noqa: E402
+import math  # noqa: E402
+
+from src.fusion.item_tracks import LINK_GAP_MS, LINK_STEP_MS, ItemTracker, Track, _minmod, changed, nested, shelf_distance  # noqa: E402
 from src.risk.customers import HeldItem  # noqa: E402
 from test_overview_count import STEP  # noqa: E402
 from test_overview_instant import book, frame_at, make_judge  # noqa: E402
@@ -207,6 +209,78 @@ def test_second_item_held_beside_the_first_is_a_second_pick():
     run.see([box("cantata", (1350, 650)), box("donggwaru", (1350, 720))], times=8)
     assert run.kinds() == ["pick", "pick"]
     assert sorted(i.name for i in run.tracker.carried(1)) == ["cantata", "donggwaru"]
+
+
+# ---------------------------------------------------------------------- 추적 잇기 · 자리에 멈춤 (후속 80)
+
+WIDE = (1, [1000, 200, 1700, 900], None)    # 선반 앞에 서서 선반까지 덮은 손님 1 (선반 위로 뻗은 손)
+A, B = (1620, 650), (1450, 650)             # 진열 자리 둘
+
+
+def big(name: str, at: tuple[float, float], score: float = 0.95) -> list:
+    """카메라 가까이 든 물건의 상자 60 × 90 (대각선 108)."""
+    return [name, at[0] - 30, at[1] - 45, at[0] + 30, at[1] + 45, score]
+
+
+def play(frames: list, places: list) -> list[str]:
+    """frames = 장면마다의 상자들. 손님 1 이 선반 앞에 서 있다."""
+    r = Run()
+    for items in frames:
+        r.tracker.update(r.ms, items, [WIDE], REGION, places)
+        r.events += r.tracker.fresh()
+        r.ms += STEP
+    return r.kinds()
+
+
+def test_changed_adds_the_distance_and_the_size_change():
+    a = box("cantata", (100, 100))
+    assert changed(a, a, (100, 100)) == 0.0
+    assert math.isclose(changed(a, box("cantata", (160, 180)), (100, 100)), 100 / math.hypot(40, 60))   # 옮겨 간 거리 ÷ 대각선
+    assert math.isclose(changed(a, big("cantata", (100, 100)), (100, 100)), math.log(1.5))             # 그 자리에서 크기만 1.5배
+    assert changed(a, a, (140, 100)) > 0                                                               # 있을 자리(예측)에서 잰다
+
+
+def test_only_two_steps_the_same_way_are_a_movement():
+    assert (_minmod(2, 3), _minmod(-2, -3), _minmod(2, -3), _minmod(0, 3)) == (2, -2, 0, 0)
+    t = Track(first_ms=0.0, origin="near", last=box("cantata", (100, 100)), last_ms=0.0)
+    t.move(STEP, box("cantata", (120, 100)))
+    assert t.ahead(2 * STEP) == (120, 100)                    # 한 걸음만 옮겨 갔다 — 움직임으로 안 친다 (옆 상자로 한 번 옮겨 붙은 추적)
+    t.move(2 * STEP, box("cantata", (140, 100)))
+    assert math.isclose(t.ahead(3 * STEP)[0], 160)            # 두 걸음을 같은 쪽으로 갔다 — 한 걸음 더 간 자리
+    assert math.isclose(t.ahead(2 * STEP + 5000)[0], 140 + 20 / STEP * LINK_STEP_MS)   # 오래 안 보여도 한 걸음까지만 내다본다
+    t.move(3 * STEP, box("cantata", (130, 100)))
+    assert t.ahead(4 * STEP) == (130, 100)                    # 되돌아왔다 — 방향이 엇갈리면 0
+
+
+def test_held_item_passing_in_front_of_a_shelf_item_keeps_its_track():
+    # 3차 N06 선반 카메라 9.80초: 든 물건이 진열 상자 앞을 지나가며 그 상자를 가렸다. 가까운 것만 보고 이으면 진열 상자의 추적이
+    # 든 물건을 가져가고 (→ 선반에서 나온 새 물건, 집음), 든 물건의 추적은 진열 상자에 붙는다 (→ 놓음)
+    places = [box("cantata", A), box("donggwaru", B)]
+    stock = box("donggwaru", B)
+    frames = [[big("cantata", A), stock]] * 6
+    frames += [[big("cantata", (x, 650)), stock] for x in (1600, 1580, 1560, 1540, 1520, 1500, 1480)]    # 왼쪽으로 꺼내 든다
+    frames += [[big("cantata", (x, 650))] for x in (1460, 1440, 1420, 1400)]                             # 진열 상자를 가리며 지나간다
+    frames += [[big("cantata", (x, 650)), stock] for x in (1380, 1360, 1340, 1320, 1300, 1280, 1260)]    # 진열 상자가 다시 보인다
+    assert play(frames, places) == ["pick"]
+
+
+def test_item_moving_across_the_places_is_not_put_back_until_it_rests():
+    # 선반 카메라에서는 든 물건이 진열 상자 앞에 있어 자리와 겹친다 — 움직이며 지나가는 다섯 장면은 '자리에 머묾'이 아니다
+    places = [box("cantata", (x, 650)) for x in (1450, 1490, 1530, 1570)]
+    start = [[box("cantata", SHELF)]] * 6 + [[box("cantata", at)] for at in OUT + [(1200, 650), (1250, 650), (1300, 650), (1350, 650)]]
+    across = [[box("cantata", (x, 650))] for x in (1430, 1450, 1470, 1490, 1510, 1530, 1550)]            # 자리들 위를 지나간다
+    away = [[box("cantata", at)] for at in [(1550, 720), (1500, 760), (1450, 760), (1400, 760), (1350, 760), (1300, 760)]]
+    assert play(start + across + away, places) == ["pick"]                                                # 놓지 않았다 (다시 집음도 없다)
+    rest = [[box("cantata", (x, 650))] for x in (1430, 1450, 1470, 1490, 1510)] + [[box("cantata", (1530, 650))]] * 5
+    assert play(start + rest, places) == ["pick", "back"]                                                 # 한 자리에 멈추면 놓은 것이다
+
+
+def test_track_does_not_hop_to_a_box_of_another_size():
+    # 4차 N04 선반 카메라 6.59초: 든 물건(대각선 76)이 한 장면 안 보인 사이 그 추적이 1.2배 떨어진 작은 진열 상자(34)에 붙어 '놓음'이 됐다
+    places = [box("cantata", A), box("donggwaru", B)]
+    frames = [[big("cantata", A)]] * 6 + [[big("cantata", (x, 650))] for x in (1600, 1580, 1560, 1540, 1520, 1500)]
+    frames += [[["donggwaru", 1430, 635, 1450, 665, 0.8]]] * 6      # 든 물건은 손에 가렸고, 가려져 있던 진열 상자의 한쪽만 드러났다
+    assert play(frames, places) == ["pick"]
 
 
 # ---------------------------------------------------------------------- 종류와 개수
