@@ -3,7 +3,7 @@
 기준은 하나다: **물건의 시작과 끝은 선반이다.**
 
   - 선반 자리에 머물던 상자가 밖으로 나와 손에 들리면 = 집음 (그 손님의 물건 +1)
-  - 든 물건의 상자가 선반 자리로 들어가 멈춰 머물면         = 놓음 (−1)
+  - 든 물건의 상자가 선반 자리로 들어가 멈춰 머물고 손이 떠나면 = 놓음 (−1)
   - 선반 밖에서 처음 나타난 상자는 새 물건이 아니다. 그 손님이 들고 있다가 안 보이던 물건이 다시 보인 것이거나
     (개수 그대로), 상품이 아니다 (유리의 스티커 · 손님 소지품 · 헛것 — 안 센다)
 
@@ -22,7 +22,7 @@ import math
 from collections import Counter, deque
 from dataclasses import dataclass, field
 
-from .overview_count import HOLD_FRAMES, HOLD_WITHIN_MS, REACH, SCORE, center, holder_of, iou
+from .overview_count import HOLD_FRAMES, HOLD_WITHIN_MS, REACH, SCORE, WRIST_CONF, WRISTS, center, holder_of, iou
 
 SAME_BOX = 0.2
 """종류와 상관없이 이만큼 겹친 상자는 한 물건이다 (한 물건에 두 종류의 상자가 겹쳐 나온다)."""
@@ -33,6 +33,7 @@ LINK_GAP_MS = 600.0
   - 진열 상자 (진열 자리에 멈춰 있던 추적): 그 자리가 **가려져 있는 동안**은 안 끊는다. 가린 것(사람 · 다른 상자)이 없는데
     이만큼 안 보이면 없는 것이다. 오래 안 보인 뒤에는 **제 자리의 상자**(마지막 상자와 SAME_BOX 이상 겹침)만 잇는다
   - 든 물건 (집어서 아직 안 놓은 물건의 추적): 안 끊는다. 오래 안 보인 뒤에는 **그 손님 손에 든, 선반 밖의 상자**만 잇는다
+    (놓으려고 진열 자리에 멈춘 채 가려진 것은 그 자리의 상자도 — 후속 83)
 
 전에는 둘 다 이만큼 지나면 끊었다. 든 물건이 손에 가려 0.6초 넘게 안 보이다 진열 상자 옆에서 다시 보이면, 제 추적은 없고
 진열 상자의 추적만 살아 있어 그 추적이 든 물건을 가져갔다 → '선반에서 나온 새 물건' = 틀린 집음 (4차 N11 전체 카메라 11.88초).
@@ -147,6 +148,8 @@ class Track:
     """진열 자리에 멈춰 머문 뒤로 선반 밖에서 본 적이 없다 = 지금 선반 위의 물건이다."""
     kept_ms: float = 0.0
     """안 보이는 동안 그 자리가 가려져 있던 마지막 때."""
+    waiting: bool = False
+    """든 물건이 진열 자리에 멈췄는데 아직 손이 닿아 있다 — 손이 떠나면 놓음이 된다 (다시 선반 밖에서 보이면 없던 일)."""
 
     def move(self, ms: float, box: list) -> None:
         """새 장면의 상자로 옮긴다."""
@@ -272,8 +275,24 @@ class ItemTracker:
         if ms - t.last_ms <= LINK_GAP_MS:
             return True
         if t.item is not None:
+            if t.waiting and iou(it, t.last) >= SAME_BOX:
+                return True   # 놓으려고 멈춘 채 가려졌다 — 그 자리의 상자도 잇는다 (안 이으면 손이 떠난 뒤의 놓음을 못 읽는다)
             return self._spot(it, region) == "off" and self._hand(it, ms, people) == self.resolve(t.item.owner)
         return iou(it, t.last) >= SAME_BOX
+
+    def _touched(self, it: list, people: list) -> bool:
+        """이 상자에 누군가의 손이 닿아 있나. '든 사람'(holder_of)과 같은 순서로 본다 — 손목이 보이는 사람은 손목이 닿는 거리
+        (reach) 안인지로, 손목이 안 보이는 사람은 상자 가운데가 그 사람 상자 안인지로. 누구 손인지는 안 따진다 (둘이 쥐고 있어도 닿은 것).
+        손목이 보이는데 '사람 상자 안'까지 닿은 것으로 치면, 손님이 선반 앞에 서 있는 내내 놓음을 못 읽는다 (2 ~ 4초 늦다 — 3차 N11)."""
+        cx, cy = center(it)
+        reach = self.reach * _diag(it)
+        for _, b, kp in people:
+            wrists = [kp[k] for k in WRISTS if kp is not None and len(kp) > k and kp[k][2] >= WRIST_CONF]
+            if any(_gap((w[0], w[1]), (cx, cy)) <= reach for w in wrists):
+                return True
+            if not wrists and b[0] <= cx <= b[2] and b[1] <= cy <= b[3]:
+                return True
+        return False
 
     def _spot(self, it: list, region) -> str:
         """상자가 있는 곳 — shelf(진열 자리 위) · edge(자리들 안에 든 조각) · off(선반 밖)."""
@@ -301,9 +320,15 @@ class ItemTracker:
                 # 멈춰 있다 = 그 다섯 장면의 상자가 지금 상자와 한 자리다 (SAME_BOX 이상 겹침). 진열 자리와 겹친 채 지나가는 든 물건은
                 # 선반 위의 물건이 아니다 — 선반 카메라에서는 든 물건이 늘 진열 상자 앞에 있어 자리와 겹친다 (후속 80)
                 if t.item is not None and t.item.returned_ms is None:
+                    if self._touched(it, people):
+                        # 멈췄지만 아직 손에 쥐고 있다 — 놓음은 **손이 떠난 때**다 (후속 83). 진열 상자 앞에 든 채 멈춘 것 ·
+                        # 건네느라 둘이 쥐고 있는 것은 놓은 것이 아니다 (3차 T09 · 4차 N06). 자리에 닿은 때를 놓은 때로 읽으면
+                        # 0.4 ~ 1.2초 이르다 (4차 N06: 22.95초 → 손이 떠난 23.77초, 정답 23.76초)
+                        t.waiting = True
+                        return
                     t.item.returned_ms = ms
                     self._events.append(ItemEvent("back", t.item.owner, t.item.name, t.item.seen_ms, ms, t.item.id))
-                t.item, t.dead, t.origin, t.resting = None, False, "shelf", True
+                t.item, t.dead, t.origin, t.resting, t.waiting = None, False, "shelf", True, False
                 t.held.clear()
                 t.reads.clear()
             return
@@ -314,7 +339,7 @@ class ItemTracker:
         # 선반 밖에서 봤다 — '선반 자리에 머문 장면'은 여기서부터 다시 모은다. 안 비우면 집기 전에 선반에 있던 장면이 남아,
         # 집은 뒤 한 장면만 진열 자리와 겹쳐도 '놓음'이 된다 (4차 N05: 집음 6.58초 → 놓음 6.64초, 후속 76)
         t.inside.clear()
-        t.resting = False
+        t.resting = t.waiting = False
         pid = self._hand(it, ms, people)
         if pid is None:
             return

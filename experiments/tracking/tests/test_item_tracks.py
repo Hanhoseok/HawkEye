@@ -272,7 +272,10 @@ def test_item_moving_across_the_places_is_not_put_back_until_it_rests():
     away = [[box("cantata", at)] for at in [(1550, 720), (1500, 760), (1450, 760), (1400, 760), (1350, 760), (1300, 760)]]
     assert play(start + across + away, places) == ["pick"]                                                # 놓지 않았다 (다시 집음도 없다)
     rest = [[box("cantata", (x, 650))] for x in (1430, 1450, 1470, 1490, 1510)] + [[box("cantata", (1530, 650))]] * 5
-    assert play(start + rest, places) == ["pick", "back"]                                                 # 한 자리에 멈추면 놓은 것이다
+    r = scene(start + rest, places)
+    assert r.kinds() == ["pick"]                                                                          # 한 자리에 멈췄다 — 손님이 아직 그 앞에 있다
+    r.tracker.update(r.ms, [box("cantata", (1530, 650))], [], REGION, places)
+    assert [e.kind for e in r.tracker.fresh()] == ["back"]                                                # 손이 떠나면 놓은 것이다 (후속 83)
 
 
 def test_track_does_not_hop_to_a_box_of_another_size():
@@ -352,6 +355,62 @@ def test_item_seen_again_on_a_new_track_leaves_the_old_one():
     run = Run().pick().wait(LINK_GAP_MS + 500)
     run.see([box("cantata", (1100, 400))], times=8)                 # 멀리서 다시 보였다 — 새 추적이 그 물건을 이어받는다
     assert len([t for t in run.tracker.live if t.item is not None]) == 1
+
+
+# ---------------------------------------------------------------------- 놓음 = 자리에 멈췄고 손이 떠났다 (후속 83)
+
+def hand(at: tuple[float, float] | None, body: list | None = None) -> tuple:
+    """손님 1 — 손목이 at 에 보인다 (None 이면 손목이 안 보인다). body = 사람 상자 (기본은 선반 왼쪽)."""
+    kp = None
+    if at is not None:
+        kp = [(0.0, 0.0, 0.0)] * 17
+        kp[9] = (at[0], at[1], 0.9)
+    return (1, body or [1000, 200, 1380, 900], kp)
+
+
+AT_SHELF, AWAY = hand((1440, 650)), hand((1200, 650))
+
+
+def brought_back() -> Run:
+    """집은 칸타타를 손에 쥔 채 선반 자리로 다시 가져와 8장면 멈춰 있다 (손목이 그 옆에 보인다)."""
+    run = Run().pick()
+    for at in reversed(OUT[:-1]):
+        run.see([box("cantata", at)], [hand(at)])
+    return run.see([box("cantata", SHELF)], [AT_SHELF], times=8)
+
+
+def test_put_back_is_read_when_the_hand_leaves():
+    # 4차 N06: 자리에 닿은 때(22.95초)가 아니라 손이 떠난 때(23.77초)가 놓은 때다 (정답 23.76초)
+    run = brought_back()
+    assert run.kinds() == ["pick"]                       # 자리에 멈췄지만 아직 쥐고 있다
+    run.see([box("cantata", SHELF)], [AWAY])
+    assert run.kinds() == ["pick", "back"] and run.tracker.carried(1) == []
+
+
+def test_item_held_still_in_front_of_the_shelf_is_not_put_back():
+    # 3차 T09 (건네느라 진열 상자 앞에서 둘이 쥐고 있음) · 4차 N06 (집은 캔을 진열 상자 앞에 들고 있음): 멈췄다가 다시 들고 나간다
+    run = brought_back()
+    for at in OUT:
+        run.see([box("cantata", at)], [hand(at)])
+    assert run.kinds() == ["pick"] and len(run.tracker.carried(1)) == 1      # 놓음도, 다시 집음도 없다
+
+
+def test_wrist_decides_when_it_is_seen():
+    over = [1000, 200, 1700, 900]                        # 선반까지 덮은 사람 상자 (선반 앞에 서 있다)
+    run = Run().pick()
+    for at in reversed(OUT[:-1]):
+        run.see([box("cantata", at)], [hand(None, over)])
+    run.see([box("cantata", SHELF)], [hand(None, over)], times=8)
+    assert run.kinds() == ["pick"]                       # 손목이 안 보인다 — 사람 상자 안이면 닿은 것으로 본다
+    run.see([box("cantata", SHELF)], [hand((1200, 650), over)])
+    assert run.kinds() == ["pick", "back"]               # 손목이 보이고 멀다 — 사람 상자가 덮고 있어도 손은 떠났다
+
+
+def test_item_waiting_to_be_put_back_is_linked_at_its_place_after_a_long_hide():
+    # 놓으려고 멈춘 채 팔에 가려 0.6초 넘게 안 보였다 — 그 자리에 다시 보인 상자를 잇는다 (안 이으면 그 놓음을 못 읽는다)
+    run = brought_back()
+    run.see([], [AT_SHELF], times=12).see([box("cantata", SHELF)], [AWAY], times=6)
+    assert run.kinds() == ["pick", "back"]
 
 
 # ---------------------------------------------------------------------- 종류와 개수
